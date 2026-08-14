@@ -2430,6 +2430,9 @@ private struct HistoryScreen: View {
             store.currentTab = .weight
         case "open_next_workout":
             store.currentTab = .trainings
+        case "refresh_recommendation":
+            store.currentTab = .trainings
+            Task { await store.refreshRecommendation() }
         case "open_weekly_report":
             isShowingWeeklyReport = true
         default:

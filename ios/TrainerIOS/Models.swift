@@ -464,7 +464,7 @@ struct CoachSignal: Codable, Hashable, Identifiable {
 }
 
 struct CoachSignalAction: Codable, Hashable {
-    var type: String           // open_measurements | open_next_workout | open_weekly_report | none
+    var type: String           // open_measurements | open_next_workout | refresh_recommendation | open_weekly_report | none
     var label: String?
     var target: String?        // e.g. "weight" | "waist" for open_measurements
 }

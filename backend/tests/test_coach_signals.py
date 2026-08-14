@@ -136,17 +136,59 @@ class TrainingsSignalTests(unittest.TestCase):
         deadline = last + timedelta(days=13)
         self.assertIn(coach_signals._ru_date(deadline), signal["title"])
 
-    def test_return_mode_is_supportive_accent(self) -> None:
+    def test_return_mode_ready_plan_is_supportive_accent(self) -> None:
+        recommendation = {
+            "status": "ready",
+            "recommendation": {"coach_context": {"return_from_break": True}},
+            "updated_at": 123,
+        }
         signal = coach_signals._trainings_signal(
-            [_workout((TODAY - timedelta(days=20)).isoformat())], TODAY
+            [_workout((TODAY - timedelta(days=20)).isoformat())],
+            TODAY,
+            recommendation,
         )
         self.assertEqual(signal["id"], "return_mode")
         self.assertEqual(signal["severity"], "accent")
-        self.assertEqual(signal["title"], "Следующая сессия — возвратная")
+        self.assertEqual(signal["title"], "Возвратная тренировка готова")
         self.assertEqual(
             signal["body"],
             "~85–90% рабочих весов. Догонять пропущенное не надо",
         )
+        self.assertEqual(signal["action"]["type"], "open_next_workout")
+
+    def test_return_mode_pending_does_not_duplicate_loading_state(self) -> None:
+        signal = coach_signals._trainings_signal(
+            [_workout((TODAY - timedelta(days=20)).isoformat())],
+            TODAY,
+            {"status": "pending"},
+        )
+        self.assertIsNone(signal)
+
+    def test_return_mode_failed_plan_offers_real_retry(self) -> None:
+        signal = coach_signals._trainings_signal(
+            [_workout((TODAY - timedelta(days=20)).isoformat())],
+            TODAY,
+            {"status": "failed", "updated_at": 456},
+        )
+        self.assertEqual(signal["title"], "После перерыва нужен облегчённый старт")
+        self.assertEqual(signal["body"], "План пока не готов — повтори генерацию")
+        self.assertEqual(signal["action"], {
+            "type": "refresh_recommendation", "label": "Повторить",
+        })
+        self.assertIn("recommendation=failed:456", signal["instance_key"])
+
+    def test_return_mode_outdated_ready_plan_requests_refresh(self) -> None:
+        signal = coach_signals._trainings_signal(
+            [_workout((TODAY - timedelta(days=20)).isoformat())],
+            TODAY,
+            {
+                "status": "ready",
+                "recommendation": {"coach_context": {"return_from_break": False}},
+                "updated_at": 789,
+            },
+        )
+        self.assertEqual(signal["body"], "Текущий план не учитывает перерыв — обнови его")
+        self.assertEqual(signal["action"]["type"], "refresh_recommendation")
 
 
 class DeloadSignalTests(unittest.TestCase):
@@ -278,6 +320,43 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
         self.store.save_waist(self.uid, {"entry_date": later.isoformat(), "waist": 84.0})
         revived = coach_signals.compute_signals(self.store, self.uid, dict(STATE), today=later)
         self.assertEqual([signal["id"] for signal in revived], ["return_mode"])
+
+    def test_return_banner_tracks_cached_recommendation_status(self) -> None:
+        today = date(2026, 8, 14)
+        self._add_workout("2026-07-20")
+        self.store.save_body_weight(
+            self.uid, {"entry_date": today.isoformat(), "weight": 79.0}
+        )
+        self.store.save_waist(
+            self.uid, {"entry_date": today.isoformat(), "waist": 84.0}
+        )
+
+        self.store.fail_recommendation(self.uid, "invalid plan")
+        failed = coach_signals.compute_signals(
+            self.store, self.uid, dict(STATE), today=today
+        )
+        self.assertEqual(failed[0]["action"]["type"], "refresh_recommendation")
+
+        self.store.set_recommendation_pending(self.uid)
+        pending = coach_signals.compute_signals(
+            self.store, self.uid, dict(STATE), today=today
+        )
+        self.assertEqual(pending, [])
+
+        self.store.save_recommendation(
+            self.uid,
+            self.store.get_latest_workout_id(self.uid),
+            1,
+            "claude-test",
+            {"focus": "return", "coach_context": {"return_from_break": True}},
+            1,
+            1,
+        )
+        ready = coach_signals.compute_signals(
+            self.store, self.uid, dict(STATE), today=today
+        )
+        self.assertEqual(ready[0]["title"], "Возвратная тренировка готова")
+        self.assertEqual(ready[0]["action"]["type"], "open_next_workout")
 
     def test_expired_timed_snooze_returns_the_signal(self) -> None:
         today = date(2026, 8, 14)

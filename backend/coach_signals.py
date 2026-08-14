@@ -2,8 +2,9 @@
 """Coach signals for the История banner (see docs/COACH_SIGNALS.md).
 
 The server computes the full, already-collapsed, snooze-filtered, sorted list
-on the fly from SQLite + coach_state — no cache, no LLM. The client renders
-the first one or two items and never invents texts or compares dates itself.
+on the fly from SQLite + coach_state and the cached recommendation status. It
+never invokes the LLM. The client renders the first one or two items and never
+invents texts or compares dates itself.
 
 Taxonomy: the «замеры» family (weight+waist freshness collapsed, plus the hard
 waist limit), the «тренировки» family (return_soon → return_mode escalation),
@@ -231,8 +232,26 @@ def _measurements_signal(
     return None
 
 
+def _return_plan_state(recommendation: dict[str, Any] | None) -> str:
+    """Map the cached recommendation row to the return banner's UI state."""
+    if not recommendation:
+        return "none"
+    status = recommendation.get("status")
+    if status in ("pending", "failed"):
+        return str(status)
+    if status != "ready":
+        return "none"
+    payload = recommendation.get("recommendation")
+    context = payload.get("coach_context") if isinstance(payload, dict) else None
+    if isinstance(context, dict) and context.get("return_from_break") is True:
+        return "ready"
+    return "outdated"
+
+
 def _trainings_signal(
-    workouts: list[dict[str, Any]], today: date
+    workouts: list[dict[str, Any]],
+    today: date,
+    recommendation: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     dates = sorted(
         {
@@ -259,12 +278,45 @@ def _trainings_signal(
             glyph="back",
         )
     if days >= RETURN_BREAK_DAYS:
+        plan_state = _return_plan_state(recommendation)
+        # Today already shows the generation state. A second banner on History
+        # would only duplicate it and imply that an actionable plan exists.
+        if plan_state == "pending":
+            return None
+
+        if plan_state == "ready":
+            title = "Возвратная тренировка готова"
+            body = "~85–90% рабочих весов. Догонять пропущенное не надо"
+            action_type = "open_next_workout"
+            action_label = "План"
+            recommendation_fact = "ready"
+        else:
+            title = "После перерыва нужен облегчённый старт"
+            action_type = "refresh_recommendation"
+            if plan_state == "failed":
+                body = "План пока не готов — повтори генерацию"
+                action_label = "Повторить"
+                recommendation_fact = (
+                    f"failed:{recommendation.get('updated_at') or 'unknown'}"
+                )
+            elif plan_state == "outdated":
+                body = "Текущий план не учитывает перерыв — обнови его"
+                action_label = "Обновить"
+                recommendation_fact = (
+                    f"outdated:{recommendation.get('updated_at') or 'unknown'}"
+                )
+            else:
+                body = "План пока не готов — сгенерируй его"
+                action_label = "Создать"
+                recommendation_fact = "none"
+
         return _signal(
             "return_mode", "trainings", "accent",
-            "Следующая сессия — возвратная",
-            "~85–90% рабочих весов. Догонять пропущенное не надо",
-            instance_fact=f"last_workout={last.isoformat()}",
-            action_type="open_next_workout", action_label="План",
+            title, body,
+            instance_fact=(
+                f"last_workout={last.isoformat()},recommendation={recommendation_fact}"
+            ),
+            action_type=action_type, action_label=action_label,
             glyph="back",
         )
     return None
@@ -385,6 +437,7 @@ def compute_signals(
     workouts = store.list_workouts(user_id)
     body_weights = store.list_body_weights(user_id)
     waists = store.list_waists(user_id)
+    recommendation = store.get_recommendation(user_id)
 
     # One family, one message: the critical waist-limit episode supersedes a
     # routine freshness reminder instead of stacking two measurement banners.
@@ -394,7 +447,7 @@ def compute_signals(
     )
     candidates = [
         measurements,
-        _trainings_signal(workouts, today),
+        _trainings_signal(workouts, today, recommendation),
         _deload_signal(state, workouts, today),
         _report_signal(store, user_id, workouts, now_ts),
         _week_done_signal(workouts, today),
