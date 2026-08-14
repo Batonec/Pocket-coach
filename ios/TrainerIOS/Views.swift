@@ -2650,14 +2650,6 @@ private struct ProgressTabScreen: View {
                     TopTitle(sub: nil, title: "Прогресс")
                         .padding(.horizontal, 4)
 
-                    Picker("", selection: $store.selectedRange) {
-                        ForEach(RangeOption.allCases) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.top, 4)
-
-                    RingMainCard()
-
                     volumeSection
                     disciplineSection
                     weeklyReportSection
@@ -3005,84 +2997,6 @@ private struct DisciplineCard: View {
                 .glassCard(radius: 20)
             }
         }
-    }
-}
-
-private struct RingMainCard: View {
-    @EnvironmentObject private var store: TrainerStore
-
-    var body: some View {
-        VStack(spacing: 10) {
-            ZStack {
-                let primaryIDs = mainIDs
-
-                // Push rings outward (r=102 step 7.5, 5pt stroke) so the center text
-                // has breathing room and never clips the inner ring.
-                ForEach(Array(primaryIDs.enumerated()), id: \.element) { idx, id in
-                    let r: CGFloat = 102 - CGFloat(idx) * 7.5
-                    let p = progressFor(id)
-                    Circle()
-                        .stroke(Color.black.opacity(0.06), lineWidth: 5)
-                        .frame(width: r * 2, height: r * 2)
-                    Circle()
-                        .trim(from: 0, to: max(0.001, min(1, p)))
-                        .stroke(
-                            DesignPalette.accent.opacity(0.45 + 0.55 * (1 - Double(idx) / 6)),
-                            style: StrokeStyle(lineWidth: 5, lineCap: .round)
-                        )
-                        .frame(width: r * 2, height: r * 2)
-                        .rotationEffect(.degrees(-90))
-                }
-
-                HStack(alignment: .firstTextBaseline, spacing: 1) {
-                    Text("\(Int(overall * 100))")
-                        .display(size: 40, weight: .bold)
-                        .foregroundStyle(DesignPalette.ink)
-                    Text("%")
-                        .font(.jbm(17, weight: .semibold))
-                        .foregroundStyle(DesignPalette.ink3)
-                }
-            }
-            .frame(height: 224)
-
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
-                ForEach(mainIDs, id: \.self) { id in
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(progressFor(id) > 0 ? DesignPalette.accent : Color.black.opacity(0.18))
-                            .frame(width: 6, height: 6)
-                        Text(ExerciseGlyph.short(name: store.exerciseDefinition(id: id)?.name ?? "—"))
-                            .mono(11, weight: .semibold)
-                            .foregroundStyle(DesignPalette.ink2)
-                            .lineLimit(1)
-                    }
-                }
-            }
-        }
-        .padding(EdgeInsets(top: 18, leading: 18, bottom: 22, trailing: 18))
-        .liquidGlass(radius: 28)
-    }
-
-    private var mainIDs: [Int] {
-        Array(store.exerciseGroups().primaryPoolIDs.prefix(6))
-    }
-
-    private var overall: Double {
-        let ids = mainIDs
-        guard !ids.isEmpty else { return 0 }
-        let sum = ids.reduce(0.0) { p, id in p + progressFor(id) }
-        return sum / Double(ids.count)
-    }
-
-    private func progressFor(_ id: Int) -> Double {
-        // For each main-six exercise: % of last-known target sets vs sessions in range with that exercise's sets
-        let series = TrainerLogic.buildExerciseProgressSeries(
-            workouts: store.workouts,
-            range: store.selectedRange,
-            exerciseID: id
-        )
-        let total = max(1, Double(store.selectedRange.days ?? 30) / 7.0)
-        return min(1.0, Double(series.count) / total)
     }
 }
 

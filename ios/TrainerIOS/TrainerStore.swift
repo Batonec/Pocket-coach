@@ -53,7 +53,9 @@ final class TrainerStore: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.currentTab = TrainerTab(rawValue: defaults.string(forKey: Keys.currentTab) ?? "") ?? .trainings
-        self.selectedRange = RangeOption(rawValue: defaults.string(forKey: Keys.progressRange) ?? "") ?? .days30
+        // The Progress screen dropped its 7D/30D/All picker — everything there
+        // (discipline, sparklines, exercise detail) now reads all-time.
+        self.selectedRange = .all
         self.selectedBodyWeightRange = RangeOption(rawValue: defaults.string(forKey: Keys.bodyWeightRange) ?? "") ?? .days30
         self.selectedProgressExerciseID = defaults.object(forKey: Keys.progressExercise) as? Int
         self.apiBaseURLString = Self.normalizedBackendURL(defaults.string(forKey: Keys.apiBaseURL))
