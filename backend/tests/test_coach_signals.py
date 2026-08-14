@@ -149,11 +149,11 @@ class TrainingsSignalTests(unittest.TestCase):
         )
         self.assertEqual(signal["id"], "return_mode")
         self.assertEqual(signal["severity"], "accent")
-        self.assertEqual(signal["title"], "Возвратная тренировка готова")
         self.assertEqual(
-            signal["body"],
-            "Облегчённый вход по плану тренера. Догонять пропущенное не надо",
+            signal["title"],
+            "Возвратная тренировка готова, облегчённый вход",
         )
+        self.assertEqual(signal["body"], "")
         self.assertEqual(signal["action"]["type"], "open_next_workout")
 
     def test_return_mode_pending_does_not_duplicate_loading_state(self) -> None:
@@ -399,7 +399,10 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
         ready = coach_signals.compute_signals(
             self.store, self.uid, dict(STATE), today=today
         )
-        self.assertEqual(ready[0]["title"], "Возвратная тренировка готова")
+        self.assertEqual(
+            ready[0]["title"],
+            "Возвратная тренировка готова, облегчённый вход",
+        )
         self.assertEqual(ready[0]["action"]["type"], "open_next_workout")
 
     def test_expired_timed_snooze_returns_the_signal(self) -> None:

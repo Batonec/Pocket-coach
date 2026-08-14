@@ -285,8 +285,8 @@ def _trainings_signal(
             return None
 
         if plan_state == "ready":
-            title = "Возвратная тренировка готова"
-            body = "Облегчённый вход по плану тренера. Догонять пропущенное не надо"
+            title = "Возвратная тренировка готова, облегчённый вход"
+            body = ""
             action_type = "open_next_workout"
             action_label = "План"
             recommendation_fact = "ready"

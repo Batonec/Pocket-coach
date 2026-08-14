@@ -2114,12 +2114,14 @@ struct SignalBannerView: View {
                         .foregroundStyle(ink)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(signal.body)
-                        .font(.jbm(11.5))
-                        .foregroundStyle(sub)
-                        .lineSpacing(2.5)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if !signal.body.isEmpty {
+                        Text(signal.body)
+                            .font(.jbm(11.5))
+                            .foregroundStyle(sub)
+                            .lineSpacing(2.5)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if let note = signal.note, !note.isEmpty {
                         Text(note)
                             .font(.jbm(10.5))
