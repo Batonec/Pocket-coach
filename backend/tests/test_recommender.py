@@ -471,6 +471,22 @@ class SemanticValidatorTests(unittest.TestCase):
             any("8–12" in v for v in self._violations(too_many, state=maintenance))
         )
 
+    def test_return_ceiling_normalizer_trims_15_to_14(self) -> None:
+        from datetime import date as _date
+
+        import coach_state
+
+        workouts = self._history("2026-05-20")
+        rec = recommender._validate(self._rec(sets=15), self.CATALOG)
+
+        adjustments = recommender._enforce_session_set_ceiling(
+            rec, workouts, _date(2026, 6, 12), coach_state.load_state(None)
+        )
+
+        self.assertEqual(adjustments, ["рабочие подходы: 15 → 14"])
+        self.assertEqual([len(exercise["sets"]) for exercise in rec["exercises"]], [7, 7])
+        self.assertIn("автоматически ограничен 14", rec["rationale"])
+
     def test_rest_days_and_double_heavy_are_flagged(self) -> None:
         rec = recommender._validate(self._rec(sets=14, rest_days=6), self.CATALOG)
         self.assertTrue(any("rest_days" in v for v in self._violations(rec)))
@@ -873,6 +889,39 @@ class GenerateRepromptTests(unittest.TestCase):
         # The reprompt continues the same conversation and lists the violations.
         self.assertEqual(len(calls[1]), 3)
         self.assertIn("нарушает ограничения", calls[1][2]["content"])
+
+    def test_session_set_ceiling_is_enforced_without_another_model_call(self) -> None:
+        from datetime import date as _date
+
+        import coach_state
+
+        calls = 0
+
+        def fake_call(*args, **kwargs):  # noqa: ANN002, ANN003
+            nonlocal calls
+            calls += 1
+            raw = self._raw(105)
+            raw["exercises"] = [
+                {"exercise_id": 8, "name": "Жим ногами", "note": "n",
+                 "sets": [{"reps": 10, "weight": 105}] * 7},
+                {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
+                 "sets": [{"reps": 12, "weight": 60}] * 6},
+            ]
+            return raw, {"input_tokens": 10, "output_tokens": 5}
+
+        recommender._call_anthropic = fake_call
+        state = dict(coach_state.load_state(None), phase="maintenance")
+        rec, _usage, _model, trace = recommender.generate_with_trace(
+            self._history(), [], self.CATALOG,
+            today=_date(2026, 6, 12), state=state,
+        )
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(sum(len(exercise["sets"]) for exercise in rec["exercises"]), 12)
+        self.assertEqual([len(exercise["sets"]) for exercise in rec["exercises"]], [6, 6])
+        self.assertEqual(trace[0]["adjustments"], ["рабочие подходы: 13 → 12"])
+        self.assertEqual(trace[0]["violations"], [])
+        self.assertIn("автоматически ограничен 12", rec["rationale"])
 
     def test_second_violation_raises_with_details_and_trace(self) -> None:
         from datetime import date as _date

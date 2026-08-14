@@ -139,19 +139,26 @@ final class TrainerStoreTests: XCTestCase {
         store.applyRecommendationAsPlan()
 
         store.isRefreshingRecommendation = true
-        XCTAssertTrue(store.isTodayPlanWaitingForRefresh)
+        XCTAssertTrue(store.isTodayPlanUnavailable)
 
         store.addPlannedSet(exerciseID: 8)
-        XCTAssertFalse(store.isTodayPlanWaitingForRefresh)
+        XCTAssertFalse(store.isTodayPlanUnavailable)
     }
 
-    func testTodayHidesServerPendingPlanWithoutLocalSpinner() {
+    func testTodayHidesPendingAndFailedPlansWithoutLocalSpinner() {
         let store = TrainerStore(defaults: .isolatedTestDefaults())
         var pending = readyRecommendation()
         pending.status = "pending"
         store.recommendation = pending
 
-        XCTAssertTrue(store.isTodayPlanWaitingForRefresh)
+        XCTAssertTrue(store.isTodayPlanUnavailable)
+
+        var failed = readyRecommendation()
+        failed.status = "failed"
+        failed.error = "Модель нарушила ограничения"
+        store.recommendation = failed
+
+        XCTAssertTrue(store.isTodayPlanUnavailable)
     }
 
     func testAutoApplySkipsNonReadyRecommendation() {

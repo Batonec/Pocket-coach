@@ -659,11 +659,13 @@ final class TrainerStore: ObservableObject {
     }
 
     /// A not-yet-started workout must not begin from targets that are being
-    /// regenerated. Progress/history may keep rendering the previous payload,
-    /// but Today hides its actionable plan until the fresh one is ready.
-    var isTodayPlanWaitingForRefresh: Bool {
+    /// regenerated or whose replacement failed validation. Progress/history
+    /// may keep rendering the previous payload, but Today hides its actionable
+    /// plan until a fresh recommendation is ready.
+    var isTodayPlanUnavailable: Bool {
         guard draft.editingWorkoutID == nil, !draft.hasRealSets else { return false }
-        return isRefreshingRecommendation || recommendation?.status == "pending"
+        let status = recommendation?.status
+        return isRefreshingRecommendation || status == "pending" || status == "failed"
     }
 
     func addPlannedSet(exerciseID: Int) {

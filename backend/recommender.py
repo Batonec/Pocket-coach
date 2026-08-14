@@ -894,6 +894,67 @@ def _mentions_deload(recommendation: dict[str, Any]) -> bool:
     return "deload" in text or "разгруз" in text
 
 
+def _session_set_corridor(
+    workouts: list[dict[str, Any]],
+    today: date,
+    state: dict[str, Any],
+) -> tuple[tuple[int, int], str]:
+    """Return the hard session-volume corridor and its user-facing label."""
+    params = coach_state.phase_params(state)
+    if coach_state.is_return_from_break(workouts, today):
+        return (10, 14), "возврат после перерыва"
+    if coach_state.cycle_position(state, workouts, today)["deload_week"]:
+        return (10, 14), "плановая разгрузочная неделя"
+    return tuple(params["session_sets"]), f"фаза {params['phase']}"
+
+
+def _enforce_session_set_ceiling(
+    recommendation: dict[str, Any],
+    workouts: list[dict[str, Any]],
+    today: date,
+    state: dict[str, Any],
+) -> list[str]:
+    """Deterministically trim excess work sets instead of failing a whole plan.
+
+    The model still chooses exercises, weights and reps. The server owns the
+    hard ceiling: it removes sets from the most overrepresented exercise first
+    (later exercise wins a tie), preserving one set per exercise when possible.
+    All semantic checks run again after this normalization.
+    """
+    (_minimum, maximum), _label = _session_set_corridor(workouts, today, state)
+    exercises = recommendation.get("exercises", [])
+    before = sum(len(exercise.get("sets", [])) for exercise in exercises)
+    total = before
+    while total > maximum and exercises:
+        removable = [
+            (len(exercise.get("sets", [])), index)
+            for index, exercise in enumerate(exercises)
+            if len(exercise.get("sets", [])) > 1
+        ]
+        if removable:
+            _count, index = max(removable, key=lambda item: (item[0], item[1]))
+            exercises[index]["sets"].pop()
+        else:
+            # Defensive fallback for a future phase whose ceiling is lower
+            # than the number of one-set exercises. Coverage validation below
+            # will reject the result if the removed exercise was mandatory.
+            exercises.pop()
+        total -= 1
+
+    if total == before:
+        return []
+
+    rationale = str(recommendation.get("rationale", "")).rstrip()
+    adjustment_note = (
+        f"**Проверка методики:** объём автоматически ограничен {maximum} "
+        f"рабочими подходами (модель предложила {before})."
+    )
+    recommendation["rationale"] = (
+        f"{rationale}\n\n{adjustment_note}" if rationale else adjustment_note
+    )
+    return [f"рабочие подходы: {before} → {total}"]
+
+
 def _semantic_violations(
     recommendation: dict[str, Any],
     raw: dict[str, Any],
@@ -906,7 +967,6 @@ def _semantic_violations(
     human-readable line — the list goes verbatim into the reprompt."""
     violations: list[str] = []
     names_by_id = {item["id"]: item["name"] for item in catalog}
-    params = coach_state.phase_params(state)
     returning = coach_state.is_return_from_break(workouts, today)
     deload_week = coach_state.cycle_position(state, workouts, today)["deload_week"]
     easing = returning or deload_week or _mentions_deload(recommendation)
@@ -1005,14 +1065,11 @@ def _semantic_violations(
                         "возврат/deload-сессия)"
                     )
 
-    # 3) total session sets inside the phase corridor.
+    # 3) total session sets inside the phase corridor. The generation pipeline
+    #    trims ceiling overflow before this check; the validator remains strict
+    #    so direct callers and too-small plans are still rejected.
     total_sets = sum(len(exercise["sets"]) for exercise in recommendation["exercises"])
-    if returning:
-        corridor, corridor_label = (10, 14), "возврат после перерыва"
-    elif deload_week:
-        corridor, corridor_label = (10, 14), "плановая разгрузочная неделя"
-    else:
-        corridor, corridor_label = params["session_sets"], f"фаза {params['phase']}"
+    corridor, corridor_label = _session_set_corridor(workouts, today, state)
     if not corridor[0] <= total_sets <= corridor[1]:
         violations.append(
             f"в сессии {total_sets} рабочих подходов, а коридор ({corridor_label}) — "
@@ -1102,7 +1159,7 @@ def generate_with_trace(
     max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> tuple[dict[str, Any], dict[str, Any], str, list[dict[str, Any]]]:
     """Like :func:`generate`, but also returns the attempt trace
-    ``[{raw, violations, usage}, ...]`` for the MCP debugging tools. On a
+    ``[{raw, adjustments, violations, usage}, ...]`` for the MCP debugging tools. On a
     final semantic failure the raised :class:`RecommendationError` carries the
     trace in ``exc.trace``."""
     if not workouts:
@@ -1135,10 +1192,20 @@ def generate_with_trace(
     trace: list[dict[str, Any]] = []
     parsed, usage = call(user)
     recommendation = _validate(parsed, catalog)
+    adjustments = _enforce_session_set_ceiling(
+        recommendation, workouts, today, state
+    )
     violations = _semantic_violations(
         recommendation, parsed, catalog, workouts, today, state
     )
-    trace.append({"raw": parsed, "violations": violations, "usage": usage})
+    trace.append(
+        {
+            "raw": parsed,
+            "adjustments": adjustments,
+            "violations": violations,
+            "usage": usage,
+        }
+    )
 
     if violations:
         # One corrective round-trip in the same conversation: name the exact
@@ -1156,10 +1223,20 @@ def generate_with_trace(
         ]
         parsed, usage_retry = call(messages)
         recommendation = _validate(parsed, catalog)
+        adjustments = _enforce_session_set_ceiling(
+            recommendation, workouts, today, state
+        )
         violations = _semantic_violations(
             recommendation, parsed, catalog, workouts, today, state
         )
-        trace.append({"raw": parsed, "violations": violations, "usage": usage_retry})
+        trace.append(
+            {
+                "raw": parsed,
+                "adjustments": adjustments,
+                "violations": violations,
+                "usage": usage_retry,
+            }
+        )
         usage = _sum_usage(usage, usage_retry)
         if violations:
             error = RecommendationError(

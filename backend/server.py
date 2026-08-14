@@ -698,6 +698,10 @@ class MiniAppHandler(BaseHTTPRequestHandler):
                 lock.release()
 
             if result is None:
+                # A failed generation must be immediately retryable from the
+                # error card; the anti-hammer cooldown only protects successful
+                # or still-current refreshes.
+                _last_refresh_started.pop(user_id, None)
                 rec = STORE.get_recommendation(user_id)
                 reason = (rec or {}).get("error") or "Не удалось сгенерировать рекомендацию"
                 payload = {"ok": False, "user": user, "reason": reason}

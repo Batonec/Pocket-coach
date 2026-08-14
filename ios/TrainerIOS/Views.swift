@@ -933,9 +933,9 @@ struct CoachCard: View {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 18)).foregroundStyle(DesignPalette.bad)
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Не удалось обновить совет")
+                    Text("Не удалось подготовить план")
                         .font(.jbm(14.5, weight: .bold)).tracking(-0.3).foregroundStyle(DesignPalette.ink)
-                    Text(rec.error ?? "Попробуй ещё раз.")
+                    Text(failureMessage(rec.error))
                         .font(.jbm(12)).foregroundStyle(DesignPalette.ink3)
                         .lineSpacing(2).fixedSize(horizontal: false, vertical: true)
                 }
@@ -958,6 +958,16 @@ struct CoachCard: View {
         }
         .padding(16)
         .liquidGlass(radius: 26)
+    }
+
+    private func failureMessage(_ error: String?) -> String {
+        guard let error, !error.isEmpty else {
+            return "Старый план скрыт. Попробуй ещё раз."
+        }
+        if error.localizedCaseInsensitiveContains("ограничения методики") {
+            return "План не прошёл автоматическую проверку нагрузки. Старый план скрыт — попробуй ещё раз."
+        }
+        return "\(error)\nСтарый план скрыт — попробуй ещё раз."
     }
 
     // MARK: shared bits
@@ -1126,7 +1136,7 @@ private struct TodayScreen: View {
                     CoachCard()
                 }
 
-                if !store.isTodayPlanWaitingForRefresh {
+                if !store.isTodayPlanUnavailable {
                     if store.draft.editingWorkoutID != nil {
                         sectionHeader("Редактируем", right: sessionSummary)
                     } else if store.draft.hasRealSets {
@@ -1307,7 +1317,7 @@ private struct TodayScreen: View {
                 .buttonStyle(.pressable(scale: 0.97))
                 .disabled(store.isSavingWorkout)
             }
-        } else if !store.isTodayPlanWaitingForRefresh,
+        } else if !store.isTodayPlanUnavailable,
                   let first = store.displayCards().first {
             Button {
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {

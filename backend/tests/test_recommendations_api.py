@@ -109,6 +109,29 @@ class RecommendationsAPITests(unittest.TestCase):
             self.assertFalse(res.payload["ok"])
             self.assertIn("вовремя", res.payload["reason"])
 
+    def test_failed_manual_refresh_can_be_retried_immediately(self) -> None:
+        calls = 0
+
+        def flaky_generate(*args, **kwargs):  # noqa: ANN002, ANN003
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("temporary generation failure")
+            return _fake_generate(*args, **kwargs)
+
+        with self._server(generate=flaky_generate) as running:
+            running.module.REFRESH_MIN_INTERVAL = 10
+            client = JsonHttpClient(running.base_url)
+            client.request_json("POST", "/api/workouts", sample_workout_payload(client_id="w1"))
+
+            first = client.request_json("POST", "/api/recommendations/refresh")
+            second = client.request_json("POST", "/api/recommendations/refresh")
+
+            self.assertEqual(first.status, 502)
+            self.assertEqual(second.status, 200)
+            self.assertEqual(second.payload["status"], "ready")
+            self.assertEqual(calls, 2)
+
     def test_workout_save_auto_triggers_generation(self) -> None:
         with self._server(auto_trigger=True) as running:
             client = JsonHttpClient(running.base_url)
