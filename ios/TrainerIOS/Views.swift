@@ -2012,94 +2012,20 @@ private struct Stepper: View {
 
 // MARK: - History tab
 
-// Coach-signal glyphs from the Claude Design mockups (screens/signals.jsx):
-// hand-drawn 18×18 stroke icons — scale (весы), tape (рулетка), back (возврат),
-// wave (разгрузка), doc (отчёт), check (веха). Nutrition uses the native
-// fork.knife symbol so the calorie-advice warning reads as food, not a gauge.
-// Unknown names fall back to doc.
+// Coach-signal glyphs use native SF Symbols only. The server sends semantic
+// tokens; CoachSignal maps every supported token to a system image and unknown
+// future tokens to info.circle.
 struct SignalGlyph: View {
-    var name: String
+    var systemName: String
     var color: Color
     var size: CGFloat = 17
 
     var body: some View {
-        Canvas { context, canvasSize in
-            let scale = canvasSize.width / 18
-            var path = Path()
-            var lineWidth: CGFloat = 1.9
-            switch name {
-            case "nutrition":
-                break
-            case "scale":
-                path.move(to: CGPoint(x: 2.5, y: 13.5))
-                path.addArc(
-                    center: CGPoint(x: 9, y: 13.5), radius: 6.5,
-                    startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false
-                )
-                path.move(to: CGPoint(x: 9, y: 12.5))
-                path.addLine(to: CGPoint(x: 12.4, y: 7.6))
-            case "tape":
-                path.addRoundedRect(
-                    in: CGRect(x: 1.6, y: 5.4, width: 14.8, height: 7.2),
-                    cornerSize: CGSize(width: 2, height: 2)
-                )
-                for (x, len) in [(5.4, 2.6), (9.0, 3.6), (12.6, 2.6)] {
-                    path.move(to: CGPoint(x: x, y: 5.4))
-                    path.addLine(to: CGPoint(x: x, y: 5.4 + len))
-                }
-            case "back":
-                path.move(to: CGPoint(x: 3, y: 9))
-                path.addArc(
-                    center: CGPoint(x: 9, y: 9), radius: 6,
-                    startAngle: .degrees(180), endAngle: .degrees(140), clockwise: false
-                )
-                path.move(to: CGPoint(x: 2.2, y: 1.9))
-                path.addLine(to: CGPoint(x: 2.6, y: 5.6))
-                path.addLine(to: CGPoint(x: 6.2, y: 5.1))
-            case "wave":
-                path.move(to: CGPoint(x: 1.6, y: 10.6))
-                path.addCurve(
-                    to: CGPoint(x: 6.4, y: 10.6),
-                    control1: CGPoint(x: 3.2, y: 7.2), control2: CGPoint(x: 4.8, y: 7.2)
-                )
-                path.addCurve(
-                    to: CGPoint(x: 11.2, y: 10.6),
-                    control1: CGPoint(x: 8.0, y: 14.0), control2: CGPoint(x: 9.6, y: 14.0)
-                )
-                path.addCurve(
-                    to: CGPoint(x: 16.0, y: 10.6),
-                    control1: CGPoint(x: 12.8, y: 7.2), control2: CGPoint(x: 14.4, y: 7.2)
-                )
-            case "check":
-                lineWidth = 2.2
-                path.move(to: CGPoint(x: 2.6, y: 9.4))
-                path.addLine(to: CGPoint(x: 6.6, y: 13.4))
-                path.addLine(to: CGPoint(x: 15, y: 4.6))
-            default: // "doc" and unknown names
-                path.addRoundedRect(
-                    in: CGRect(x: 3.2, y: 2, width: 11.6, height: 14),
-                    cornerSize: CGSize(width: 2, height: 2)
-                )
-                for (y, len) in [(6.4, 5.6), (9.4, 5.6), (12.4, 3.2)] {
-                    path.move(to: CGPoint(x: 6.2, y: y))
-                    path.addLine(to: CGPoint(x: 6.2 + len, y: y))
-                }
-            }
-            context.stroke(
-                path.applying(CGAffineTransform(scaleX: scale, y: scale)),
-                with: .color(color),
-                style: StrokeStyle(lineWidth: lineWidth * scale, lineCap: .round, lineJoin: .round)
-            )
-        }
-        .frame(width: size, height: size)
-        .overlay {
-            if name == "nutrition" {
-                Image(systemName: "fork.knife")
-                    .font(.system(size: size * 0.88, weight: .semibold))
-                    .symbolRenderingMode(.monochrome)
-                    .foregroundStyle(color)
-            }
-        }
+        Image(systemName: systemName)
+            .font(.system(size: size, weight: .semibold))
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(color)
+            .frame(width: size, height: size)
     }
 }
 
@@ -2168,7 +2094,7 @@ struct SignalBannerView: View {
                     .frame(width: 30, height: 30)
                     .overlay(
                         SignalGlyph(
-                            name: signal.glyph ?? "doc",
+                            systemName: signal.systemImage,
                             color: critical ? .white : tone.glyph
                         )
                     )
@@ -4394,7 +4320,7 @@ private struct BodyWeightScreen: View {
             RoundedRectangle(cornerRadius: 15, style: .continuous)
                 .fill(DesignPalette.ink.opacity(0.05))
                 .frame(width: 46, height: 46)
-                .overlay(SignalGlyph(name: "tape", color: DesignPalette.ink3, size: 22))
+                .overlay(SignalGlyph(systemName: "ruler", color: DesignPalette.ink3, size: 22))
                 .padding(.bottom, 12)
             Text("Первый замер станет базой фазы")
                 .font(.jbm(15, weight: .bold)).tracking(-0.2)

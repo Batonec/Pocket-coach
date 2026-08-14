@@ -426,11 +426,29 @@ struct CoachSignal: Codable, Hashable, Identifiable {
     var title: String
     var body: String
     var note: String?          // optional third line (italic, muted)
-    var glyph: String?         // scale | nutrition | tape | back | wave | doc | check
+    var glyph: String?         // semantic token mapped to an SF Symbol by the client
     var action: CoachSignalAction?
     var snoozable: Bool?
 
     var id: String { instanceKey }
+
+    /// Server glyphs are semantic tokens, not drawing instructions. Every
+    /// banner renders a native SF Symbol so the iconography stays optically
+    /// consistent with iOS and never falls back to hand-drawn paths.
+    var systemImage: String { Self.systemImage(for: glyph) }
+
+    static func systemImage(for glyph: String?) -> String {
+        switch glyph {
+        case "scale": "scalemass"
+        case "nutrition": "fork.knife"
+        case "tape": "ruler"
+        case "back": "figure.strengthtraining.traditional"
+        case "wave": "chart.line.downtrend.xyaxis"
+        case "doc": "doc.text"
+        case "check": "checkmark.circle"
+        default: "info.circle"
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case signalID = "id"

@@ -1,7 +1,27 @@
 import XCTest
+import UIKit
 @testable import TrainerIOS
 
 final class PayloadAndModelTests: XCTestCase {
+    func testCoachSignalGlyphsUseValidSystemSymbols() {
+        let expected = [
+            "scale": "scalemass",
+            "nutrition": "fork.knife",
+            "tape": "ruler",
+            "back": "figure.strengthtraining.traditional",
+            "wave": "chart.line.downtrend.xyaxis",
+            "doc": "doc.text",
+            "check": "checkmark.circle",
+        ]
+
+        for (token, systemName) in expected {
+            XCTAssertEqual(CoachSignal.systemImage(for: token), systemName)
+            XCTAssertNotNil(UIImage(systemName: systemName), systemName)
+        }
+        XCTAssertEqual(CoachSignal.systemImage(for: "future-token"), "info.circle")
+        XCTAssertNotNil(UIImage(systemName: CoachSignal.systemImage(for: nil)))
+    }
+
     func testWeeklyReportPeriodLabelUsesInclusiveServerWindow() {
         XCTAssertEqual(
             DateTools.periodLabel(endingAt: "2026-08-10", days: 7),

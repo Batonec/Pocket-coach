@@ -65,6 +65,12 @@ critical > warn > accent > info > positive
 опасность уже не предотвращается: возвратный протокол включён, а задача баннера —
 поддержать возвращение, поэтому `return_mode` намеренно имеет accent, а не warn.
 
+Все пиктограммы баннеров — системные SF Symbols. Сервер передаёт только смысловой
+токен, а iOS отображает: `scalemass`, `fork.knife`, `ruler`,
+`figure.strengthtraining.traditional`, `chart.line.downtrend.xyaxis`, `doc.text` или
+`checkmark.circle`. Самодельные `Canvas`-глифы в баннерах не используются; неизвестный
+токен безопасно отображается как `info.circle`.
+
 ## Реализованные сигналы
 
 ### `waist_limit` — critical
