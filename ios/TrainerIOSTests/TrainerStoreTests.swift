@@ -1,8 +1,28 @@
 import XCTest
+import UIKit
 @testable import TrainerIOS
 
 @MainActor
 final class TrainerStoreTests: XCTestCase {
+    func testMeasurementFieldBecomesFirstResponderWhenAttachedToWindow() async {
+        let field = ImmediateDecimalTextField(frame: CGRect(x: 20, y: 20, width: 200, height: 56))
+        let controller = UIViewController()
+        controller.view.addSubview(field)
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.rootViewController = controller
+        let beganEditing = XCTNSNotificationExpectation(
+            name: UITextField.textDidBeginEditingNotification,
+            object: field
+        )
+
+        window.makeKeyAndVisible()
+        await fulfillment(of: [beganEditing], timeout: 1)
+
+        XCTAssertTrue(field.isFirstResponder)
+        field.resignFirstResponder()
+        window.isHidden = true
+    }
+
     func testStoreDefaultsMatchREADMEInitialState() {
         let store = TrainerStore(defaults: .isolatedTestDefaults())
 

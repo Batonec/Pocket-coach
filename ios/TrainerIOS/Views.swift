@@ -4006,7 +4006,13 @@ private struct BodyWeightScreen: View {
         .onAppear { metric = store.measurementsMetric }
         .onChange(of: store.measurementsMetric) { _, newValue in metric = newValue }
         .sheet(isPresented: $showComposer) {
-            MeasureComposerSheet(metric: metric)
+            MeasureComposerSheet(
+                metric: metric,
+                initialDate: DateTools.date(
+                    from: metric == .weight ? store.bodyWeightDate : store.waistDate
+                ),
+                initialValue: metric == .weight ? store.bodyWeightValue : store.waistValue
+            )
                 .environmentObject(store)
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
@@ -4458,6 +4464,81 @@ private struct BodyWeightScreen: View {
     }
 }
 
+/// SwiftUI's `defaultFocus` is not reliable for a text field presented inside a
+/// sheet: on some iOS versions it updates the focus graph without making the
+/// underlying text input first responder. This UIKit field requests first
+/// responder status as soon as it actually belongs to a window, so the sheet
+/// and decimal keyboard start their animations together.
+final class ImmediateDecimalTextField: UITextField {
+    private var didRequestInitialFocus = false
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil, !didRequestInitialFocus else { return }
+        didRequestInitialFocus = true
+
+        // Waiting one main-loop turn lets the sheet finish attaching its view
+        // hierarchy while remaining inside the same presentation transition.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil else { return }
+            self.becomeFirstResponder()
+        }
+    }
+}
+
+private struct ImmediateDecimalInput: UIViewRepresentable {
+    @Binding var text: String
+    var accessibilityLabel: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeUIView(context: Context) -> ImmediateDecimalTextField {
+        let field = ImmediateDecimalTextField()
+        field.keyboardType = .decimalPad
+        field.placeholder = "0.0"
+        field.font = UIFont(name: AppFont.bold, size: 26)
+        field.textColor = UIColor(DesignPalette.ink)
+        field.tintColor = UIColor(DesignPalette.accent)
+        field.backgroundColor = .clear
+        field.adjustsFontForContentSizeCategory = true
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.accessibilityLabel = accessibilityLabel
+        field.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.valueChanged(_:)),
+            for: .editingChanged
+        )
+        return field
+    }
+
+    func updateUIView(_ uiView: ImmediateDecimalTextField, context: Context) {
+        context.coordinator.text = $text
+        uiView.accessibilityLabel = accessibilityLabel
+        if uiView.text != text {
+            uiView.text = text
+        }
+    }
+
+    static func dismantleUIView(_ uiView: ImmediateDecimalTextField, coordinator: Coordinator) {
+        uiView.resignFirstResponder()
+    }
+
+    final class Coordinator: NSObject {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        @objc func valueChanged(_ sender: UITextField) {
+            text.wrappedValue = sender.text ?? ""
+        }
+    }
+}
+
 // One composer for both metrics: «НОВЫЙ ЗАМЕР · ВЕС/ТАЛИЯ», date, value with
 // the unit, the waist hint, and an accent save button (mockup MeasureEntrySheet;
 // the system decimal pad replaces the custom keypad deliberately).
@@ -4465,10 +4546,14 @@ private struct MeasureComposerSheet: View {
     var metric: MeasureMetric
     @EnvironmentObject private var store: TrainerStore
     @Environment(\.dismiss) private var dismiss
-    @State private var draftDate = Date()
-    @State private var draftValue = ""
-    @State private var didInitialize = false
-    @FocusState private var isValueFocused: Bool
+    @State private var draftDate: Date
+    @State private var draftValue: String
+
+    init(metric: MeasureMetric, initialDate: Date, initialValue: String) {
+        self.metric = metric
+        _draftDate = State(initialValue: initialDate)
+        _draftValue = State(initialValue: initialValue)
+    }
 
     private var isSaving: Bool {
         metric == .weight ? store.isSavingBodyWeight : store.isSavingWaist
@@ -4513,11 +4598,12 @@ private struct MeasureComposerSheet: View {
                 // Keep keystrokes local to the sheet. Publishing every digit
                 // through the shared store rebuilt the chart-heavy screen
                 // underneath and also disturbed the decimal-pad caret.
-                TextField("0.0", text: $draftValue)
-                    .keyboardType(.decimalPad)
-                    .focused($isValueFocused)
-                    .font(.jbm(26, weight: .heavy))
+                ImmediateDecimalInput(
+                    text: $draftValue,
+                    accessibilityLabel: metric == .weight ? "Вес" : "Талия"
+                )
                     .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity)
                     .frame(height: 56)
                     .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
 
@@ -4574,22 +4660,7 @@ private struct MeasureComposerSheet: View {
         }
         .padding(22)
         .background(WarmWallpaper())
-        // Ask for focus as part of the sheet's first focus evaluation. Unlike a
-        // delayed onAppear assignment, this lets the sheet and keyboard animate
-        // in as one system transition and removes the extra tap.
-        .defaultFocus($isValueFocused, true, priority: .userInitiated)
         .interactiveDismissDisabled(isSaving)
-        .onAppear {
-            guard !didInitialize else { return }
-            didInitialize = true
-            if metric == .weight {
-                draftDate = DateTools.date(from: store.bodyWeightDate)
-                draftValue = store.bodyWeightValue
-            } else {
-                draftDate = DateTools.date(from: store.waistDate)
-                draftValue = store.waistValue
-            }
-        }
     }
 }
 
