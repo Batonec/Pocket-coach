@@ -142,7 +142,11 @@ class TrainingsSignalTests(unittest.TestCase):
         )
         self.assertEqual(signal["id"], "return_mode")
         self.assertEqual(signal["severity"], "accent")
-        self.assertIn("Просто приди", signal["body"])
+        self.assertEqual(signal["title"], "Следующая сессия — возвратная")
+        self.assertEqual(
+            signal["body"],
+            "~85–90% рабочих весов. Догонять пропущенное не надо",
+        )
 
 
 class DeloadSignalTests(unittest.TestCase):

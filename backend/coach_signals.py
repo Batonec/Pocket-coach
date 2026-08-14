@@ -261,8 +261,8 @@ def _trainings_signal(
     if days >= RETURN_BREAK_DAYS:
         return _signal(
             "return_mode", "trainings", "accent",
-            "Возвратная сессия уже облегчена",
-            "~85–90% весов. Просто приди, догонять ничего не надо",
+            "Следующая сессия — возвратная",
+            "~85–90% рабочих весов. Догонять пропущенное не надо",
             instance_fact=f"last_workout={last.isoformat()}",
             action_type="open_next_workout", action_label="План",
             glyph="back",
