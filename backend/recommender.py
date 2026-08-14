@@ -134,6 +134,49 @@ def load_profile(path: Path | str | None) -> dict[str, Any] | None:
     return raw
 
 
+def update_profile_block(
+    path: Path | str | None, block: str, text: str | None
+) -> dict[str, Any]:
+    """Replace one prose block of coach_profile.json (or delete it when `text`
+    is empty). This is the write path for the Coach MCP tool — the profile is
+    personal data living only next to the DB, so remote edits go through here
+    instead of SSH. The previous file version is kept as a timestamped .bak
+    next to the original. Returns the updated profile dict."""
+    if not path:
+        raise RecommendationError("Путь к профилю атлета не настроен")
+    path = Path(path)
+    try:
+        original = path.read_text("utf-8")
+        raw = json.loads(original)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise RecommendationError(
+            "Профиль не найден или сломан — проверь coach_profile.json руками"
+        ) from exc
+    if not isinstance(raw, dict) or not isinstance(raw.get("blocks"), dict):
+        raise RecommendationError(
+            "Профиль без blocks{} — проверь coach_profile.json руками"
+        )
+    name = str(block).strip()
+    if not name:
+        raise RecommendationError("Не задано имя блока профиля")
+    cleaned = str(text).strip() if text is not None else ""
+    blocks = raw["blocks"]
+    if not cleaned and name not in blocks:
+        raise RecommendationError(f"Блока «{name}» нет в профиле — удалять нечего")
+
+    backup = path.with_name(
+        f"{path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+    )
+    backup.write_text(original, "utf-8")
+    if cleaned:
+        blocks[name] = cleaned
+    else:
+        del blocks[name]
+    raw["updated"] = date.today().isoformat()
+    path.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", "utf-8")
+    return raw
+
+
 def _render_profile(profile: dict[str, Any] | None) -> str:
     if not profile:
         return (

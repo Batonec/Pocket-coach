@@ -112,6 +112,7 @@ _INSTRUCTIONS = """\
 
 Записывающие инструменты: coach_set_phase (смена фазы подготовки — только по
 явной просьбе пользователя), coach_update_state (лимит/база талии),
+coach_update_profile (правка блока профиля атлета — только по явной просьбе),
 coach_add_waist / coach_delete_waist (замеры талии, см).
 
 Это аналитика и сценарии, не медицинский совет: никаких рекомендаций по
@@ -327,6 +328,31 @@ def coach_update_state(
             }
         )
     except ValueError as exc:
+        return _result(_err(str(exc)))
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+@mcp.tool()
+def coach_update_profile(block: str, text: str | None = None) -> CallToolResult:
+    """Заменить текст ОДНОГО блока профиля атлета (coach_profile.json); пустой text удаляет блок. Только по явной просьбе пользователя — профиль содержит персональный/медицинский контекст. Предыдущая версия файла сохраняется рядом (.bak-таймстамп)."""
+    try:
+        profile = recommender.update_profile_block(_PROFILE_PATH, block, text)
+        replaced = text is not None and str(text).strip()
+        return _result(
+            {
+                "ok": True,
+                "summary": (
+                    f"Профиль обновлён: блок «{str(block).strip()}» заменён."
+                    if replaced
+                    else f"Блок «{str(block).strip()}» удалён из профиля."
+                ),
+                "blocks": list(profile.get("blocks", {}).keys()),
+                "updated": profile.get("updated"),
+                "profile_path": str(_PROFILE_PATH),
+            }
+        )
+    except recommender.RecommendationError as exc:
         return _result(_err(str(exc)))
     except Exception as exc:  # noqa: BLE001
         return _result(_err(f"Ошибка: {exc}"))

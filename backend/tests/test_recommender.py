@@ -184,6 +184,44 @@ class ProfileTests(unittest.TestCase):
             path.write_text('{"blocks":{}}', "utf-8")
             self.assertIsNone(recommender.load_profile(path))
 
+    def test_update_profile_block_replaces_deletes_and_backs_up(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "coach_profile.json"
+            path.write_text(
+                '{"schema":1,"updated":"2026-01-01",'
+                '"blocks":{"Цель":"старый текст","Атлет":"а"}}',
+                "utf-8",
+            )
+            updated = recommender.update_profile_block(path, "Цель", "новый текст")
+            self.assertEqual(updated["blocks"]["Цель"], "новый текст")
+            reloaded = recommender.load_profile(path)
+            self.assertEqual(reloaded["blocks"]["Цель"], "новый текст")
+            self.assertEqual(reloaded["blocks"]["Атлет"], "а")  # untouched
+            backups = list(Path(tmp).glob("coach_profile.json.bak-*"))
+            self.assertEqual(len(backups), 1)
+            self.assertIn("старый текст", backups[0].read_text("utf-8"))
+
+            # Empty text deletes the block.
+            recommender.update_profile_block(path, "Атлет", "")
+            self.assertNotIn("Атлет", recommender.load_profile(path)["blocks"])
+
+    def test_update_profile_block_rejects_missing_file_and_unknown_delete(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with self.assertRaises(recommender.RecommendationError):
+            recommender.update_profile_block(None, "Цель", "x")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "coach_profile.json"
+            with self.assertRaises(recommender.RecommendationError):
+                recommender.update_profile_block(path, "Цель", "x")
+            path.write_text('{"schema":1,"blocks":{"Цель":"т"}}', "utf-8")
+            with self.assertRaises(recommender.RecommendationError):
+                recommender.update_profile_block(path, "Нет такого", "")
+
     def test_system_prompt_embeds_profile_semantics_and_policy(self) -> None:
         profile = {"schema": 1, "blocks": {"Цель": "lean bulk, потолок 84 кг"}}
         prompt = recommender._build_system_prompt(CATALOG, profile)

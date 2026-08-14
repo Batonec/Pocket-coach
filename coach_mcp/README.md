@@ -30,6 +30,7 @@ validator violations and the auto-reprompt, token usage and cost).
 |------|--------------|
 | `coach_set_phase(phase, params?)` | Switch the preparation phase by hand (`cut_recomp` / `lean_bulk` / `maintenance`); stamps today as the phase start. No automatic switching ever — when a phase goal is reached, the prompt only asks the model to *suggest* the switch |
 | `coach_update_state(waist_limit_cm?, waist_base_cm?)` | Global knobs: hard waist limit, phase-base waist |
+| `coach_update_profile(block, text?)` | Replace one profile block (empty text deletes it); previous file kept as a timestamped `.bak` |
 | `coach_add_waist(waist_cm, entry_date?)` | Record a waist measurement (upserts per date) |
 | `coach_delete_waist(entry_id)` | Remove a mistyped measurement |
 
