@@ -2952,17 +2952,16 @@ private struct DisciplineCard: View {
         Group {
             if summary.hasData {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .firstTextBaseline) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("\(Int((summary.ratio * 100).rounded()))%")
                             .font(.jbm(28, weight: .heavy)).tracking(-0.5)
                             .foregroundStyle(DesignPalette.ink)
                         Text("подходов из планов тренера")
                             .font(.jbm(12, weight: .semibold))
                             .foregroundStyle(DesignPalette.ink3)
-                        Spacer()
-                        Text("\(summary.comparedWorkouts) трен. по плану")
-                            .font(.jbm(11, weight: .semibold))
-                            .foregroundStyle(DesignPalette.ink2)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
                     }
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
@@ -2971,9 +2970,11 @@ private struct DisciplineCard: View {
                         }
                     }
                     .frame(height: 7)
-                    Text("\(summary.doneSets) из \(summary.plannedSets) запланированных подходов за 30 дней")
+                    Text("\(summary.doneSets) из \(summary.plannedSets) плановых подходов · \(summary.comparedWorkouts) трен. по плану")
                         .font(.jbm(10.5, weight: .medium))
                         .foregroundStyle(DesignPalette.ink3)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                     if !summary.skippedByName.isEmpty {
                         Text("чаще пропускаешь: \(skippedLabel)")
                             .font(.jbm(10.5, weight: .medium))
