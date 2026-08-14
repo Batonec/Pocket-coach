@@ -780,6 +780,10 @@ struct ContentView: View {
         .animation(.spring(response: 0.28, dampingFraction: 0.86), value: store.toast)
         .animation(.spring(response: 0.32, dampingFraction: 0.85), value: store.currentTab)
         .animation(.spring(response: 0.32, dampingFraction: 0.85), value: store.draft.hasRealSets)
+        // Decimal-pad startup is surprisingly expensive on a cold process.
+        // Pay that one-time cost behind the loading screen, not after the user
+        // taps "+" on Measurements.
+        .onAppear { DecimalKeyboardPrewarmer.warmUp() }
     }
 }
 
@@ -3953,6 +3957,8 @@ private struct BodyWeightScreen: View {
     @State private var pendingDeleteWeight: BodyWeightEntry?
     @State private var pendingDeleteWaist: WaistEntry?
     @State private var showComposer = false
+    @State private var composerInitialDate = Date()
+    @State private var composerInitialValue = ""
     // Preserve the internal user marker for diagnostics without reserving
     // product-screen space for it.
     private let showsDeveloperHeader = false
@@ -4003,15 +4009,18 @@ private struct BodyWeightScreen: View {
         // otherwise the first keyboard presentation needlessly lays out the
         // entire measurements screen again.
         .ignoresSafeArea(.keyboard, edges: .bottom)
-        .onAppear { metric = store.measurementsMetric }
+        .onAppear {
+            metric = store.measurementsMetric
+            // Fallback for the rare case where ContentView appeared before its
+            // UIWindow became key and could not prewarm the input system yet.
+            DecimalKeyboardPrewarmer.warmUp()
+        }
         .onChange(of: store.measurementsMetric) { _, newValue in metric = newValue }
         .sheet(isPresented: $showComposer) {
             MeasureComposerSheet(
                 metric: metric,
-                initialDate: DateTools.date(
-                    from: metric == .weight ? store.bodyWeightDate : store.waistDate
-                ),
-                initialValue: metric == .weight ? store.bodyWeightValue : store.waistValue
+                initialDate: composerInitialDate,
+                initialValue: composerInitialValue
             )
                 .environmentObject(store)
                 .presentationDetents([.medium])
@@ -4188,14 +4197,7 @@ private struct BodyWeightScreen: View {
 
     private var addButton: some View {
         Button {
-            if metric == .weight {
-                store.bodyWeightDate = DateTools.localTodayISO()
-                store.syncBodyWeightComposer()
-            } else {
-                store.waistDate = DateTools.localTodayISO()
-                store.syncWaistComposer()
-            }
-            showComposer = true
+            openComposer()
         } label: {
             ZStack {
                 Circle().fill(DesignPalette.accent)
@@ -4374,9 +4376,7 @@ private struct BodyWeightScreen: View {
                 .foregroundStyle(DesignPalette.ink4)
                 .padding(.top, 8)
             Button {
-                store.waistDate = DateTools.localTodayISO()
-                store.syncWaistComposer()
-                showComposer = true
+                openComposer()
             } label: {
                 Text("Внести талию")
                     .font(.jbm(14, weight: .bold))
@@ -4395,6 +4395,15 @@ private struct BodyWeightScreen: View {
     }
 
     // MARK: helpers
+
+    private func openComposer() {
+        let today = DateTools.localTodayISO()
+        composerInitialDate = DateTools.date(from: today)
+        composerInitialValue = metric == .weight
+            ? store.bodyWeightComposerValue(for: today)
+            : store.waistComposerValue(for: today)
+        showComposer = true
+    }
 
     private var ninetyDayDelta: Double? {
         let cal = Calendar.current
@@ -4469,6 +4478,32 @@ private struct BodyWeightScreen: View {
 /// underlying text input first responder. This UIKit field requests first
 /// responder status as soon as it actually belongs to a window, so the sheet
 /// and decimal keyboard start their animations together.
+@MainActor
+private enum DecimalKeyboardPrewarmer {
+    private static var didWarmUp = false
+
+    static func warmUp() {
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+              !didWarmUp,
+              let window = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .flatMap(\.windows)
+                .first(where: \.isKeyWindow)
+        else { return }
+
+        let field = UITextField(frame: CGRect(x: -2, y: -2, width: 1, height: 1))
+        field.alpha = 0.01
+        field.keyboardType = .decimalPad
+        window.addSubview(field)
+
+        // A synchronous become/resign cycle initializes KeyboardServices but
+        // is completed before Core Animation commits a visible keyboard frame.
+        didWarmUp = field.becomeFirstResponder()
+        field.resignFirstResponder()
+        field.removeFromSuperview()
+    }
+}
+
 final class ImmediateDecimalTextField: UITextField {
     private var didRequestInitialFocus = false
 
@@ -4486,12 +4521,21 @@ final class ImmediateDecimalTextField: UITextField {
     }
 }
 
-private struct ImmediateDecimalInput: UIViewRepresentable {
+final class DecimalDraftBuffer {
+    var value: String
+
+    init(value: String) {
+        self.value = value
+    }
+}
+
+struct ImmediateDecimalInput: UIViewRepresentable {
     @Binding var text: String
+    var buffer: DecimalDraftBuffer
     var accessibilityLabel: String
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, buffer: buffer)
     }
 
     func makeUIView(context: Context) -> ImmediateDecimalTextField {
@@ -4516,25 +4560,46 @@ private struct ImmediateDecimalInput: UIViewRepresentable {
 
     func updateUIView(_ uiView: ImmediateDecimalTextField, context: Context) {
         context.coordinator.text = $text
+        context.coordinator.buffer = buffer
         uiView.accessibilityLabel = accessibilityLabel
-        if uiView.text != text {
+        // While editing, UIKit is the source of truth. The SwiftUI binding is
+        // intentionally debounced so its validation pass cannot delay the key
+        // that the user has just pressed.
+        if !uiView.isFirstResponder, uiView.text != text {
             uiView.text = text
         }
     }
 
     static func dismantleUIView(_ uiView: ImmediateDecimalTextField, coordinator: Coordinator) {
+        coordinator.cancelPendingUpdate()
         uiView.resignFirstResponder()
     }
 
     final class Coordinator: NSObject {
         var text: Binding<String>
+        var buffer: DecimalDraftBuffer
+        private var pendingTextUpdate: DispatchWorkItem?
 
-        init(text: Binding<String>) {
+        init(text: Binding<String>, buffer: DecimalDraftBuffer) {
             self.text = text
+            self.buffer = buffer
         }
 
         @objc func valueChanged(_ sender: UITextField) {
-            text.wrappedValue = sender.text ?? ""
+            let value = sender.text ?? ""
+            buffer.value = value
+            pendingTextUpdate?.cancel()
+
+            let update = DispatchWorkItem { [weak self] in
+                self?.text.wrappedValue = value
+            }
+            pendingTextUpdate = update
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: update)
+        }
+
+        func cancelPendingUpdate() {
+            pendingTextUpdate?.cancel()
+            pendingTextUpdate = nil
         }
     }
 }
@@ -4548,11 +4613,13 @@ private struct MeasureComposerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draftDate: Date
     @State private var draftValue: String
+    private let draftBuffer: DecimalDraftBuffer
 
     init(metric: MeasureMetric, initialDate: Date, initialValue: String) {
         self.metric = metric
         _draftDate = State(initialValue: initialDate)
         _draftValue = State(initialValue: initialValue)
+        draftBuffer = DecimalDraftBuffer(value: initialValue)
     }
 
     private var isSaving: Bool {
@@ -4600,6 +4667,7 @@ private struct MeasureComposerSheet: View {
                 // underneath and also disturbed the decimal-pad caret.
                 ImmediateDecimalInput(
                     text: $draftValue,
+                    buffer: draftBuffer,
                     accessibilityLabel: metric == .weight ? "Вес" : "Талия"
                 )
                     .padding(.horizontal, 14)
@@ -4626,14 +4694,15 @@ private struct MeasureComposerSheet: View {
 
             Button {
                 Task {
+                    let currentValue = TrainerLogic.normalizeBodyWeightInput(draftBuffer.value)
                     let saved: Bool
                     if metric == .weight {
                         store.setBodyWeightDate(draftDate)
-                        store.setBodyWeightValue(normalizedDraftValue)
+                        store.setBodyWeightValue(currentValue)
                         saved = await store.saveBodyWeight()
                     } else {
                         store.setWaistDate(draftDate)
-                        store.setWaistValue(normalizedDraftValue)
+                        store.setWaistValue(currentValue)
                         saved = await store.saveWaist()
                     }
                     if saved {

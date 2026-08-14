@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 import UIKit
 @testable import TrainerIOS
 
@@ -21,6 +22,33 @@ final class TrainerStoreTests: XCTestCase {
         XCTAssertTrue(field.isFirstResponder)
         field.resignFirstResponder()
         window.isHidden = true
+    }
+
+    func testMeasurementInputBuffersFirstKeyBeforeRelayingItToSwiftUI() async {
+        var relayedText = ""
+        let didRelay = expectation(description: "Debounced text reached SwiftUI")
+        let buffer = DecimalDraftBuffer(value: "")
+        let input = ImmediateDecimalInput(
+            text: Binding(
+                get: { relayedText },
+                set: {
+                    relayedText = $0
+                    didRelay.fulfill()
+                }
+            ),
+            buffer: buffer,
+            accessibilityLabel: "Вес"
+        )
+        let coordinator = input.makeCoordinator()
+        let field = UITextField()
+        field.text = "8"
+
+        coordinator.valueChanged(field)
+
+        XCTAssertEqual(buffer.value, "8")
+        XCTAssertEqual(relayedText, "", "The key must not synchronously rebuild SwiftUI")
+        await fulfillment(of: [didRelay], timeout: 1)
+        XCTAssertEqual(relayedText, "8")
     }
 
     func testStoreDefaultsMatchREADMEInitialState() {
@@ -433,6 +461,12 @@ final class TrainerStoreTests: XCTestCase {
             TestFixtures.bodyWeight(id: 2, date: "2026-05-03", weight: 81.9)
         ])
 
+        store.bodyWeightDate = "unchanged"
+        store.bodyWeightValue = "unchanged"
+        XCTAssertEqual(store.bodyWeightComposerValue(for: "2026-05-01"), "82.4")
+        XCTAssertEqual(store.bodyWeightDate, "unchanged")
+        XCTAssertEqual(store.bodyWeightValue, "unchanged")
+
         store.bodyWeightDate = "2026-05-01"
         store.syncBodyWeightComposer()
         XCTAssertEqual(store.bodyWeightValue, "82.4")
@@ -458,6 +492,10 @@ final class TrainerStoreTests: XCTestCase {
             ),
         ]
         store.waistDate = "2026-08-14"
+
+        store.waistValue = "unchanged"
+        XCTAssertEqual(store.waistComposerValue(for: "2026-08-14"), "84")
+        XCTAssertEqual(store.waistValue, "unchanged")
 
         store.syncWaistComposer()
 

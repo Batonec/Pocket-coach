@@ -212,16 +212,17 @@ final class TrainerStore: ObservableObject {
 
     func syncBodyWeightComposer(preserveValue: Bool = false) {
         guard !preserveValue else { return }
-        if let existing = bodyWeightEntries.first(where: { $0.entryDate == bodyWeightDate }) {
-            bodyWeightValue = TrainerLogic.formatBodyWeightInput(existing.weight)
-            return
-        }
+        bodyWeightValue = bodyWeightComposerValue(for: bodyWeightDate)
+    }
 
-        if let latest = bodyWeightEntries.last {
-            bodyWeightValue = TrainerLogic.formatBodyWeightInput(latest.weight)
-        } else {
-            bodyWeightValue = ""
+    func bodyWeightComposerValue(for entryDate: String) -> String {
+        if let existing = bodyWeightEntries.first(where: { $0.entryDate == entryDate }) {
+            return TrainerLogic.formatBodyWeightInput(existing.weight)
         }
+        if let latest = bodyWeightEntries.last {
+            return TrainerLogic.formatBodyWeightInput(latest.weight)
+        }
+        return ""
     }
 
     @discardableResult
@@ -281,19 +282,21 @@ final class TrainerStore: ObservableObject {
     }
 
     func syncWaistComposer() {
+        waistValue = waistComposerValue(for: waistDate)
+    }
+
+    func waistComposerValue(for entryDate: String) -> String {
         if let existing = waistEntries.first(where: {
-            $0.entryDate == waistDate && Self.validWaistRange.contains($0.waist)
+            $0.entryDate == entryDate && Self.validWaistRange.contains($0.waist)
         }) {
-            waistValue = TrainerLogic.formatBodyWeightInput(existing.waist)
-            return
+            return TrainerLogic.formatBodyWeightInput(existing.waist)
         }
         if let latest = waistEntries.last(where: {
             Self.validWaistRange.contains($0.waist)
         }) {
-            waistValue = TrainerLogic.formatBodyWeightInput(latest.waist)
-        } else {
-            waistValue = ""
+            return TrainerLogic.formatBodyWeightInput(latest.waist)
         }
+        return ""
     }
 
     @discardableResult
