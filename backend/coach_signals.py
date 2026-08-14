@@ -511,6 +511,24 @@ def compute_signals(
             FAMILY_RANK.get(signal["family"], 9),
         )
     )
+
+    # The info-grade trend nudge is easily masked: the client renders only the
+    # first banner (the second slot opens under critical only), and e.g. during
+    # a return period the accent return_mode legitimately outranks it. Instead
+    # of silently losing the nudge, ride it as the muted third line of whatever
+    # banner sits on top. Under a critical first the second slot is open, so
+    # the nudge keeps its own card.
+    trend = next(
+        (signal for signal in active if signal["id"] == "weight_trend_stale"), None
+    )
+    if (
+        trend is not None
+        and active[0] is not trend
+        and active[0]["severity"] != "critical"
+    ):
+        if not active[0].get("note"):
+            active[0]["note"] = "И взвесься: тренд веса не считается"
+        active.remove(trend)
     return active
 
 

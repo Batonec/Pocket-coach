@@ -2110,7 +2110,10 @@ struct SignalBannerView: View {
                     .padding(.top, 1)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(signal.title)
-                        .font(.jbm(13, weight: .bold)).tracking(-0.2)
+                        // Regular weight on purpose: the banner should read as
+                        // a coach's line, not shout — hierarchy comes from the
+                        // size and ink vs the muted body.
+                        .font(.jbm(13)).tracking(-0.2)
                         .foregroundStyle(ink)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)

@@ -435,6 +435,43 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(ready[0]["action"]["type"], "open_next_workout")
 
+    def test_trend_nudge_rides_the_return_banner_note_instead_of_hiding(self) -> None:
+        # The client shows only the first banner, so an accent return_mode
+        # would silently mask the info-grade trend nudge — it must ride along
+        # as the muted third line instead.
+        today = date(2026, 8, 14)
+        self._add_workout("2026-07-20")  # 25 дней → return_mode
+        self.store.save_body_weight(
+            self.uid, {"entry_date": "2026-08-08", "weight": 79.0}  # 6 дн., тренда нет
+        )
+        self.store.save_waist(self.uid, {"entry_date": today.isoformat(), "waist": 84.0})
+        self.store.save_recommendation(
+            self.uid,
+            self.store.get_latest_workout_id(self.uid),
+            1,
+            "claude-test",
+            {"focus": "return", "coach_context": {"return_from_break": True}},
+            1,
+            1,
+        )
+        signals = coach_signals.compute_signals(
+            self.store, self.uid, dict(STATE), today=today
+        )
+        self.assertEqual([signal["id"] for signal in signals], ["return_mode"])
+        self.assertIn("взвесься", signals[0]["note"].lower())
+
+    def test_trend_nudge_stands_alone_without_higher_banners(self) -> None:
+        today = date(2026, 8, 14)
+        self._add_workout("2026-08-12")  # тренировка свежая — «тренировки» молчат
+        self.store.save_body_weight(
+            self.uid, {"entry_date": "2026-08-08", "weight": 79.0}
+        )
+        self.store.save_waist(self.uid, {"entry_date": today.isoformat(), "waist": 84.0})
+        signals = coach_signals.compute_signals(
+            self.store, self.uid, dict(STATE), today=today
+        )
+        self.assertEqual([signal["id"] for signal in signals], ["weight_trend_stale"])
+
     def test_expired_timed_snooze_returns_the_signal(self) -> None:
         today = date(2026, 8, 14)
         self._add_workout("2026-08-02")
