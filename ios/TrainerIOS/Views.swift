@@ -3987,6 +3987,11 @@ private struct BodyWeightScreen: View {
             WarmWallpaper()
             content
         }
+        // The keyboard belongs to the measurement composer. Keep the chart-heavy
+        // screen underneath at its existing size while the sheet gains focus;
+        // otherwise the first keyboard presentation needlessly lays out the
+        // entire measurements screen again.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .onAppear { metric = store.measurementsMetric }
         .onChange(of: store.measurementsMetric) { _, newValue in metric = newValue }
         .sheet(isPresented: $showComposer) {
@@ -4447,6 +4452,7 @@ private struct MeasureComposerSheet: View {
     @State private var draftDate = Date()
     @State private var draftValue = ""
     @State private var didInitialize = false
+    @FocusState private var isValueFocused: Bool
 
     private var isSaving: Bool {
         metric == .weight ? store.isSavingBodyWeight : store.isSavingWaist
@@ -4492,11 +4498,12 @@ private struct MeasureComposerSheet: View {
                 // through the shared store rebuilt the chart-heavy screen
                 // underneath and also disturbed the decimal-pad caret.
                 TextField("0.0", text: $draftValue)
-                .keyboardType(.decimalPad)
-                .font(.jbm(26, weight: .heavy))
-                .padding(.horizontal, 14)
-                .frame(height: 56)
-                .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
+                    .keyboardType(.decimalPad)
+                    .focused($isValueFocused)
+                    .font(.jbm(26, weight: .heavy))
+                    .padding(.horizontal, 14)
+                    .frame(height: 56)
+                    .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
 
                 Text(metric == .weight ? "кг" : "см")
                     .font(.jbm(16, weight: .semibold))
@@ -4551,6 +4558,10 @@ private struct MeasureComposerSheet: View {
         }
         .padding(22)
         .background(WarmWallpaper())
+        // Ask for focus as part of the sheet's first focus evaluation. Unlike a
+        // delayed onAppear assignment, this lets the sheet and keyboard animate
+        // in as one system transition and removes the extra tap.
+        .defaultFocus($isValueFocused, true, priority: .userInitiated)
         .interactiveDismissDisabled(isSaving)
         .onAppear {
             guard !didInitialize else { return }
