@@ -3953,6 +3953,9 @@ private struct BodyWeightScreen: View {
     @State private var pendingDeleteWeight: BodyWeightEntry?
     @State private var pendingDeleteWaist: WaistEntry?
     @State private var showComposer = false
+    // Preserve the internal user marker for diagnostics without reserving
+    // product-screen space for it.
+    private let showsDeveloperHeader = false
 
     // Both metrics render through one chart/list shape.
     private struct MeasurePoint: Identifiable {
@@ -4039,7 +4042,9 @@ private struct BodyWeightScreen: View {
     private var content: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                headerPills
+                if showsDeveloperHeader {
+                    headerPills
+                }
                 TopTitle(sub: "Вес и талия", title: "Замеры")
                     .padding(.horizontal, 4)
 
