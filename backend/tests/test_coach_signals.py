@@ -57,7 +57,7 @@ class MeasurementsSignalTests(unittest.TestCase):
         signal = coach_signals._measurements_signal(_weights(27), [], STATE, TODAY)
         self.assertEqual(signal["id"], "measurements_overdue")
         self.assertEqual(signal["severity"], "warn")
-        self.assertIn("вес и талия", signal["body"])
+        self.assertIn("вес и талию", signal["body"])
 
     def test_only_waist_due_targets_the_waist_segment(self) -> None:
         signal = coach_signals._measurements_signal(_weights(2), _waists(12), STATE, TODAY)

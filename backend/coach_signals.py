@@ -140,7 +140,8 @@ def _measurements_signal(
         due_title = "Обнови вес — талия свежая"
 
     if overdue:
-        parts = " и ".join(overdue)
+        accusative = {"вес": "вес", "талия": "талию"}
+        parts = " и ".join(accusative.get(part, part) for part in overdue)
         return _signal(
             "measurements_overdue", "measurements", "warn",
             "Советы по калориям на паузе",
