@@ -276,7 +276,9 @@ final class TrainerStore: ObservableObject {
             waistEntries.sort { $0.entryDate < $1.entryDate }
             syncWaistComposer()
             showToast(response.created == true ? "Талия сохранена" : "Талия обновлена")
-            hideCoachSignals(withIDs: ["measurements_due", "measurements_overdue"])
+            hideCoachSignals(withIDs: [
+                "measurements_due", "measurements_overdue", "waist_limit",
+            ])
             refreshCoachSignals()
         } catch {
             showToast(error.localizedDescription)

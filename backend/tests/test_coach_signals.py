@@ -38,6 +38,62 @@ def _waists(days_ago: int) -> list[dict]:
     return [{"entry_date": (TODAY - timedelta(days=days_ago)).isoformat(), "waist": 84.0}]
 
 
+class WaistLimitSignalTests(unittest.TestCase):
+    def _state(self, **overrides) -> dict:
+        state = dict(
+            STATE,
+            phase="lean_bulk",
+            phase_started="2026-07-01",
+            waist_limit_cm=88.0,
+        )
+        state.update(overrides)
+        return state
+
+    def _points(self, older: float, latest: float, latest_days_ago: int = 0) -> list[dict]:
+        return [
+            {
+                "entry_date": (TODAY - timedelta(days=latest_days_ago + 7)).isoformat(),
+                "waist": older,
+            },
+            {
+                "entry_date": (TODAY - timedelta(days=latest_days_ago)).isoformat(),
+                "waist": latest,
+            },
+        ]
+
+    def test_two_consecutive_limit_readings_are_critical(self) -> None:
+        signal = coach_signals._waist_limit_signal(
+            self._points(88.0, 88.5), self._state(), TODAY
+        )
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["id"], "waist_limit")
+        self.assertEqual(signal["severity"], "critical")
+        self.assertEqual(signal["glyph"], "tape")
+        self.assertEqual(signal["action"]["target"], "waist")
+        self.assertFalse(signal["snoozable"])
+
+    def test_one_crossing_does_not_trigger_on_tape_noise(self) -> None:
+        self.assertIsNone(
+            coach_signals._waist_limit_signal(
+                self._points(87.8, 88.4), self._state(), TODAY
+            )
+        )
+
+    def test_signal_only_exists_in_lean_bulk(self) -> None:
+        self.assertIsNone(
+            coach_signals._waist_limit_signal(
+                self._points(88.2, 88.4), self._state(phase="cut_recomp"), TODAY
+            )
+        )
+
+    def test_stale_pair_does_not_leave_permanent_critical(self) -> None:
+        self.assertIsNone(
+            coach_signals._waist_limit_signal(
+                self._points(88.2, 88.4, latest_days_ago=15), self._state(), TODAY
+            )
+        )
+
+
 class MeasurementsSignalTests(unittest.TestCase):
     def test_fresh_measurements_mean_no_signal(self) -> None:
         self.assertIsNone(
@@ -150,6 +206,32 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
     def _add_workout(self, when: str) -> None:
         payload = sample_workout_payload(client_id=f"w-{when}", workout_date=when)
         self.store.save_workout(self.uid, payload)
+
+    def test_waist_limit_is_first_and_replaces_freshness_reminder(self) -> None:
+        self._add_workout("2026-08-02")  # warn: return_soon
+        self.store.save_body_weight(
+            self.uid, {"entry_date": TODAY.isoformat(), "weight": 79.0}
+        )
+        self.store.save_waist(
+            self.uid, {"entry_date": "2026-08-07", "waist": 88.0}
+        )
+        self.store.save_waist(
+            self.uid, {"entry_date": TODAY.isoformat(), "waist": 88.5}
+        )
+        state = dict(
+            STATE,
+            phase="lean_bulk",
+            phase_started="2026-08-01",
+            waist_limit_cm=88.0,
+        )
+
+        signals = coach_signals.compute_signals(
+            self.store, self.uid, state, today=TODAY
+        )
+
+        self.assertEqual([signal["id"] for signal in signals], [
+            "waist_limit", "return_soon",
+        ])
 
     def test_positive_is_suppressed_next_to_a_warn(self) -> None:
         today = date(2026, 8, 10)  # понедельник

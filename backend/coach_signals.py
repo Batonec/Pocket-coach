@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Coach signals for the История banner (see ios/COACH_SIGNALS_BANNER_BRIEF.md).
+"""Coach signals for the История banner (see docs/COACH_SIGNALS.md).
 
 The server computes the full, already-collapsed, snooze-filtered, sorted list
 on the fly from SQLite + coach_state — no cache, no LLM. The client renders
 the first one or two items and never invents texts or compares dates itself.
 
-Taxonomy (MVP): the «замеры» family (weight+waist collapsed, two stages), the
-«тренировки» family (return_soon → return_mode escalation), deload_week,
-weekly_report_ready and the positive week_done. Every signal dies on its own
-(state change, escalation, TTL); dismissal keys are per-episode instance keys,
-so «скрыть навсегда» does not exist.
+Taxonomy: the «замеры» family (weight+waist freshness collapsed, plus the hard
+waist limit), the «тренировки» family (return_soon → return_mode escalation),
+deload_week, weekly_report_ready and the positive week_done. Every signal dies
+on its own (state change, escalation, TTL); dismissal keys are per-episode
+instance keys, so «скрыть навсегда» does not exist.
 """
 from __future__ import annotations
 
@@ -103,6 +103,61 @@ def _plural_days(days: int) -> str:
 # --------------------------------------------------------------------------- #
 # Families
 # --------------------------------------------------------------------------- #
+def _waist_limit_signal(
+    waists: list[dict[str, Any]],
+    state: dict[str, Any],
+    today: date,
+) -> dict[str, Any] | None:
+    """Critical hard-limit episode: two fresh in-phase readings at/above it.
+
+    A single noisy tape reading must not change the athlete's phase. Restricting
+    the pair to the current phase and requiring the latest point to be fresh
+    also guarantees a deterministic auto-exit after a phase change, a lower
+    reading, or measurement staleness.
+    """
+    if state.get("phase") != "lean_bulk":
+        return None
+    try:
+        limit = float(state.get("waist_limit_cm"))
+    except (TypeError, ValueError):
+        return None
+    if limit <= 0:
+        return None
+
+    started_raw = state.get("phase_started")
+    if not isinstance(started_raw, str):
+        return None
+    try:
+        phase_start = date.fromisoformat(started_raw)
+    except ValueError:
+        return None
+
+    points = [
+        point for point in coach_features.waist_points(waists)
+        if phase_start <= point[0] <= today
+    ]
+    if len(points) < 2:
+        return None
+    previous, latest = points[-2], points[-1]
+    latest_age = (today - latest[0]).days
+    if latest_age > MEASUREMENT_OVERDUE_DAYS:
+        return None
+    if previous[1] < limit or latest[1] < limit:
+        return None
+
+    return _signal(
+        "waist_limit", "measurements", "critical",
+        f"Талия {latest[1]:g} см — у лимита {limit:g}",
+        "Тренер предлагает мини-кат",
+        instance_fact=(
+            f"pair={previous[0].isoformat()}:{previous[1]:g},"
+            f"{latest[0].isoformat()}:{latest[1]:g},limit={limit:g}"
+        ),
+        action_type="open_measurements", action_label="Замеры", action_target="waist",
+        glyph="tape",
+    )
+
+
 def _measurements_signal(
     body_weights: list[dict[str, Any]],
     waists: list[dict[str, Any]],
@@ -331,8 +386,14 @@ def compute_signals(
     body_weights = store.list_body_weights(user_id)
     waists = store.list_waists(user_id)
 
+    # One family, one message: the critical waist-limit episode supersedes a
+    # routine freshness reminder instead of stacking two measurement banners.
+    measurements = (
+        _waist_limit_signal(waists, state, today)
+        or _measurements_signal(body_weights, waists, state, today)
+    )
     candidates = [
-        _measurements_signal(body_weights, waists, state, today),
+        measurements,
         _trainings_signal(workouts, today),
         _deload_signal(state, workouts, today),
         _report_signal(store, user_id, workouts, now_ts),

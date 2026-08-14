@@ -789,7 +789,7 @@ private struct MainShellView: View {
     @State private var isShowingSettings = false
 
     // Per the design refresh, the Progress tab is gone — Progress is reachable
-    // only by tapping the streak strip on History. Tabs are: История, Тренировка, Вес.
+    // only by tapping the streak strip on History. Tabs are: История, Сегодня, Замеры.
     var body: some View {
         TabView(selection: tabBinding) {
             HistoryScreen(openSettings: { isShowingSettings = true })
@@ -2074,26 +2074,15 @@ struct SignalGlyph: View {
     }
 }
 
-// Coach signal banner, styled after the Claude Design mockups
-// (screens/signals.jsx). Renders the first signal — or two when the top one is
-// critical. Unknown severities fall back to the info tone so the server can
-// grow the taxonomy without an app release.
+// One coach signal banner, styled after the Claude Design mockups
+// (screens/signals.jsx). History owns the visibility cap so every banner is an
+// independent List row and gets the native trailing swipe action.
 struct SignalBannerView: View {
-    var signals: [CoachSignal]
+    var signal: CoachSignal
     var onAction: (CoachSignal) -> Void
-    var onDismiss: (CoachSignal) -> Void
-
-    private var visible: [CoachSignal] {
-        guard let first = signals.first else { return [] }
-        return Array(signals.prefix(first.severity == "critical" ? 2 : 1))
-    }
 
     var body: some View {
-        VStack(spacing: 8) {
-            ForEach(visible) { signal in
-                banner(signal)
-            }
-        }
+        banner(signal)
     }
 
     private struct Tone {
@@ -2192,7 +2181,7 @@ struct SignalBannerView: View {
                 }
             }
             .padding(.leading, 12)
-            .padding(.trailing, signal.snoozable == true ? 34 : 12)
+            .padding(.trailing, 12)
             .padding(.vertical, 11)
             .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
             .background {
@@ -2217,21 +2206,6 @@ struct SignalBannerView: View {
             .modifier(SignalCardChrome(critical: critical, edge: tone.edge))
         }
         .buttonStyle(.pressable(scale: 0.985))
-        .overlay(alignment: .topTrailing) {
-            if signal.snoozable == true {
-                Button {
-                    onDismiss(signal)
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(critical ? .white.opacity(0.7) : DesignPalette.ink4)
-                        .frame(width: 26, height: 26)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(4)
-            }
-        }
     }
 }
 
@@ -2278,6 +2252,30 @@ private struct HistoryScreen: View {
                             .listRowSeparator(.hidden)
                             .listRowInsets(EdgeInsets(top: 12, leading: 18, bottom: 4, trailing: 18))
 
+                        // Attention always wins over retrospective stats: every
+                        // visible server signal is placed before the streak.
+                        // Separate rows make the gesture match workout cards.
+                        ForEach(Array(visibleCoachSignals.enumerated()), id: \.element.id) { index, signal in
+                            SignalBannerView(signal: signal, onAction: handleSignalAction)
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(
+                                    top: index == 0 ? 8 : 4,
+                                    leading: 14,
+                                    bottom: 0,
+                                    trailing: 14
+                                ))
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    if signal.snoozable == true {
+                                        Button(role: .destructive) {
+                                            store.dismissCoachSignal(signal)
+                                        } label: {
+                                            Label("Удалить", systemImage: "trash")
+                                        }
+                                    }
+                                }
+                        }
+
                         // Use a Button + navigationDestination instead of a
                         // NavigationLink in the List — a List's NavigationLink
                         // forces a system gray disclosure chevron that
@@ -2292,20 +2290,6 @@ private struct HistoryScreen: View {
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 2, trailing: 14))
-
-                        // Coach signals — the attention banner right above the
-                        // next-workout card. Default state of the screen is NO
-                        // banner at all; the server decides what deserves it.
-                        if !store.coachSignals.isEmpty {
-                            SignalBannerView(
-                                signals: store.coachSignals,
-                                onAction: handleSignalAction,
-                                onDismiss: { store.dismissCoachSignal($0) }
-                            )
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 0, trailing: 14))
-                        }
 
                         // Compact AI recommendation — the next workout, below the
                         // stats strip. Hidden when there's nothing to show.
@@ -2410,6 +2394,13 @@ private struct HistoryScreen: View {
             }
             .buttonStyle(.plain)
         }
+    }
+
+    /// Default is one banner. A critical first item opens one additional slot,
+    /// matching the design taxonomy without letting History become an inbox.
+    private var visibleCoachSignals: [CoachSignal] {
+        guard let first = store.coachSignals.first else { return [] }
+        return Array(store.coachSignals.prefix(first.severity == "critical" ? 2 : 1))
     }
 
     private var streakStrip: some View {
@@ -2926,6 +2917,7 @@ private struct ProgressTabScreen: View {
     @EnvironmentObject private var store: TrainerStore
     @Environment(\.dismiss) private var dismiss
     @State private var showWeeklyReport = false
+    @State private var latestWeeklyReport: WeeklyReportEntry?
 
     var body: some View {
         ZStack {
@@ -2940,6 +2932,11 @@ private struct ProgressTabScreen: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .task {
+            // Fetching the cached report does not mark it as read. It only lets
+            // the entry card name the exact period before the user opens it.
+            latestWeeklyReport = await store.fetchWeeklyReport()
+        }
     }
 
     private var content: some View {
@@ -2949,7 +2946,7 @@ private struct ProgressTabScreen: View {
                     TopTitle(sub: nil, title: "Прогресс")
                         .padding(.horizontal, 4)
 
-                    volumeSection
+                    weeklyProgressSection
                     disciplineSection
                     weeklyReportSection
 
@@ -3033,15 +3030,40 @@ private struct ProgressTabScreen: View {
         .padding(.top, 6)
     }
 
-    // MARK: weekly volume
+    // MARK: rolling seven-day progress
 
-    private var volumeSection: some View {
-        // Targets come from the coach's current block week when available
-        // (ramp/deload-aware); the static policy ranges are the fallback.
+    /// One visual section: an algorithmic summary followed by the exact rows
+    /// that prove it. This is deliberately separate from the LLM-authored
+    /// report for the last closed week.
+    private var weeklyProgressSection: some View {
         let context = store.recommendation?.recommendation?.coachContext
-        let rows = TrainerLogic.weeklyVolumeByGroup(store.workouts, targets: context?.groupTargets)
+        let rows = TrainerLogic.weeklyVolumeByGroup(
+            store.workouts,
+            targets: context?.groupTargets
+        )
+        let adherence = TrainerLogic.adherenceSummary(store.workouts, range: .days7)
         return VStack(alignment: .leading, spacing: 8) {
-            miniHeader("ОБЪЁМ ПО ГРУППАМ", volumeTrailing(context))
+            miniHeader("НЕДЕЛЬНЫЙ ПРОГРЕСС", volumeTrailing(context))
+
+            WeekCoachSummaryCard(
+                rows: rows,
+                adherence: adherence,
+                context: context,
+                hasPlan: store.recommendation?.status == "ready"
+                    && store.recommendation?.recommendation != nil,
+                basedOnWorkoutCount: store.recommendation?.basedOnWorkoutCount,
+                loadType: store.recommendation?.recommendation?.loadType
+            )
+
+            Text("ОБЪЁМ ПО ГРУППАМ")
+                .font(.jbm(11, weight: .bold))
+                .tracking(0.45)
+                .foregroundStyle(DesignPalette.ink3)
+                .padding(.horizontal, 4)
+                .padding(.top, 3)
+
+            // Targets come from the coach's current block week when available
+            // (ramp/deload-aware); static policy ranges are the fallback.
             VStack(spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
                     if idx > 0 {
@@ -3090,12 +3112,15 @@ private struct ProgressTabScreen: View {
                         .foregroundStyle(DesignPalette.accent)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Отчёт недели")
+                    Text("Отчёт прошлой недели")
                         .font(.jbm(13.5, weight: .bold))
                         .foregroundStyle(DesignPalette.ink)
+                    Text(weeklyReportPeriodLabel)
+                        .font(.jbm(10.5, weight: .semibold))
+                        .foregroundStyle(DesignPalette.ink3)
                     Text("итоги · ПР · вес и питание · фокус")
                         .font(.jbm(10.5))
-                        .foregroundStyle(DesignPalette.ink3)
+                        .foregroundStyle(DesignPalette.ink4)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -3107,6 +3132,128 @@ private struct ProgressTabScreen: View {
             .glassCard(radius: 20)
         }
         .buttonStyle(.pressable(scale: 0.98))
+    }
+
+    private var weeklyReportPeriodLabel: String {
+        guard let report = latestWeeklyReport else { return "пока не сформирован" }
+        return DateTools.periodLabel(endingAt: report.periodEnd, days: report.days ?? 7)
+    }
+}
+
+/// High-contrast rolling-seven-day summary from the Claude Design Week screen.
+/// It is intentionally static: the exact volume rows immediately below are its
+/// detail, while the separately labelled report button opens the closed-week
+/// LLM retrospective.
+private struct WeekCoachSummaryCard: View {
+    var rows: [MuscleGroupVolume]
+    var adherence: AdherenceSummary
+    var context: CoachContext?
+    var hasPlan: Bool
+    var basedOnWorkoutCount: Int?
+    var loadType: String?
+
+    private var under: [MuscleGroupVolume] { rows.filter { $0.status == .under } }
+    private var over: [MuscleGroupVolume] { rows.filter { $0.status == .over } }
+    private var onTargetCount: Int { rows.filter { $0.status == .onTarget }.count }
+    private var hasVolume: Bool { rows.contains { $0.count > 0 } }
+
+    private var headline: String {
+        if !hasVolume { return "За 7 дней подходов пока нет" }
+        if under.isEmpty && over.isEmpty { return "Все группы в рабочем диапазоне" }
+        return "\(onTargetCount) из \(rows.count) групп в диапазоне"
+    }
+
+    private var explanation: String {
+        if !hasVolume {
+            return hasPlan
+                ? "Тренировок пока нет. План готов, коридоры начнут заполняться после первой сессии."
+                : "Тренировок пока нет. После первой сессии здесь появится распределение объёма."
+        }
+        var facts: [String] = []
+        if !under.isEmpty {
+            facts.append("Ниже коридора: \(groupNames(under)).")
+        }
+        if !over.isEmpty {
+            facts.append("Выше коридора: \(groupNames(over)).")
+        }
+        if facts.isEmpty {
+            return "За последние 7 дней все группы попали в текущие рабочие коридоры."
+        }
+        return facts.joined(separator: " ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(DesignPalette.accent)
+                    .frame(width: 26, height: 26)
+                    .overlay(
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.white)
+                    )
+                Text("СВОДКА ПОСЛЕДНИХ 7 ДНЕЙ")
+                    .font(.jbm(9.5, weight: .bold))
+                    .tracking(0.7)
+                    .foregroundStyle(.white.opacity(0.62))
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(headline)
+                    .font(.jbm(16, weight: .bold))
+                    .tracking(-0.3)
+                    .foregroundStyle(.white)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(explanation)
+                    .font(.jbm(11.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.70))
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 7) {
+                if let basedOnWorkoutCount {
+                    footerChip("ПО \(basedOnWorkoutCount) ТРЕН.")
+                } else if let week = context?.blockWeek {
+                    footerChip("НЕДЕЛЯ \(week)")
+                }
+                if adherence.hasData {
+                    footerChip("\(Int((adherence.ratio * 100).rounded()))% ПЛАНА")
+                }
+                if let loadType {
+                    footerChip(historyLoadChip(loadType).label.uppercased())
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(DesignPalette.ink)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                )
+                .shadow(color: DesignPalette.ink.opacity(0.24), radius: 18, y: 9)
+        )
+    }
+
+    private func footerChip(_ text: String) -> some View {
+        Text(text)
+            .font(.jbm(8.5, weight: .bold))
+            .tracking(0.45)
+            .foregroundStyle(.white.opacity(0.68))
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
+            .background(Color.white.opacity(0.08), in: Capsule())
+    }
+
+    private func groupNames(_ values: [MuscleGroupVolume]) -> String {
+        let visible = values.prefix(3).map(\.name).joined(separator: ", ")
+        let hidden = values.count - min(3, values.count)
+        return hidden > 0 ? "\(visible) и ещё \(hidden)" : visible
     }
 }
 
@@ -3737,7 +3884,7 @@ private struct ExerciseDetailScreen: View {
     }
 }
 
-// MARK: - Weight tab
+// MARK: - Measurements tab
 
 // «Замеры» — вес (кг) + талия (см), по макетам Claude Design
 // (screens/measurements.jsx): сегмент с текущими значениями над hero-карточкой,

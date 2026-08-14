@@ -13,6 +13,7 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 - [backend/recommender.py](./recommender.py) — «Совет тренера»: сборка промпта, вызов Claude API, семантический валидатор с авто-репромптом
 - [backend/coach_state.py](./coach_state.py) — машина фаз подготовки (cut_recomp / lean_bulk / maintenance), volume ramp по неделям блока, конфиг гормонального недельного цикла
 - [backend/coach_features.py](./coach_features.py) — вычисляемые фичи истории: per-exercise сводки (пики, e1RM, ПР), детектор застоя, ступени разгона после перерыва, эффективные недельные объёмы, тренды веса/талии и матрица питания
+- [backend/coach_signals.py](./coach_signals.py) — детерминированные баннеры коуча; каноническая спецификация — [docs/COACH_SIGNALS.md](../docs/COACH_SIGNALS.md)
 - [backend/static/data/exercises.json](./static/data/exercises.json) — каталог упражнений (отдаётся клиенту по `/data/exercises.json`)
 - [backend/deploy](./deploy) — деплой на VPS
 - [backend/tests](./tests) — тесты backend
@@ -25,6 +26,8 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 - `POST /api/session/logout`
 - `GET /api/workouts` · `POST /api/workouts` · `PUT /api/workouts/{id}` · `DELETE /api/workouts/{id}`
 - `GET /api/body-weights` · `POST /api/body-weights` · `DELETE /api/body-weights/{id}`
+- `GET /api/waists` · `POST /api/waists` · `DELETE /api/waists/{id}`
+- `GET /api/coach/signals` · `POST /api/coach/signals/dismiss`
 - `GET /api/recommendations/next` · `POST /api/recommendations/refresh`
 - `GET /api/reports/weekly` — кэшированный недельный отчёт тренера (без генерации; отчёт пишет воскресный таймер или Coach MCP)
 

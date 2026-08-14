@@ -17,6 +17,8 @@
 ## Навигация по документации
 
 - [BUSINESS_LOGIC.md](./BUSINESS_LOGIC.md) — продуктовая логика и инварианты
+- [docs/COACH_SIGNALS.md](./docs/COACH_SIGNALS.md) — актуальные пороги, приоритеты и жизненный цикл баннеров коуча
+- [docs/WEEKLY_PROGRESS.md](./docs/WEEKLY_PROGRESS.md) — логика 7-дневной сводки и отличие от LLM-отчёта недели
 - [backend/README.md](./backend/README.md) — технический README по backend, env и деплою
 - [backend/server.py](./backend/server.py) — HTTP API и session logic
 - [backend/backend_store.py](./backend/backend_store.py) — SQLite storage и нормализация данных

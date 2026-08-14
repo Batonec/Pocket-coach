@@ -7,7 +7,7 @@ final class TrainerStoreTests: XCTestCase {
         let store = TrainerStore(defaults: .isolatedTestDefaults())
 
         XCTAssertEqual(store.currentTab, .trainings)
-        XCTAssertEqual(store.selectedRange, .days30)
+        XCTAssertEqual(store.selectedRange, .all)
         XCTAssertEqual(store.selectedBodyWeightRange, .days30)
         XCTAssertEqual(store.apiBaseURLString, "https://trainer.superbatonec.org")
         XCTAssertFalse(store.draft.hasAnyExercise)

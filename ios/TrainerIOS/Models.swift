@@ -13,7 +13,7 @@ enum TrainerTab: String, CaseIterable, Codable, Identifiable {
         case .trainings: "Сегодня"
         case .history: "История"
         case .progress: "Прогресс"
-        case .weight: "Вес"
+        case .weight: "Замеры"
         }
     }
 
@@ -543,7 +543,7 @@ struct RecommendationSnapshot: Codable, Hashable {
 }
 
 /// Weekly work-set count for one muscle group against the coaching landmarks.
-enum VolumeStatus { case under, onTarget, over }
+enum VolumeStatus: Equatable { case under, onTarget, over }
 
 struct MuscleGroupVolume: Identifiable {
     var name: String
@@ -771,6 +771,19 @@ enum DateTools {
 
     static func short(_ iso: String) -> String {
         shortFormatter.string(from: date(from: iso)).replacingOccurrences(of: ".", with: "")
+    }
+
+    /// Human-readable inclusive period ending at `endISO`, used by cached
+    /// reports so the UI never guesses which week a server report covers.
+    static func periodLabel(endingAt endISO: String, days: Int) -> String {
+        guard let end = isoFormatter.date(from: endISO) else { return endISO }
+        let safeDays = max(1, days)
+        guard let start = Calendar(identifier: .gregorian).date(
+            byAdding: .day,
+            value: -(safeDays - 1),
+            to: end
+        ) else { return short(endISO) }
+        return "\(short(iso(from: start))) – \(short(endISO))"
     }
 
     static func weekday(_ iso: String) -> String {

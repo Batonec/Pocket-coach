@@ -2,6 +2,21 @@ import XCTest
 @testable import TrainerIOS
 
 final class PayloadAndModelTests: XCTestCase {
+    func testWeeklyReportPeriodLabelUsesInclusiveServerWindow() {
+        XCTAssertEqual(
+            DateTools.periodLabel(endingAt: "2026-08-10", days: 7),
+            "4 авг – 10 авг"
+        )
+        XCTAssertEqual(
+            DateTools.periodLabel(endingAt: "2026-08-10", days: 1),
+            "10 авг – 10 авг"
+        )
+        XCTAssertEqual(
+            DateTools.periodLabel(endingAt: "broken", days: 7),
+            "broken"
+        )
+    }
+
     func testRecommendationResponseDecodesSnakeCaseContract() throws {
         let json = #"""
         {
