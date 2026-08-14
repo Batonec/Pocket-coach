@@ -3,6 +3,9 @@ import SwiftUI
 
 @MainActor
 final class TrainerStore: ObservableObject {
+    static let validBodyWeightRange = 30.0...400.0
+    static let validWaistRange = 50.0...160.0
+
     @Published var bootState: BootState = .idle
     @Published var currentTab: TrainerTab {
         didSet { defaults.set(currentTab.rawValue, forKey: Keys.currentTab) }
@@ -213,11 +216,12 @@ final class TrainerStore: ObservableObject {
         }
     }
 
-    func saveBodyWeight() async {
+    @discardableResult
+    func saveBodyWeight() async -> Bool {
         let normalized = bodyWeightValue.replacingOccurrences(of: ",", with: ".")
-        guard let value = Double(normalized), value > 0 else {
-            showToast("Введи корректный вес тела")
-            return
+        guard let value = Double(normalized), Self.validBodyWeightRange.contains(value) else {
+            showToast("Вес должен быть от 30 до 400 кг")
+            return false
         }
 
         isSavingBodyWeight = true
@@ -235,8 +239,10 @@ final class TrainerStore: ObservableObject {
             hideCoachSignals(withIDs: ["measurements_due", "measurements_overdue"])
             refreshCoachSignals()
             refreshRecommendationAfterMeasurement()
+            return true
         } catch {
             showToast(error.localizedDescription)
+            return false
         }
     }
 
@@ -267,22 +273,27 @@ final class TrainerStore: ObservableObject {
     }
 
     func syncWaistComposer() {
-        if let existing = waistEntries.first(where: { $0.entryDate == waistDate }) {
+        if let existing = waistEntries.first(where: {
+            $0.entryDate == waistDate && Self.validWaistRange.contains($0.waist)
+        }) {
             waistValue = TrainerLogic.formatBodyWeightInput(existing.waist)
             return
         }
-        if let latest = waistEntries.last {
+        if let latest = waistEntries.last(where: {
+            Self.validWaistRange.contains($0.waist)
+        }) {
             waistValue = TrainerLogic.formatBodyWeightInput(latest.waist)
         } else {
             waistValue = ""
         }
     }
 
-    func saveWaist() async {
+    @discardableResult
+    func saveWaist() async -> Bool {
         let normalized = waistValue.replacingOccurrences(of: ",", with: ".")
-        guard let value = Double(normalized), value > 0 else {
-            showToast("Введи корректный обхват талии")
-            return
+        guard let value = Double(normalized), Self.validWaistRange.contains(value) else {
+            showToast("Талия должна быть от 50 до 160 см")
+            return false
         }
 
         isSavingWaist = true
@@ -302,8 +313,10 @@ final class TrainerStore: ObservableObject {
             ])
             refreshCoachSignals()
             refreshRecommendationAfterMeasurement()
+            return true
         } catch {
             showToast(error.localizedDescription)
+            return false
         }
     }
 

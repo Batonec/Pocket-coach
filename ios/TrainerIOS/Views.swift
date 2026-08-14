@@ -3992,7 +3992,7 @@ private struct BodyWeightScreen: View {
         .sheet(isPresented: $showComposer) {
             MeasureComposerSheet(metric: metric)
                 .environmentObject(store)
-                .presentationDetents([.height(340)])
+                .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
         }
         .alert("Удалить запись веса?", isPresented: deleteWeightBinding) {
@@ -4444,9 +4444,34 @@ private struct MeasureComposerSheet: View {
     var metric: MeasureMetric
     @EnvironmentObject private var store: TrainerStore
     @Environment(\.dismiss) private var dismiss
+    @State private var draftDate = Date()
+    @State private var draftValue = ""
+    @State private var didInitialize = false
 
     private var isSaving: Bool {
         metric == .weight ? store.isSavingBodyWeight : store.isSavingWaist
+    }
+
+    private var normalizedDraftValue: String {
+        TrainerLogic.normalizeBodyWeightInput(draftValue)
+    }
+
+    private var parsedDraftValue: Double? {
+        Double(normalizedDraftValue)
+    }
+
+    private var isDraftValid: Bool {
+        guard let value = parsedDraftValue else { return false }
+        return metric == .weight
+            ? TrainerStore.validBodyWeightRange.contains(value)
+            : TrainerStore.validWaistRange.contains(value)
+    }
+
+    private var validationMessage: String? {
+        guard !draftValue.isEmpty, !isDraftValid else { return nil }
+        return metric == .weight
+            ? "Вес должен быть от 30 до 400 кг"
+            : "Талия должна быть от 50 до 160 см"
     }
 
     var body: some View {
@@ -4457,30 +4482,16 @@ private struct MeasureComposerSheet: View {
 
             DatePicker(
                 "Дата",
-                selection: Binding(
-                    get: { DateTools.date(from: metric == .weight ? store.bodyWeightDate : store.waistDate) },
-                    set: { newValue in
-                        if metric == .weight {
-                            store.setBodyWeightDate(newValue)
-                        } else {
-                            store.setWaistDate(newValue)
-                        }
-                    }
-                ),
+                selection: $draftDate,
+                in: ...Date(),
                 displayedComponents: .date
             )
 
             HStack {
-                TextField("0.0", text: Binding(
-                    get: { metric == .weight ? store.bodyWeightValue : store.waistValue },
-                    set: { newValue in
-                        if metric == .weight {
-                            store.setBodyWeightValue(newValue)
-                        } else {
-                            store.setWaistValue(newValue)
-                        }
-                    }
-                ))
+                // Keep keystrokes local to the sheet. Publishing every digit
+                // through the shared store rebuilt the chart-heavy screen
+                // underneath and also disturbed the decimal-pad caret.
+                TextField("0.0", text: $draftValue)
                 .keyboardType(.decimalPad)
                 .font(.jbm(26, weight: .heavy))
                 .padding(.horizontal, 14)
@@ -4492,6 +4503,12 @@ private struct MeasureComposerSheet: View {
                     .foregroundStyle(DesignPalette.ink3)
             }
 
+            if let validationMessage {
+                Text(validationMessage)
+                    .font(.jbm(11.5, weight: .semibold))
+                    .foregroundStyle(DesignPalette.bad)
+            }
+
             if metric == .waist {
                 Text("утром натощак, по пупку")
                     .font(.jbm(11.5))
@@ -4500,12 +4517,19 @@ private struct MeasureComposerSheet: View {
 
             Button {
                 Task {
+                    let saved: Bool
                     if metric == .weight {
-                        await store.saveBodyWeight()
+                        store.setBodyWeightDate(draftDate)
+                        store.setBodyWeightValue(normalizedDraftValue)
+                        saved = await store.saveBodyWeight()
                     } else {
-                        await store.saveWaist()
+                        store.setWaistDate(draftDate)
+                        store.setWaistValue(normalizedDraftValue)
+                        saved = await store.saveWaist()
                     }
-                    dismiss()
+                    if saved {
+                        dismiss()
+                    }
                 }
             } label: {
                 HStack {
@@ -4522,10 +4546,23 @@ private struct MeasureComposerSheet: View {
                 .shadow(color: DesignPalette.accent.opacity(0.30), radius: 10, y: 4)
             }
             .buttonStyle(.plain)
-            .disabled(isSaving)
+            .disabled(isSaving || !isDraftValid)
+            .opacity(isDraftValid ? 1 : 0.5)
         }
         .padding(22)
         .background(WarmWallpaper())
+        .interactiveDismissDisabled(isSaving)
+        .onAppear {
+            guard !didInitialize else { return }
+            didInitialize = true
+            if metric == .weight {
+                draftDate = DateTools.date(from: store.bodyWeightDate)
+                draftValue = store.bodyWeightValue
+            } else {
+                draftDate = DateTools.date(from: store.waistDate)
+                draftValue = store.waistValue
+            }
+        }
     }
 }
 

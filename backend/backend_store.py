@@ -274,10 +274,12 @@ def normalize_body_weight_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# Loose write-time bounds for a waist measurement (cm); the coach logic applies
-# its own stricter plausibility filter at read time, mirroring body weight.
-MIN_WAIST_CM = 40.0
-MAX_WAIST_CM = 250.0
+# The write contract must match coach_features.waist_points exactly. Accepting
+# a value here and silently dropping it from calorie advice later creates an
+# impossible state: the user sees a saved measurement while the coach sees
+# "waist=none" and keeps the stale-measurement warning alive.
+MIN_WAIST_CM = 50.0
+MAX_WAIST_CM = 160.0
 
 
 def normalize_waist_payload(payload: dict[str, Any]) -> dict[str, Any]:

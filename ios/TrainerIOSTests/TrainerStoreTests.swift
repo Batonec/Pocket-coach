@@ -398,6 +398,28 @@ final class TrainerStoreTests: XCTestCase {
         XCTAssertEqual(store.bodyWeightValue, "82.45")
     }
 
+    func testWaistComposerSkipsLegacyValuesTheCoachCannotUse() async {
+        let store = configuredStore()
+        store.waistEntries = [
+            WaistEntry(
+                id: 1, entryDate: "2026-08-13", waist: 84,
+                notes: nil, createdAt: nil, updatedAt: nil
+            ),
+            WaistEntry(
+                id: 2, entryDate: "2026-08-14", waist: 231,
+                notes: nil, createdAt: nil, updatedAt: nil
+            ),
+        ]
+        store.waistDate = "2026-08-14"
+
+        store.syncWaistComposer()
+
+        XCTAssertEqual(store.waistValue, "84")
+        store.setWaistValue("230")
+        XCTAssertFalse(await store.saveWaist())
+        XCTAssertEqual(store.toast, "Талия должна быть от 50 до 160 см")
+    }
+
     func testSelectedProgressExerciseFallsBackToRealHistoryAndPersists() {
         let defaults = UserDefaults.isolatedTestDefaults()
         let store = TrainerStore(defaults: defaults)

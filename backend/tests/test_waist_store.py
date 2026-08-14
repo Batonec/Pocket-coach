@@ -11,6 +11,8 @@ if str(MINIAPP_DIR) not in sys.path:
     sys.path.insert(0, str(MINIAPP_DIR))
 
 from backend_store import (  # noqa: E402
+    MAX_WAIST_CM,
+    MIN_WAIST_CM,
     MiniAppStore,
     normalize_set_rir,
     normalize_waist_payload,
@@ -32,7 +34,27 @@ class WaistNormalizationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_waist_payload({"entry_date": "2026-08-14", "waist": 20})
         with self.assertRaises(ValueError):
+            normalize_waist_payload({"entry_date": "2026-08-14", "waist": 230})
+        with self.assertRaises(ValueError):
             normalize_waist_payload({"entry_date": "2026-08-14", "waist": "мало"})
+
+    def test_write_bounds_match_the_coach_plausibility_filter(self) -> None:
+        import coach_features
+
+        self.assertEqual(MIN_WAIST_CM, coach_features.MIN_PLAUSIBLE_WAIST_CM)
+        self.assertEqual(MAX_WAIST_CM, coach_features.MAX_PLAUSIBLE_WAIST_CM)
+        self.assertEqual(
+            normalize_waist_payload(
+                {"entry_date": "2026-08-14", "waist": MIN_WAIST_CM}
+            )["waist"],
+            MIN_WAIST_CM,
+        )
+        self.assertEqual(
+            normalize_waist_payload(
+                {"entry_date": "2026-08-14", "waist": MAX_WAIST_CM}
+            )["waist"],
+            MAX_WAIST_CM,
+        )
 
 
 class WaistStoreTests(unittest.TestCase):
