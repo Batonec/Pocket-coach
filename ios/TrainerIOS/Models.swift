@@ -426,7 +426,7 @@ struct CoachSignal: Codable, Hashable, Identifiable {
     var title: String
     var body: String
     var note: String?          // optional third line (italic, muted)
-    var glyph: String?         // scale | tape | back | wave | doc | check
+    var glyph: String?         // scale | nutrition | tape | back | wave | doc | check
     var action: CoachSignalAction?
     var snoozable: Bool?
 

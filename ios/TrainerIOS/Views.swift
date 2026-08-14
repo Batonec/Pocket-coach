@@ -1997,7 +1997,9 @@ private struct Stepper: View {
 
 // Coach-signal glyphs from the Claude Design mockups (screens/signals.jsx):
 // hand-drawn 18×18 stroke icons — scale (весы), tape (рулетка), back (возврат),
-// wave (разгрузка), doc (отчёт), check (веха). Unknown names fall back to doc.
+// wave (разгрузка), doc (отчёт), check (веха). Nutrition uses the native
+// fork.knife symbol so the calorie-advice warning reads as food, not a gauge.
+// Unknown names fall back to doc.
 struct SignalGlyph: View {
     var name: String
     var color: Color
@@ -2009,6 +2011,8 @@ struct SignalGlyph: View {
             var path = Path()
             var lineWidth: CGFloat = 1.9
             switch name {
+            case "nutrition":
+                break
             case "scale":
                 path.move(to: CGPoint(x: 2.5, y: 13.5))
                 path.addArc(
@@ -2071,6 +2075,14 @@ struct SignalGlyph: View {
             )
         }
         .frame(width: size, height: size)
+        .overlay {
+            if name == "nutrition" {
+                Image(systemName: "fork.knife")
+                    .font(.system(size: size * 0.88, weight: .semibold))
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(color)
+            }
+        }
     }
 }
 

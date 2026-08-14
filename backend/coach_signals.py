@@ -78,8 +78,8 @@ def _signal(
         "body": body,
         # Optional third line (italic, muted in the mockups) — e.g. the trend hint.
         "note": note,
-        # Mockup glyph name: scale | tape | back | wave | doc | check. The
-        # client maps unknown names to a neutral glyph.
+        # Glyph name: scale | nutrition | tape | back | wave | doc | check.
+        # The client maps unknown names to a neutral glyph.
         "glyph": glyph,
         "action": action,
         "snoozable": severity != "critical",
@@ -203,7 +203,7 @@ def _measurements_signal(
             f"Внеси {parts} — вернутся",
             instance_fact=fact,
             action_type="open_measurements", action_label="Замеры", action_target=target,
-            glyph="scale",
+            glyph="nutrition",
         )
     if due:
         worst = max(d for d in (weight_age, waist_age) if d is not None)
