@@ -236,26 +236,34 @@ def current_working_weight(
     all_sets = [workout_set for _, sets in recent for workout_set in sets]
     if not all_sets:
         return None
-    weights = sorted(s["weight"] for s in all_sets)
+
+    def occurrences(pool: list[dict[str, Any]], weight: float) -> int:
+        return sum(1 for s in pool if abs(s["weight"] - weight) < 0.01)
+
+    # Filter order matters: drop the low-rep garbage FIRST, so a one-off
+    # «20×3» in a two-set session cannot drag the median onto itself and get
+    # the real working ten thrown out as an "outlier".
+    plausible = [
+        s for s in all_sets
+        if s["reps"] >= _MIN_WORKING_REPS or occurrences(all_sets, s["weight"]) >= 2
+    ]
+    if not plausible:
+        plausible = all_sets
+    weights = sorted(s["weight"] for s in plausible)
     median = weights[len(weights) // 2]
 
-    def occurrences(weight: float) -> int:
-        return sum(1 for s in all_sets if abs(s["weight"] - weight) < 0.01)
-
     working = []
-    for workout_set in all_sets:
-        weight, reps = workout_set["weight"], workout_set["reps"]
-        if reps < _MIN_WORKING_REPS and occurrences(weight) < 2:
-            continue
+    for workout_set in plausible:
+        weight = workout_set["weight"]
         if (
-            occurrences(weight) == 1
+            occurrences(plausible, weight) == 1
             and median > 0
             and abs(weight - median) > _OUTLIER_MEDIAN_RATIO * median
         ):
             continue
         working.append(weight)
     if not working:
-        working = [s["weight"] for s in all_sets]
+        working = [s["weight"] for s in plausible]
     return min(working) if inverted else max(working)
 
 
