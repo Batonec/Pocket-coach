@@ -121,6 +121,30 @@ final class APIClient {
         try await get("/api/reports/weekly")
     }
 
+    func markWeeklyReportRead() async throws -> WeeklyReportReadResponse {
+        try await request("/api/reports/weekly/read", method: "POST", body: Optional<Data>.none)
+    }
+
+    func fetchWaists() async throws -> WaistsResponse {
+        try await get("/api/waists")
+    }
+
+    func saveWaist(entryDate: String, waist: Double) async throws -> WaistMutationResponse {
+        try await post("/api/waists", body: WaistSaveRequest(entryDate: entryDate, waist: waist))
+    }
+
+    func deleteWaist(id: Int) async throws -> WaistMutationResponse {
+        try await delete("/api/waists/\(id)")
+    }
+
+    func fetchCoachSignals() async throws -> CoachSignalsResponse {
+        try await get("/api/coach/signals")
+    }
+
+    func dismissCoachSignal(instanceKey: String) async throws -> CoachSignalDismissResponse {
+        try await post("/api/coach/signals/dismiss", body: SignalDismissRequest(instanceKey: instanceKey))
+    }
+
     /// Force-regenerate. Synchronous on the server (10–40s); construct this client
     /// with `APIClient.longRunningSession` so the call isn't cut at 3s.
     func refreshRecommendation() async throws -> RecommendationResponse {
@@ -223,5 +247,23 @@ private struct BodyWeightSaveRequest: Encodable {
         case entryDate = "entry_date"
         case weight
         case notes
+    }
+}
+
+private struct WaistSaveRequest: Encodable {
+    var entryDate: String
+    var waist: Double
+
+    enum CodingKeys: String, CodingKey {
+        case entryDate = "entry_date"
+        case waist
+    }
+}
+
+private struct SignalDismissRequest: Encodable {
+    var instanceKey: String
+
+    enum CodingKeys: String, CodingKey {
+        case instanceKey = "instance_key"
     }
 }

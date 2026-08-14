@@ -1193,6 +1193,7 @@ def _coach_context(
         week_target = params.get("ramp_start")
     else:
         week_target = coach_state.weekly_volume_target(state, position["cycle_week"])
+    target_weight = params.get("target_weight_kg") or params.get("ceiling_weight_kg")
     return {
         "phase": params["phase"],
         "phase_title": params["title"],
@@ -1206,6 +1207,10 @@ def _coach_context(
                 week_target, maintenance_sets
             ).items()
         },
+        # Reference lines for the Замеры charts: the phase's weight goal
+        # (cut target / bulk ceiling) and the hard waist limit, when set.
+        "target_weight_kg": float(target_weight) if target_weight else None,
+        "waist_limit_cm": state.get("waist_limit_cm"),
     }
 
 

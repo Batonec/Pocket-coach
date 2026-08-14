@@ -401,7 +401,20 @@ class MiniAppStore:
                     input_tokens INTEGER,
                     output_tokens INTEGER,
                     created_at INTEGER NOT NULL,
+                    read_at INTEGER,
                     UNIQUE(user_id, period_end, days)
+                );
+
+                -- Snoozed coach signals (the История banner): one row per
+                -- dismissed episode. snooze_until NULL = hidden while that
+                -- exact instance_key (state episode) lasts.
+                CREATE TABLE IF NOT EXISTS signal_snoozes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    instance_key TEXT NOT NULL,
+                    snooze_until INTEGER,
+                    created_at INTEGER NOT NULL,
+                    UNIQUE(user_id, instance_key)
                 );
 
                 CREATE TABLE IF NOT EXISTS recommendations (
@@ -441,6 +454,12 @@ class MiniAppStore:
                 ON recommendation_log(user_id, id DESC);
                 """
             )
+            # Additive migration for DBs created before read_at existed
+            # (CREATE IF NOT EXISTS cannot add a column to an existing table).
+            try:
+                connection.execute("ALTER TABLE coach_reports ADD COLUMN read_at INTEGER")
+            except sqlite3.OperationalError:
+                pass
 
     def ensure_debug_user(self, alias: str, first_name: str = "Browser", last_name: str = "Debug") -> dict[str, Any]:
         timestamp = utc_now()
@@ -1150,7 +1169,8 @@ class MiniAppStore:
         with self._connection() as connection:
             row = connection.execute(
                 """
-                SELECT period_end, days, report, model, input_tokens, output_tokens, created_at
+                SELECT period_end, days, report, model, input_tokens, output_tokens,
+                       created_at, read_at
                 FROM coach_reports
                 WHERE user_id = ? AND days = ?
                 ORDER BY period_end DESC
@@ -1160,13 +1180,61 @@ class MiniAppStore:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def mark_coach_report_read(self, user_id: int, days: int = 7) -> bool:
+        """Server-side read receipt for the latest weekly report — it kills the
+        weekly_report_ready signal for every client (iOS, MCP chat) at once."""
+        timestamp = utc_now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE coach_reports
+                SET read_at = ?
+                WHERE id = (
+                    SELECT id FROM coach_reports
+                    WHERE user_id = ? AND days = ?
+                    ORDER BY period_end DESC
+                    LIMIT 1
+                ) AND read_at IS NULL
+                """,
+                (timestamp, user_id, int(days)),
+            )
+        return cursor.rowcount > 0
+
+    # --- coach-signal snoozes (the История banner) ------------------------- #
+    def list_signal_snoozes(self, user_id: int) -> dict[str, int | None]:
+        """{instance_key: snooze_until | None} — None means an episodic dismiss
+        (hidden while that exact state episode lasts)."""
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT instance_key, snooze_until FROM signal_snoozes WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+        return {row["instance_key"]: row["snooze_until"] for row in rows}
+
+    def save_signal_snooze(
+        self, user_id: int, instance_key: str, snooze_until: int | None
+    ) -> None:
+        timestamp = utc_now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO signal_snoozes (user_id, instance_key, snooze_until, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id, instance_key) DO UPDATE SET
+                    snooze_until = excluded.snooze_until,
+                    created_at = excluded.created_at
+                """,
+                (user_id, str(instance_key), snooze_until, timestamp),
+            )
+
     def get_coach_report(
         self, user_id: int, period_end: str, days: int
     ) -> dict[str, Any] | None:
         with self._connection() as connection:
             row = connection.execute(
                 """
-                SELECT period_end, days, report, model, input_tokens, output_tokens, created_at
+                SELECT period_end, days, report, model, input_tokens, output_tokens,
+                       created_at, read_at
                 FROM coach_reports
                 WHERE user_id = ? AND period_end = ? AND days = ?
                 """,

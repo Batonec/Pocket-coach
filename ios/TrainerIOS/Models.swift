@@ -318,6 +318,8 @@ struct CoachContext: Codable, Hashable {
     var returnFromBreak: Bool?
     var weeklyTarget: [Int]?       // big-group corridor for this block week
     var groupTargets: [String: [Int]]?  // backend group name → [min, max]
+    var targetWeightKg: Double?    // phase weight goal (cut target / bulk ceiling)
+    var waistLimitCm: Double?      // hard waist limit, when the athlete set one
 
     enum CodingKeys: String, CodingKey {
         case phase
@@ -327,6 +329,8 @@ struct CoachContext: Codable, Hashable {
         case returnFromBreak = "return_from_break"
         case weeklyTarget = "weekly_target"
         case groupTargets = "group_targets"
+        case targetWeightKg = "target_weight_kg"
+        case waistLimitCm = "waist_limit_cm"
     }
 }
 
@@ -370,6 +374,102 @@ struct RecommendedExercise: Codable, Hashable, Identifiable {
 struct RecommendedSet: Codable, Hashable {
     var reps: Int
     var weight: Double
+}
+
+/// Which metric the Замеры screen shows; deep-links from coach signals pick one.
+enum MeasureMetric: String {
+    case weight
+    case waist
+}
+
+/// A waist measurement (cm) — the second body-composition metric next to
+/// weight; feeds the coach nutrition matrix.
+struct WaistEntry: Codable, Hashable, Identifiable {
+    var id: Int
+    var entryDate: String
+    var waist: Double
+    var notes: String?
+    var createdAt: Int?
+    var updatedAt: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case entryDate = "entry_date"
+        case waist
+        case notes
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct WaistsResponse: Codable {
+    var ok: Bool?
+    var user: TrainerUser?
+    var entries: [WaistEntry]
+}
+
+struct WaistMutationResponse: Codable {
+    var ok: Bool?
+    var created: Bool?
+    var user: TrainerUser?
+    var entry: WaistEntry
+}
+
+/// A coach signal for the История banner (see ios/COACH_SIGNALS_BANNER_BRIEF.md).
+/// The server computes, collapses, snooze-filters and sorts the list; the
+/// client renders the first 1–2 and never invents texts. Unknown ids/severities
+/// must still render as a generic info banner (server-driven taxonomy).
+struct CoachSignal: Codable, Hashable, Identifiable {
+    var signalID: String       // signal type, e.g. "measurements_due"
+    var instanceKey: String    // episode identity — dismiss target
+    var severity: String       // info | accent | warn | critical | positive
+    var title: String
+    var body: String
+    var note: String?          // optional third line (italic, muted)
+    var glyph: String?         // scale | tape | back | wave | doc | check
+    var action: CoachSignalAction?
+    var snoozable: Bool?
+
+    var id: String { instanceKey }
+
+    enum CodingKeys: String, CodingKey {
+        case signalID = "id"
+        case instanceKey = "instance_key"
+        case severity
+        case title
+        case body
+        case note
+        case glyph
+        case action
+        case snoozable
+    }
+}
+
+struct CoachSignalAction: Codable, Hashable {
+    var type: String           // open_measurements | open_next_workout | open_weekly_report | none
+    var label: String?
+    var target: String?        // e.g. "weight" | "waist" for open_measurements
+}
+
+struct CoachSignalsResponse: Codable {
+    var ok: Bool?
+    var generatedAt: Int?
+    var signals: [CoachSignal]?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case generatedAt = "generated_at"
+        case signals
+    }
+}
+
+struct CoachSignalDismissResponse: Codable {
+    var ok: Bool?
+}
+
+struct WeeklyReportReadResponse: Codable {
+    var ok: Bool?
+    var read: Bool?
 }
 
 /// The coach recommendation the user applied as today's workout plan.

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import coach_signals
 import coach_state
 import recommender
 from backend_store import MiniAppStore
@@ -313,6 +314,49 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/api/waists":
+            user, headers = self._resolve_current_user(allow_debug_fallback=True)
+            if user is None:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {
+                        "ok": False,
+                        "reason": "No active session. iOS client must resolve a session first.",
+                    },
+                )
+                return
+
+            self._send_json(
+                HTTPStatus.OK,
+                {"ok": True, "user": user, "entries": STORE.list_waists(int(user["id"]))},
+                extra_headers=headers,
+            )
+            return
+
+        if path == "/api/coach/signals":
+            user, headers = self._resolve_current_user(allow_debug_fallback=True)
+            if user is None:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {
+                        "ok": False,
+                        "reason": "No active session. iOS client must resolve a session first.",
+                    },
+                )
+                return
+
+            signals = coach_signals.compute_signals(
+                STORE,
+                int(user["id"]),
+                coach_state.load_state(COACH_STATE_PATH),
+            )
+            self._send_json(
+                HTTPStatus.OK,
+                {"ok": True, "generated_at": int(time.time()), "signals": signals},
+                extra_headers=headers,
+            )
+            return
+
         static_path = self._resolve_static_path(path)
         if static_path is not None:
             self._send_file(static_path)
@@ -470,6 +514,114 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/api/waists":
+            payload = self._read_json_body()
+            if payload is None:
+                return
+
+            user, headers = self._resolve_current_user(allow_debug_fallback=True)
+            if user is None:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {
+                        "ok": False,
+                        "reason": "No active session. iOS client must resolve a session first.",
+                    },
+                )
+                return
+
+            try:
+                entry, created = STORE.save_waist(int(user["id"]), payload)
+            except ValueError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
+                return
+
+            self._send_json(
+                HTTPStatus.CREATED if created else HTTPStatus.OK,
+                {"ok": True, "created": created, "user": user, "entry": entry},
+                extra_headers=headers,
+            )
+            return
+
+        if path == "/api/coach/signals/dismiss":
+            payload = self._read_json_body()
+            if payload is None:
+                return
+
+            user, headers = self._resolve_current_user(allow_debug_fallback=True)
+            if user is None:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {
+                        "ok": False,
+                        "reason": "No active session. iOS client must resolve a session first.",
+                    },
+                )
+                return
+
+            instance_key = str(payload.get("instance_key") or "").strip()
+            if not instance_key:
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST, {"ok": False, "reason": "instance_key is required"}
+                )
+                return
+
+            user_id = int(user["id"])
+            now_ts = int(time.time())
+            active = coach_signals.compute_signals(
+                STORE, user_id, coach_state.load_state(COACH_STATE_PATH), now_ts=now_ts
+            )
+            matched = next(
+                (signal for signal in active if signal["instance_key"] == instance_key),
+                None,
+            )
+            if matched is not None and matched["severity"] == "critical":
+                self._send_json(
+                    HTTPStatus.CONFLICT,
+                    {"ok": False, "reason": "Критический сигнал не откладывается — он гаснет только действием"},
+                    extra_headers=headers,
+                )
+                return
+
+            snooze_hours = payload.get("snooze_hours")
+            if snooze_hours is not None:
+                try:
+                    snooze_until: int | None = now_ts + int(snooze_hours) * 3600
+                except (TypeError, ValueError):
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST, {"ok": False, "reason": "snooze_hours must be an integer"}
+                    )
+                    return
+            else:
+                severity = matched["severity"] if matched else "info"
+                snooze_until = coach_signals.default_snooze_until(severity, now_ts)
+
+            STORE.save_signal_snooze(user_id, instance_key, snooze_until)
+            self._send_json(
+                HTTPStatus.OK,
+                {"ok": True, "instance_key": instance_key, "snooze_until": snooze_until},
+                extra_headers=headers,
+            )
+            return
+
+        if path == "/api/reports/weekly/read":
+            user, headers = self._resolve_current_user(allow_debug_fallback=True)
+            if user is None:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {
+                        "ok": False,
+                        "reason": "No active session. iOS client must resolve a session first.",
+                    },
+                )
+                return
+
+            marked = STORE.mark_coach_report_read(int(user["id"]))
+            self._send_json(
+                HTTPStatus.OK, {"ok": True, "read": marked}, extra_headers=headers
+            )
+            return
+
         if path == "/api/recommendations/refresh":
             user, headers = self._resolve_current_user(allow_debug_fallback=True)
             if user is None:
@@ -572,6 +724,31 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         path = urlparse(self.path).path
+        waist_id = self._parse_waist_id(path)
+        if waist_id is not None:
+            user, headers = self._resolve_current_user(allow_debug_fallback=True)
+            if user is None:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {
+                        "ok": False,
+                        "reason": "No active session. iOS client must resolve a session first.",
+                    },
+                )
+                return
+
+            entry = STORE.delete_waist(int(user["id"]), waist_id)
+            if entry is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Waist entry not found"})
+                return
+
+            self._send_json(
+                HTTPStatus.OK,
+                {"ok": True, "user": user, "entry": entry, "deleted": True},
+                extra_headers=headers,
+            )
+            return
+
         body_weight_id = self._parse_body_weight_id(path)
         if body_weight_id is not None:
             user, headers = self._resolve_current_user(allow_debug_fallback=True)
@@ -706,6 +883,20 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
     def _parse_workout_id(self, path: str) -> int | None:
         prefix = "/api/workouts/"
+        if not path.startswith(prefix):
+            return None
+
+        raw_id = path.removeprefix(prefix).strip("/")
+        if not raw_id or "/" in raw_id:
+            return None
+
+        try:
+            return int(raw_id)
+        except ValueError:
+            return None
+
+    def _parse_waist_id(self, path: str) -> int | None:
+        prefix = "/api/waists/"
         if not path.startswith(prefix):
             return None
 

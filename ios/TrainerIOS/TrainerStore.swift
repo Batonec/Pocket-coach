@@ -30,6 +30,13 @@ final class TrainerStore: ObservableObject {
     @Published var exercises: [ExerciseDefinition] = []
     @Published var workouts: [Workout] = []
     @Published var bodyWeightEntries: [BodyWeightEntry] = []
+    @Published var waistEntries: [WaistEntry] = []
+    // Coach signals for the История banner: server-computed, snooze-filtered,
+    // sorted. The client renders the first 1–2 and refetches on appear,
+    // foreground and after relevant mutations.
+    @Published var coachSignals: [CoachSignal] = []
+    // Which segment the Замеры screen should open with (deep-link from banners).
+    @Published var measurementsMetric: MeasureMetric = .weight
     @Published var draft: DraftWorkout {
         didSet { persistDraft() }
     }
@@ -39,6 +46,9 @@ final class TrainerStore: ObservableObject {
     @Published var isSavingBodyWeight = false
     @Published var bodyWeightDate: String
     @Published var bodyWeightValue: String = ""
+    @Published var waistDate: String
+    @Published var waistValue: String = ""
+    @Published var isSavingWaist = false
     @Published var toast: String?
 
     @Published var recommendation: RecommendationResponse?
@@ -62,6 +72,7 @@ final class TrainerStore: ObservableObject {
         self.draft = Self.readDraft(defaults: defaults)
         self.appliedPlan = Self.readAppliedPlan(defaults: defaults)
         self.bodyWeightDate = DateTools.localTodayISO()
+        self.waistDate = DateTools.localTodayISO()
     }
 
     func boot() async {
@@ -123,6 +134,8 @@ final class TrainerStore: ObservableObject {
         currentUser = nil
         workouts = []
         bodyWeightEntries = []
+        waistEntries = []
+        coachSignals = []
         bootState = .needsSignIn(nil)
     }
 
@@ -200,6 +213,8 @@ final class TrainerStore: ObservableObject {
             bodyWeightEntries = TrainerLogic.sortBodyWeights(bodyWeightEntries)
             syncBodyWeightComposer()
             showToast(response.created == true ? "Вес тела сохранён" : "Вес тела обновлён")
+            hideCoachSignals(withIDs: ["measurements_due", "measurements_overdue"])
+            refreshCoachSignals()
         } catch {
             showToast(error.localizedDescription)
         }
@@ -213,8 +228,115 @@ final class TrainerStore: ObservableObject {
             bodyWeightEntries.removeAll { $0.id == entry.id }
             syncBodyWeightComposer()
             showToast("Запись веса удалена")
+            refreshCoachSignals()
         } catch {
             showToast(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Waist measurements
+
+    func setWaistDate(_ date: Date) {
+        waistDate = DateTools.iso(from: date)
+        syncWaistComposer()
+    }
+
+    func setWaistValue(_ value: String) {
+        waistValue = TrainerLogic.normalizeBodyWeightInput(value)
+    }
+
+    func syncWaistComposer() {
+        if let existing = waistEntries.first(where: { $0.entryDate == waistDate }) {
+            waistValue = TrainerLogic.formatBodyWeightInput(existing.waist)
+            return
+        }
+        if let latest = waistEntries.last {
+            waistValue = TrainerLogic.formatBodyWeightInput(latest.waist)
+        } else {
+            waistValue = ""
+        }
+    }
+
+    func saveWaist() async {
+        let normalized = waistValue.replacingOccurrences(of: ",", with: ".")
+        guard let value = Double(normalized), value > 0 else {
+            showToast("Введи корректный обхват талии")
+            return
+        }
+
+        isSavingWaist = true
+        defer { isSavingWaist = false }
+
+        do {
+            let response = try await APIClient(baseURLString: apiBaseURLString)
+                .saveWaist(entryDate: waistDate, waist: value)
+            currentUser = response.user ?? currentUser
+            waistEntries.removeAll { $0.entryDate == response.entry.entryDate }
+            waistEntries.append(response.entry)
+            waistEntries.sort { $0.entryDate < $1.entryDate }
+            syncWaistComposer()
+            showToast(response.created == true ? "Талия сохранена" : "Талия обновлена")
+            hideCoachSignals(withIDs: ["measurements_due", "measurements_overdue"])
+            refreshCoachSignals()
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    func deleteWaist(_ entry: WaistEntry) async {
+        do {
+            let response = try await APIClient(baseURLString: apiBaseURLString)
+                .deleteWaist(id: entry.id)
+            currentUser = response.user ?? currentUser
+            waistEntries.removeAll { $0.id == entry.id }
+            syncWaistComposer()
+            showToast("Замер талии удалён")
+            refreshCoachSignals()
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Coach signals (the История banner)
+
+    /// Silent refetch: the endpoint is cheap local SQLite on the server, so we
+    /// call it on appear/foreground and right after relevant mutations.
+    func loadCoachSignals() async {
+        guard case .loaded = bootState else { return }
+        if let response = try? await APIClient(baseURLString: apiBaseURLString).fetchCoachSignals(),
+           let signals = response.signals {
+            coachSignals = signals
+        }
+    }
+
+    func refreshCoachSignals() {
+        Task { [weak self] in await self?.loadCoachSignals() }
+    }
+
+    /// Optimistic hide by signal TYPE right after the user's own action —
+    /// «взвесился → баннер погас в тот же кадр». The refetch that follows is
+    /// the source of truth.
+    func hideCoachSignals(withIDs ids: [String]) {
+        coachSignals.removeAll { ids.contains($0.signalID) }
+    }
+
+    func dismissCoachSignal(_ signal: CoachSignal) {
+        coachSignals.removeAll { $0.instanceKey == signal.instanceKey }
+        Task { [weak self] in
+            guard let self else { return }
+            _ = try? await APIClient(baseURLString: self.apiBaseURLString)
+                .dismissCoachSignal(instanceKey: signal.instanceKey)
+            await self.loadCoachSignals()
+        }
+    }
+
+    /// Server-side read receipt: prочтение — факт, не откладывание.
+    func markWeeklyReportRead() {
+        hideCoachSignals(withIDs: ["weekly_report_ready"])
+        Task { [weak self] in
+            guard let self else { return }
+            _ = try? await APIClient(baseURLString: self.apiBaseURLString).markWeeklyReportRead()
+            await self.loadCoachSignals()
         }
     }
 
@@ -287,6 +409,8 @@ final class TrainerStore: ObservableObject {
             resetDraft()
             isWorkoutBuilderPresented = false
             ensureSelectedProgressExercise()
+            hideCoachSignals(withIDs: ["return_soon", "return_mode", "deload_week"])
+            refreshCoachSignals()
             if wasNewWorkout {
                 // Plan consumed; backend regenerates the recommendation in the
                 // background — pick up "pending" now and the fresh one later.
@@ -582,20 +706,24 @@ final class TrainerStore: ObservableObject {
         async let exerciseResponse = client.fetchExercises()
         async let workoutsResponse = client.fetchWorkouts()
         async let weightsResponse = client.fetchBodyWeights()
+        async let waistsResponse = client.fetchWaists()
 
-        let (exercisePayload, workoutPayload, weightPayload) = try await (
+        let (exercisePayload, workoutPayload, weightPayload, waistPayload) = try await (
             exerciseResponse,
             workoutsResponse,
-            weightsResponse
+            weightsResponse,
+            waistsResponse
         )
 
         currentUser = workoutPayload.user ?? weightPayload.user ?? session.user ?? currentUser
         exercises = exercisePayload.exercises
         workouts = TrainerLogic.sortWorkouts(workoutPayload.workouts)
         bodyWeightEntries = TrainerLogic.sortBodyWeights(weightPayload.entries)
+        waistEntries = waistPayload.entries.sorted { $0.entryDate < $1.entryDate }
         ensureSelectedProgressExercise()
         ensureDraftExerciseDefinitions()
         syncBodyWeightComposer()
+        syncWaistComposer()
         bootState = .loaded
         if showSuccess {
             showToast("Данные обновлены")
@@ -603,6 +731,7 @@ final class TrainerStore: ObservableObject {
         // Fetch the coach recommendation off the boot path: a new unstructured Task
         // so the 3s reload deadline (which cancels the boot work task) never touches it.
         Task { [weak self] in await self?.loadRecommendation() }
+        Task { [weak self] in await self?.loadCoachSignals() }
     }
 
     private func handleLoadError(_ error: Error) {

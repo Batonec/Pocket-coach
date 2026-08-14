@@ -785,6 +785,7 @@ struct ContentView: View {
 
 private struct MainShellView: View {
     @EnvironmentObject private var store: TrainerStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var isShowingSettings = false
 
     // Per the design refresh, the Progress tab is gone — Progress is reachable
@@ -1994,11 +1995,272 @@ private struct Stepper: View {
 
 // MARK: - History tab
 
+// Coach-signal glyphs from the Claude Design mockups (screens/signals.jsx):
+// hand-drawn 18×18 stroke icons — scale (весы), tape (рулетка), back (возврат),
+// wave (разгрузка), doc (отчёт), check (веха). Unknown names fall back to doc.
+struct SignalGlyph: View {
+    var name: String
+    var color: Color
+    var size: CGFloat = 17
+
+    var body: some View {
+        Canvas { context, canvasSize in
+            let scale = canvasSize.width / 18
+            var path = Path()
+            var lineWidth: CGFloat = 1.9
+            switch name {
+            case "scale":
+                path.move(to: CGPoint(x: 2.5, y: 13.5))
+                path.addArc(
+                    center: CGPoint(x: 9, y: 13.5), radius: 6.5,
+                    startAngle: .degrees(180), endAngle: .degrees(0), clockwise: false
+                )
+                path.move(to: CGPoint(x: 9, y: 12.5))
+                path.addLine(to: CGPoint(x: 12.4, y: 7.6))
+            case "tape":
+                path.addRoundedRect(
+                    in: CGRect(x: 1.6, y: 5.4, width: 14.8, height: 7.2),
+                    cornerSize: CGSize(width: 2, height: 2)
+                )
+                for (x, len) in [(5.4, 2.6), (9.0, 3.6), (12.6, 2.6)] {
+                    path.move(to: CGPoint(x: x, y: 5.4))
+                    path.addLine(to: CGPoint(x: x, y: 5.4 + len))
+                }
+            case "back":
+                path.move(to: CGPoint(x: 3, y: 9))
+                path.addArc(
+                    center: CGPoint(x: 9, y: 9), radius: 6,
+                    startAngle: .degrees(180), endAngle: .degrees(140), clockwise: false
+                )
+                path.move(to: CGPoint(x: 2.2, y: 1.9))
+                path.addLine(to: CGPoint(x: 2.6, y: 5.6))
+                path.addLine(to: CGPoint(x: 6.2, y: 5.1))
+            case "wave":
+                path.move(to: CGPoint(x: 1.6, y: 10.6))
+                path.addCurve(
+                    to: CGPoint(x: 6.4, y: 10.6),
+                    control1: CGPoint(x: 3.2, y: 7.2), control2: CGPoint(x: 4.8, y: 7.2)
+                )
+                path.addCurve(
+                    to: CGPoint(x: 11.2, y: 10.6),
+                    control1: CGPoint(x: 8.0, y: 14.0), control2: CGPoint(x: 9.6, y: 14.0)
+                )
+                path.addCurve(
+                    to: CGPoint(x: 16.0, y: 10.6),
+                    control1: CGPoint(x: 12.8, y: 7.2), control2: CGPoint(x: 14.4, y: 7.2)
+                )
+            case "check":
+                lineWidth = 2.2
+                path.move(to: CGPoint(x: 2.6, y: 9.4))
+                path.addLine(to: CGPoint(x: 6.6, y: 13.4))
+                path.addLine(to: CGPoint(x: 15, y: 4.6))
+            default: // "doc" and unknown names
+                path.addRoundedRect(
+                    in: CGRect(x: 3.2, y: 2, width: 11.6, height: 14),
+                    cornerSize: CGSize(width: 2, height: 2)
+                )
+                for (y, len) in [(6.4, 5.6), (9.4, 5.6), (12.4, 3.2)] {
+                    path.move(to: CGPoint(x: 6.2, y: y))
+                    path.addLine(to: CGPoint(x: 6.2 + len, y: y))
+                }
+            }
+            context.stroke(
+                path.applying(CGAffineTransform(scaleX: scale, y: scale)),
+                with: .color(color),
+                style: StrokeStyle(lineWidth: lineWidth * scale, lineCap: .round, lineJoin: .round)
+            )
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+// Coach signal banner, styled after the Claude Design mockups
+// (screens/signals.jsx). Renders the first signal — or two when the top one is
+// critical. Unknown severities fall back to the info tone so the server can
+// grow the taxonomy without an app release.
+struct SignalBannerView: View {
+    var signals: [CoachSignal]
+    var onAction: (CoachSignal) -> Void
+    var onDismiss: (CoachSignal) -> Void
+
+    private var visible: [CoachSignal] {
+        guard let first = signals.first else { return [] }
+        return Array(signals.prefix(first.severity == "critical" ? 2 : 1))
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ForEach(visible) { signal in
+                banner(signal)
+            }
+        }
+    }
+
+    private struct Tone {
+        var glyph: Color
+        var glyphBackground: Color
+        var edge: Color
+    }
+
+    private static func tone(for severity: String) -> Tone {
+        switch severity {
+        case "warn":
+            return Tone(
+                glyph: Color(red: 0.72, green: 0.48, blue: 0.07),   // #B87A12
+                glyphBackground: DesignPalette.warn.opacity(0.16),
+                edge: DesignPalette.warn.opacity(0.38)
+            )
+        case "accent":
+            return Tone(
+                glyph: DesignPalette.accent,
+                glyphBackground: DesignPalette.accent.opacity(0.12),
+                edge: DesignPalette.accent.opacity(0.24)
+            )
+        case "positive":
+            return Tone(
+                glyph: DesignPalette.ok,
+                glyphBackground: DesignPalette.ok.opacity(0.15),
+                edge: DesignPalette.ok.opacity(0.34)
+            )
+        default: // info + unknown severities
+            return Tone(
+                glyph: DesignPalette.ink3,
+                glyphBackground: DesignPalette.ink.opacity(0.055),
+                edge: DesignPalette.ink.opacity(0.10)
+            )
+        }
+    }
+
+    private func banner(_ signal: CoachSignal) -> some View {
+        let critical = signal.severity == "critical"
+        let tone = Self.tone(for: signal.severity)
+        let ink: Color = critical ? .white : DesignPalette.ink
+        let sub: Color = critical ? .white.opacity(0.80) : DesignPalette.ink3
+        let hasAction = signal.action != nil && signal.action?.type != "none"
+        let ctaColor: Color = critical
+            ? .white
+            : (signal.severity == "info" ? DesignPalette.ink2 : tone.glyph)
+
+        return Button {
+            onAction(signal)
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(critical ? Color.white.opacity(0.20) : tone.glyphBackground)
+                    .frame(width: 30, height: 30)
+                    .overlay(
+                        SignalGlyph(
+                            name: signal.glyph ?? "doc",
+                            color: critical ? .white : tone.glyph
+                        )
+                    )
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(signal.title)
+                        .font(.jbm(13, weight: .bold)).tracking(-0.2)
+                        .foregroundStyle(ink)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(signal.body)
+                        .font(.jbm(11.5))
+                        .foregroundStyle(sub)
+                        .lineSpacing(2.5)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let note = signal.note, !note.isEmpty {
+                        Text(note)
+                            .font(.jbm(10.5))
+                            .italic()
+                            .foregroundStyle(critical ? .white.opacity(0.62) : DesignPalette.ink4)
+                            .padding(.top, 1)
+                    }
+                }
+                Spacer(minLength: 2)
+                if hasAction {
+                    VStack(spacing: 3) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(ctaColor)
+                        if let label = signal.action?.label, !label.isEmpty {
+                            Text(label.uppercased())
+                                .font(.jbm(8.5, weight: .bold)).tracking(0.4)
+                                .foregroundStyle(ctaColor)
+                        }
+                    }
+                    .frame(maxHeight: .infinity, alignment: .center)
+                    .padding(.leading, 2)
+                }
+            }
+            .padding(.leading, 12)
+            .padding(.trailing, signal.snoozable == true ? 34 : 12)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+            .background {
+                if critical {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.878, green: 0.322, blue: 0.322),  // #E05252
+                                    Color(red: 0.824, green: 0.247, blue: 0.247),  // #D23F3F
+                                ],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .stroke(Color.white.opacity(0.22), lineWidth: 0.5)
+                        )
+                        .shadow(color: DesignPalette.bad.opacity(0.55), radius: 15, y: 8)
+                }
+            }
+            .modifier(SignalCardChrome(critical: critical, edge: tone.edge))
+        }
+        .buttonStyle(.pressable(scale: 0.985))
+        .overlay(alignment: .topTrailing) {
+            if signal.snoozable == true {
+                Button {
+                    onDismiss(signal)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(critical ? .white.opacity(0.7) : DesignPalette.ink4)
+                        .frame(width: 26, height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(4)
+            }
+        }
+    }
+}
+
+// Non-critical banners sit on liquid glass with a severity-tinted hairline;
+// the critical one paints its own red gradient instead.
+private struct SignalCardChrome: ViewModifier {
+    var critical: Bool
+    var edge: Color
+
+    func body(content: Content) -> some View {
+        if critical {
+            content
+        } else {
+            content
+                .glassCard(radius: 20)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(edge, lineWidth: 0.5)
+                )
+        }
+    }
+}
+
 private struct HistoryScreen: View {
     @EnvironmentObject private var store: TrainerStore
     var openSettings: () -> Void
     @State private var pendingDeleteWorkout: Workout?
     @State private var isShowingProgress = false
+    @State private var isShowingWeeklyReport = false
 
     var body: some View {
         NavigationStack {
@@ -2030,6 +2292,20 @@ private struct HistoryScreen: View {
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 2, trailing: 14))
+
+                        // Coach signals — the attention banner right above the
+                        // next-workout card. Default state of the screen is NO
+                        // banner at all; the server decides what deserves it.
+                        if !store.coachSignals.isEmpty {
+                            SignalBannerView(
+                                signals: store.coachSignals,
+                                onAction: handleSignalAction,
+                                onDismiss: { store.dismissCoachSignal($0) }
+                            )
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 0, trailing: 14))
+                        }
 
                         // Compact AI recommendation — the next workout, below the
                         // stats strip. Hidden when there's nothing to show.
@@ -2086,6 +2362,13 @@ private struct HistoryScreen: View {
             .navigationDestination(isPresented: $isShowingProgress) {
                 ProgressTabScreen()
             }
+        }
+        .onAppear { store.refreshCoachSignals() }
+        .sheet(isPresented: $isShowingWeeklyReport) {
+            WeeklyReportSheet()
+                .environmentObject(store)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .alert("Удалить тренировку?", isPresented: deleteWorkoutBinding) {
             Button("Удалить", role: .destructive) {
@@ -2185,6 +2468,22 @@ private struct HistoryScreen: View {
         case "failed": return false
         case "ready": return rec.recommendation != nil
         default: return true
+        }
+    }
+
+    // Deep-links from the signal banner. Unknown action types do nothing —
+    // the banner text still stands on its own (server-driven taxonomy).
+    private func handleSignalAction(_ signal: CoachSignal) {
+        switch signal.action?.type {
+        case "open_measurements":
+            store.measurementsMetric = signal.action?.target == "waist" ? .waist : .weight
+            store.currentTab = .weight
+        case "open_next_workout":
+            store.currentTab = .trainings
+        case "open_weekly_report":
+            isShowingWeeklyReport = true
+        default:
+            break
         }
     }
 
@@ -2876,6 +3175,11 @@ private struct WeeklyReportSheet: View {
         .task {
             entry = await store.fetchWeeklyReport()
             isLoading = false
+            if entry != nil {
+                // Reading is a fact, not a snooze: the server-side receipt
+                // kills the weekly_report_ready signal for every client.
+                store.markWeeklyReportRead()
+            }
         }
     }
 
@@ -3435,49 +3739,118 @@ private struct ExerciseDetailScreen: View {
 
 // MARK: - Weight tab
 
+// «Замеры» — вес (кг) + талия (см), по макетам Claude Design
+// (screens/measurements.jsx): сегмент с текущими значениями над hero-карточкой,
+// график с reference-линией (цель веса / лимит талии), статы, последние записи
+// с кнопкой удаления и пустое состояние талии.
 private struct BodyWeightScreen: View {
     @EnvironmentObject private var store: TrainerStore
-    @State private var pendingDeleteEntry: BodyWeightEntry?
+    @State private var metric: MeasureMetric = .weight
+    @State private var pendingDeleteWeight: BodyWeightEntry?
+    @State private var pendingDeleteWaist: WaistEntry?
+    @State private var showComposer = false
+
+    // Both metrics render through one chart/list shape.
+    private struct MeasurePoint: Identifiable {
+        var id: Int
+        var entryDate: String
+        var value: Double
+    }
+
+    private var points: [MeasurePoint] {
+        switch metric {
+        case .weight:
+            return store.bodyWeightEntries.map {
+                MeasurePoint(id: $0.id, entryDate: $0.entryDate, value: $0.weight)
+            }
+        case .waist:
+            return store.waistEntries.map {
+                MeasurePoint(id: $0.id, entryDate: $0.entryDate, value: $0.waist)
+            }
+        }
+    }
+
+    private var unit: String { metric == .weight ? "кг" : "см" }
+
+    // Reference line from the coach context: the phase weight goal on the
+    // weight chart, the hard waist limit on the waist chart.
+    private var referenceLine: (value: Double, label: String, tone: Color)? {
+        let context = store.recommendation?.recommendation?.coachContext
+        switch metric {
+        case .weight:
+            guard let target = context?.targetWeightKg else { return nil }
+            return (target, "ЦЕЛЬ \(Self.format1dp(target))", DesignPalette.ok)
+        case .waist:
+            guard let limit = context?.waistLimitCm else { return nil }
+            return (limit, "ЛИМИТ \(Self.format1dp(limit))", DesignPalette.bad)
+        }
+    }
 
     var body: some View {
         ZStack {
             WarmWallpaper()
             content
         }
-        .alert("Удалить запись веса?", isPresented: deleteEntryBinding) {
+        .onAppear { metric = store.measurementsMetric }
+        .onChange(of: store.measurementsMetric) { _, newValue in metric = newValue }
+        .sheet(isPresented: $showComposer) {
+            MeasureComposerSheet(metric: metric)
+                .environmentObject(store)
+                .presentationDetents([.height(340)])
+                .presentationDragIndicator(.visible)
+        }
+        .alert("Удалить запись веса?", isPresented: deleteWeightBinding) {
             Button("Удалить", role: .destructive) {
-                if let pendingDeleteEntry {
-                    Task { await store.deleteBodyWeight(pendingDeleteEntry) }
+                if let pendingDeleteWeight {
+                    Task { await store.deleteBodyWeight(pendingDeleteWeight) }
                 }
-                pendingDeleteEntry = nil
+                pendingDeleteWeight = nil
             }
-            Button("Отмена", role: .cancel) { pendingDeleteEntry = nil }
+            Button("Отмена", role: .cancel) { pendingDeleteWeight = nil }
         } message: {
-            if let pendingDeleteEntry {
-                Text("\(TrainerLogic.formatBodyWeight(pendingDeleteEntry.weight)) кг от \(DateTools.long(pendingDeleteEntry.entryDate))")
+            if let pendingDeleteWeight {
+                Text("\(TrainerLogic.formatBodyWeight(pendingDeleteWeight.weight)) кг от \(DateTools.long(pendingDeleteWeight.entryDate))")
+            }
+        }
+        .alert("Удалить замер талии?", isPresented: deleteWaistBinding) {
+            Button("Удалить", role: .destructive) {
+                if let pendingDeleteWaist {
+                    Task { await store.deleteWaist(pendingDeleteWaist) }
+                }
+                pendingDeleteWaist = nil
+            }
+            Button("Отмена", role: .cancel) { pendingDeleteWaist = nil }
+        } message: {
+            if let pendingDeleteWaist {
+                Text("\(Self.format1dp(pendingDeleteWaist.waist)) см от \(DateTools.long(pendingDeleteWaist.entryDate))")
             }
         }
     }
 
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
                 headerPills
-                TopTitle(sub: nil, title: "Вес тела")
+                TopTitle(sub: "Вес и талия", title: "Замеры")
                     .padding(.horizontal, 4)
 
-                weightHeroCard
+                metricSegment
 
-                statsRow
+                if metric == .waist && store.waistEntries.isEmpty {
+                    emptyWaistCard
+                } else {
+                    heroCard
+                    statsRow
 
-                Text("ПОСЛЕДНИЕ ЗАПИСИ")
-                    .font(.jbm(13, weight: .bold))
-                    .tracking(0.4)
-                    .foregroundStyle(DesignPalette.ink3)
-                    .padding(.horizontal, 4)
-                    .padding(.top, 6)
+                    Text("ПОСЛЕДНИЕ ЗАПИСИ")
+                        .font(.jbm(13, weight: .bold))
+                        .tracking(0.4)
+                        .foregroundStyle(DesignPalette.ink3)
+                        .padding(.horizontal, 4)
+                        .padding(.top, 6)
 
-                recentEntries
+                    recentEntries
+                }
             }
             .padding(.horizontal, 14)
             .padding(.top, 8)
@@ -3503,24 +3876,51 @@ private struct BodyWeightScreen: View {
         .padding(.top, 4)  // Match Today screen's topPillsRow inset.
     }
 
-    private var weightHeroCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Header row: big current weight + "кг" + delta sit on a shared
-            // baseline; the add-entry button is vertically centered against
-            // that row. Number sized to match the Progress ring percentage
-            // (40pt) so the two screens read at the same visual weight.
-            let entries = store.bodyWeightEntries
-            let last = entries.last
-            let first = entries.first
-            let delta = (last?.weight ?? 0) - (first?.weight ?? last?.weight ?? 0)
+    // MARK: metric segment («Вес 79.0 | Талия 84.0»)
 
+    private var metricSegment: some View {
+        HStack(spacing: 3) {
+            segmentItem(.weight, label: "Вес", value: store.bodyWeightEntries.last?.weight)
+            segmentItem(.waist, label: "Талия", value: store.waistEntries.last?.waist)
+        }
+        .padding(3)
+        .background(DesignPalette.ink.opacity(0.05), in: Capsule())
+        .overlay(Capsule().stroke(DesignPalette.ink.opacity(0.08), lineWidth: 0.5))
+    }
+
+    private func segmentItem(_ target: MeasureMetric, label: String, value: Double?) -> some View {
+        let on = metric == target
+        return Button {
+            metric = target
+            store.measurementsMetric = target
+        } label: {
+            HStack(spacing: 6) {
+                Text(label)
+                    .font(.jbm(13, weight: .bold)).tracking(-0.15)
+                Text(value.map(Self.format1dp) ?? "—")
+                    .mono(11, weight: .semibold)
+                    .opacity(on ? 0.66 : 0.5)
+            }
+            .foregroundStyle(on ? .white : DesignPalette.ink2)
+            .frame(maxWidth: .infinity)
+            .frame(height: 38)
+            .background(on ? DesignPalette.ink : .clear, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: hero card (значение + дельта за 90 дней + график)
+
+    private var heroCard: some View {
+        let delta = ninetyDayDelta
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 10) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    if let last {
-                        Text(TrainerLogic.formatBodyWeight(last.weight))
+                    if let last = points.last {
+                        Text(Self.format1dp(last.value))
                             .display(size: 40, weight: .bold)
                             .foregroundStyle(DesignPalette.ink)
-                        Text("кг")
+                        Text(unit)
                             .font(.jbm(15, weight: .semibold))
                             .foregroundStyle(DesignPalette.ink3)
                     } else {
@@ -3529,21 +3929,26 @@ private struct BodyWeightScreen: View {
                             .foregroundStyle(DesignPalette.ink)
                     }
 
-                    if last != nil {
-                        Text(deltaText(delta))
-                            .font(.jbm(13, weight: .heavy))
-                            .foregroundStyle(delta <= 0 ? DesignPalette.ok : DesignPalette.bad)
-                            .padding(.leading, 4)
+                    if let delta {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(deltaText(delta))
+                                .font(.jbm(13, weight: .heavy))
+                                .foregroundStyle(deltaTint(delta))
+                            Text("за 90 дней")
+                                .font(.jbm(10.5))
+                                .foregroundStyle(DesignPalette.ink3)
+                        }
+                        .padding(.leading, 4)
                     }
                 }
 
                 Spacer()
 
-                WeightAddInline()
+                addButton
             }
 
-            if entries.count >= 2 {
-                weightChart(entries: entries)
+            if points.count >= 2 {
+                measureChart
                     .frame(height: 170)
                     .padding(.top, 8)
             } else {
@@ -3558,19 +3963,48 @@ private struct BodyWeightScreen: View {
         .liquidGlass(radius: 28)
     }
 
-    private func weightChart(entries: [BodyWeightEntry]) -> some View {
-        // AreaMark defaults to filling from 0 to the value — with a yScale
-        // domain that starts near 80kg the fill bleeds below the visible
-        // plot area. Anchor the area's lower edge to the y-domain min so the
-        // gradient sits cleanly inside the chart.
-        let domain = yDomain(entries)
+    private var addButton: some View {
+        Button {
+            if metric == .weight {
+                store.bodyWeightDate = DateTools.localTodayISO()
+                store.syncBodyWeightComposer()
+            } else {
+                store.waistDate = DateTools.localTodayISO()
+                store.syncWaistComposer()
+            }
+            showComposer = true
+        } label: {
+            ZStack {
+                Circle().fill(DesignPalette.accent)
+                Image(systemName: "plus")
+                    .font(.jbm(18, weight: .heavy))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 44, height: 44)
+            .shadow(color: DesignPalette.accent.opacity(0.35), radius: 14, y: 6)
+        }
+        .buttonStyle(.pressable(scale: 0.86))
+    }
+
+    private var measureChart: some View {
+        let domain = yDomain
         let yMin = domain.lowerBound
         return Chart {
-            ForEach(entries) { entry in
+            if let referenceLine {
+                RuleMark(y: .value("Ориентир", referenceLine.value))
+                    .foregroundStyle(referenceLine.tone)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
+                    .annotation(position: .top, alignment: .trailing) {
+                        Text(referenceLine.label)
+                            .font(.jbm(9, weight: .bold))
+                            .foregroundStyle(referenceLine.tone)
+                    }
+            }
+            ForEach(points) { point in
                 AreaMark(
-                    x: .value("Дата", DateTools.date(from: entry.entryDate)),
+                    x: .value("Дата", DateTools.date(from: point.entryDate)),
                     yStart: .value("Низ", yMin),
-                    yEnd: .value("Вес", entry.weight)
+                    yEnd: .value("Значение", point.value)
                 )
                 .foregroundStyle(
                     LinearGradient(
@@ -3581,18 +4015,18 @@ private struct BodyWeightScreen: View {
                 )
 
                 LineMark(
-                    x: .value("Дата", DateTools.date(from: entry.entryDate)),
-                    y: .value("Вес", entry.weight)
+                    x: .value("Дата", DateTools.date(from: point.entryDate)),
+                    y: .value("Значение", point.value)
                 )
                 .foregroundStyle(DesignPalette.accent)
                 .interpolationMethod(.monotone)
 
                 PointMark(
-                    x: .value("Дата", DateTools.date(from: entry.entryDate)),
-                    y: .value("Вес", entry.weight)
+                    x: .value("Дата", DateTools.date(from: point.entryDate)),
+                    y: .value("Значение", point.value)
                 )
-                .foregroundStyle(entry.id == entries.last?.id ? Color.white : DesignPalette.accent)
-                .symbolSize(entry.id == entries.last?.id ? 80 : 14)
+                .foregroundStyle(point.id == points.last?.id ? Color.white : DesignPalette.accent)
+                .symbolSize(point.id == points.last?.id ? 80 : 14)
             }
         }
         .chartOverlay { proxy in
@@ -3604,9 +4038,7 @@ private struct BodyWeightScreen: View {
                         let frame = geo[proxy.plotAreaFrame]
                         let x = location.x - frame.origin.x
                         guard let date: Date = proxy.value(atX: x) else { return }
-                        if let nearest = nearest(entry: date) {
-                            pendingDeleteEntry = nearest
-                        }
+                        requestDelete(nearest(to: date))
                     }
             }
         }
@@ -3616,20 +4048,22 @@ private struct BodyWeightScreen: View {
         }
     }
 
-    private var statsRow: some View {
-        // Whole-history min/max, rounded to 2 decimal places. Average tile
-        // dropped — the chart line carries that read-out implicitly.
-        let entries = store.bodyWeightEntries
-        let mn = entries.map(\.weight).min() ?? 0
-        let mx = entries.map(\.weight).max() ?? 0
-        return LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-            statTile(label: "Минимум", value: entries.isEmpty ? "—" : Self.format2dp(mn))
-            statTile(label: "Максимум", value: entries.isEmpty ? "—" : Self.format2dp(mx))
-        }
-    }
+    // MARK: stats («Средний» + «Минимум» / «Лимит фазы»)
 
-    private static func format2dp(_ value: Double) -> String {
-        String(format: "%.2f", locale: Locale(identifier: "ru_RU"), value)
+    private var statsRow: some View {
+        let values = points.map(\.value)
+        let average = values.isEmpty ? nil : values.reduce(0, +) / Double(values.count)
+        return LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+            statTile(label: "Средний", value: average.map(Self.format1dp) ?? "—")
+            if metric == .waist {
+                statTile(
+                    label: "Лимит фазы",
+                    value: referenceLine.map { Self.format1dp($0.value) } ?? "—"
+                )
+            } else {
+                statTile(label: "Минимум", value: values.min().map(Self.format1dp) ?? "—")
+            }
+        }
     }
 
     private func statTile(label: String, value: String) -> some View {
@@ -3642,7 +4076,7 @@ private struct BodyWeightScreen: View {
                 Text(value)
                     .display(size: 18, weight: .heavy)
                     .foregroundStyle(DesignPalette.ink)
-                Text("кг")
+                Text(unit)
                     .font(.jbm(11, weight: .semibold))
                     .foregroundStyle(DesignPalette.ink3)
             }
@@ -3652,28 +4086,31 @@ private struct BodyWeightScreen: View {
         .glassCard(radius: 18)
     }
 
+    // MARK: recent entries («дата · значение · удалить»)
+
     private var recentEntries: some View {
-        // Every entry, newest first. Delete via long-press — the standalone
-        // "удалить" link was noisy at the row's trailing edge and stole the
-        // weight number's right-align position.
-        let visible = Array(store.bodyWeightEntries.reversed())
+        let visible = Array(points.reversed())
         return VStack(spacing: 0) {
-            ForEach(Array(visible.enumerated()), id: \.element.id) { idx, r in
+            ForEach(Array(visible.enumerated()), id: \.element.id) { idx, point in
                 HStack(spacing: 10) {
-                    Text(DateTools.short(r.entryDate))
+                    Text(DateTools.short(point.entryDate))
                         .font(.jbm(13))
                         .foregroundStyle(DesignPalette.ink3)
                         .frame(width: 70, alignment: .leading)
-                    Spacer(minLength: 0)
-                    Text("\(Self.format2dp(r.weight)) кг")
+                    Text("\(Self.format1dp(point.value)) \(unit)")
                         .mono(14, weight: .heavy)
                         .foregroundStyle(DesignPalette.ink)
+                    Spacer(minLength: 0)
+                    Button {
+                        requestDelete(point)
+                    } label: {
+                        Text("удалить")
+                            .font(.jbm(12, weight: .semibold))
+                            .foregroundStyle(DesignPalette.ink3)
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(.vertical, 11)
-                .contentShape(Rectangle())
-                .onLongPressGesture(minimumDuration: 0.4) {
-                    pendingDeleteEntry = r
-                }
                 if idx < visible.count - 1 {
                     Rectangle().fill(DesignPalette.sep).frame(height: 0.5)
                 }
@@ -3689,87 +4126,164 @@ private struct BodyWeightScreen: View {
         .glassCard(radius: 20)
     }
 
-    private var deleteEntryBinding: Binding<Bool> {
-        Binding(
-            get: { pendingDeleteEntry != nil },
-            set: { if !$0 { pendingDeleteEntry = nil } }
-        )
+    // MARK: waist empty state («Первый замер станет базой фазы»)
+
+    private var emptyWaistCard: some View {
+        VStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                .fill(DesignPalette.ink.opacity(0.05))
+                .frame(width: 46, height: 46)
+                .overlay(SignalGlyph(name: "tape", color: DesignPalette.ink3, size: 22))
+                .padding(.bottom, 12)
+            Text("Первый замер станет базой фазы")
+                .font(.jbm(15, weight: .bold)).tracking(-0.2)
+                .foregroundStyle(DesignPalette.ink)
+                .multilineTextAlignment(.center)
+            Text("Талия — второй контур набора: по ней тренер видит, куда идёт вес.")
+                .font(.jbm(12))
+                .foregroundStyle(DesignPalette.ink3)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 5)
+            Text("утром натощак, по пупку")
+                .font(.jbm(11.5))
+                .foregroundStyle(DesignPalette.ink4)
+                .padding(.top, 8)
+            Button {
+                store.waistDate = DateTools.localTodayISO()
+                store.syncWaistComposer()
+                showComposer = true
+            } label: {
+                Text("Внести талию")
+                    .font(.jbm(14, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .background(DesignPalette.accent, in: Capsule())
+                    .shadow(color: DesignPalette.accent.opacity(0.30), radius: 10, y: 4)
+            }
+            .buttonStyle(.pressable(scale: 0.96))
+            .padding(.top, 16)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(EdgeInsets(top: 30, leading: 22, bottom: 22, trailing: 22))
+        .liquidGlass(radius: 28)
+    }
+
+    // MARK: helpers
+
+    private var ninetyDayDelta: Double? {
+        let cal = Calendar.current
+        guard let cutoff = cal.date(byAdding: .day, value: -90, to: Date()) else { return nil }
+        let window = points.filter { DateTools.date(from: $0.entryDate) >= cal.startOfDay(for: cutoff) }
+        guard let first = window.first, let last = window.last, window.count >= 2 else { return nil }
+        return last.value - first.value
     }
 
     private func deltaText(_ value: Double) -> String {
         let arrow = value <= 0 ? "↓" : "↑"
-        return "\(arrow) \(TrainerLogic.formatBodyWeight(abs(value))) кг"
+        return "\(arrow) \(Self.format1dp(abs(value))) \(unit)"
     }
 
-    private func nearest(entry date: Date) -> BodyWeightEntry? {
-        store.bodyWeightEntriesForSelectedRange().min { left, right in
+    // Going down is good in a cut for both metrics; going up is «bad» for
+    // weight and «warn» for the waist (mockup tones).
+    private func deltaTint(_ value: Double) -> Color {
+        if value <= 0 { return DesignPalette.ok }
+        return metric == .waist ? DesignPalette.warn : DesignPalette.bad
+    }
+
+    private func requestDelete(_ point: MeasurePoint?) {
+        guard let point else { return }
+        switch metric {
+        case .weight:
+            pendingDeleteWeight = store.bodyWeightEntries.first { $0.id == point.id }
+        case .waist:
+            pendingDeleteWaist = store.waistEntries.first { $0.id == point.id }
+        }
+    }
+
+    private func nearest(to date: Date) -> MeasurePoint? {
+        points.min { left, right in
             abs(DateTools.date(from: left.entryDate).timeIntervalSince(date)) <
                 abs(DateTools.date(from: right.entryDate).timeIntervalSince(date))
         }
     }
 
-    private func yDomain(_ entries: [BodyWeightEntry]) -> ClosedRange<Double> {
-        let values = entries.map(\.weight)
+    private var deleteWeightBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeleteWeight != nil },
+            set: { if !$0 { pendingDeleteWeight = nil } }
+        )
+    }
+
+    private var deleteWaistBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeleteWaist != nil },
+            set: { if !$0 { pendingDeleteWaist = nil } }
+        )
+    }
+
+    private var yDomain: ClosedRange<Double> {
+        var values = points.map(\.value)
+        if let referenceLine {
+            values.append(referenceLine.value)
+        }
         guard let min = values.min(), let max = values.max(), min != max else {
             let v = values.first ?? 80
             return (v - 1)...(v + 1)
         }
-        return (min - 0.4)...(max + 0.4)
+        return (min - 0.5)...(max + 0.5)
+    }
+
+    static func format1dp(_ value: Double) -> String {
+        String(format: "%.1f", locale: Locale(identifier: "ru_RU"), value)
     }
 }
 
-private struct WeightAddInline: View {
-    @EnvironmentObject private var store: TrainerStore
-    @State private var showSheet = false
-
-    var body: some View {
-        Button {
-            store.bodyWeightDate = DateTools.localTodayISO()
-            store.syncBodyWeightComposer()
-            showSheet = true
-        } label: {
-            ZStack {
-                Circle().fill(DesignPalette.accent)
-                Image(systemName: "plus")
-                    .font(.jbm(18, weight: .heavy))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 44, height: 44)
-            .shadow(color: DesignPalette.accent.opacity(0.35), radius: 14, y: 6)
-        }
-        .buttonStyle(.pressable(scale: 0.86))
-        .sheet(isPresented: $showSheet) {
-            BodyWeightComposerSheet()
-                .environmentObject(store)
-                .presentationDetents([.height(320)])
-                .presentationDragIndicator(.visible)
-        }
-    }
-}
-
-private struct BodyWeightComposerSheet: View {
+// One composer for both metrics: «НОВЫЙ ЗАМЕР · ВЕС/ТАЛИЯ», date, value with
+// the unit, the waist hint, and an accent save button (mockup MeasureEntrySheet;
+// the system decimal pad replaces the custom keypad deliberately).
+private struct MeasureComposerSheet: View {
+    var metric: MeasureMetric
     @EnvironmentObject private var store: TrainerStore
     @Environment(\.dismiss) private var dismiss
 
+    private var isSaving: Bool {
+        metric == .weight ? store.isSavingBodyWeight : store.isSavingWaist
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Новая запись")
-                .display(size: 22, weight: .heavy)
-                .foregroundStyle(DesignPalette.ink)
+            Text("НОВЫЙ ЗАМЕР · \(metric == .weight ? "ВЕС" : "ТАЛИЯ")")
+                .font(.jbm(11, weight: .bold)).tracking(0.6)
+                .foregroundStyle(DesignPalette.ink3)
 
             DatePicker(
                 "Дата",
                 selection: Binding(
-                    get: { DateTools.date(from: store.bodyWeightDate) },
-                    set: { store.setBodyWeightDate($0) }
+                    get: { DateTools.date(from: metric == .weight ? store.bodyWeightDate : store.waistDate) },
+                    set: { newValue in
+                        if metric == .weight {
+                            store.setBodyWeightDate(newValue)
+                        } else {
+                            store.setWaistDate(newValue)
+                        }
+                    }
                 ),
                 displayedComponents: .date
             )
 
             HStack {
                 TextField("0.0", text: Binding(
-                    get: { store.bodyWeightValue },
-                    set: { store.setBodyWeightValue($0) }
+                    get: { metric == .weight ? store.bodyWeightValue : store.waistValue },
+                    set: { newValue in
+                        if metric == .weight {
+                            store.setBodyWeightValue(newValue)
+                        } else {
+                            store.setWaistValue(newValue)
+                        }
+                    }
                 ))
                 .keyboardType(.decimalPad)
                 .font(.jbm(26, weight: .heavy))
@@ -3777,31 +4291,42 @@ private struct BodyWeightComposerSheet: View {
                 .frame(height: 56)
                 .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
 
-                Text("кг")
+                Text(metric == .weight ? "кг" : "см")
                     .font(.jbm(16, weight: .semibold))
+                    .foregroundStyle(DesignPalette.ink3)
+            }
+
+            if metric == .waist {
+                Text("утром натощак, по пупку")
+                    .font(.jbm(11.5))
                     .foregroundStyle(DesignPalette.ink3)
             }
 
             Button {
                 Task {
-                    await store.saveBodyWeight()
+                    if metric == .weight {
+                        await store.saveBodyWeight()
+                    } else {
+                        await store.saveWaist()
+                    }
                     dismiss()
                 }
             } label: {
                 HStack {
-                    if store.isSavingBodyWeight {
+                    if isSaving {
                         ProgressView().tint(.white)
                     }
-                    Text(store.isSavingBodyWeight ? "Сохраняем…" : "Сохранить")
+                    Text(isSaving ? "Сохраняем…" : "Сохранить")
                         .font(.jbm(17, weight: .heavy))
                         .foregroundStyle(.white)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 54)
-                .background(DesignPalette.ink, in: RoundedRectangle(cornerRadius: 27))
+                .background(DesignPalette.accent, in: RoundedRectangle(cornerRadius: 27))
+                .shadow(color: DesignPalette.accent.opacity(0.30), radius: 10, y: 4)
             }
             .buttonStyle(.plain)
-            .disabled(store.isSavingBodyWeight)
+            .disabled(isSaving)
         }
         .padding(22)
         .background(WarmWallpaper())

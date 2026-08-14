@@ -1079,6 +1079,15 @@ def adherence_stats(
     (done sets are capped by the plan so extras never inflate past 100%), how
     many sessions followed a plan, and which exercises get skipped outright.
     The coach uses it to make plans realistic, not to lecture."""
+    return adherence_between(workouts, today - timedelta(days=days - 1), today)
+
+
+def adherence_between(
+    workouts: list[dict[str, Any]], start: date, end: date
+) -> dict[str, Any] | None:
+    """Fact-vs-plan aggregate over an explicit [start, end] date range (used by
+    the 30-day discipline window, phase summaries and the week_done signal)."""
+    days = max(1, (end - start).days + 1)
     planned_total = 0
     done_total = 0
     sessions = 0
@@ -1086,7 +1095,7 @@ def adherence_stats(
 
     for workout in workouts:
         when = _workout_date(workout)
-        if when is None or when > today or (today - when).days >= days:
+        if when is None or when < start or when > end:
             continue
         data = workout.get("data", {}) or {}
         snapshot = data.get("recommendation")

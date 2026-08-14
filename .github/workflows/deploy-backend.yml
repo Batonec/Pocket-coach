@@ -76,6 +76,7 @@ jobs:
             backend/recommender.py \
             backend/coach_state.py \
             backend/coach_features.py \
+            backend/coach_signals.py \
             backend/refresh_recommendation.py \
             backend/weekly_report.py \
             backend/backup_db.py \
@@ -92,7 +93,7 @@ jobs:
         run: |
           set -eu
           ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "\
-            chmod 644 '$DEPLOY_BASE/app/server.py' '$DEPLOY_BASE/app/backend_store.py' '$DEPLOY_BASE/app/recommender.py' '$DEPLOY_BASE/app/coach_state.py' '$DEPLOY_BASE/app/coach_features.py' '$DEPLOY_BASE/app/refresh_recommendation.py' '$DEPLOY_BASE/app/weekly_report.py' '$DEPLOY_BASE/app/backup_db.py' '/etc/systemd/system/$BACKEND_SERVICE' && \
+            chmod 644 '$DEPLOY_BASE/app/server.py' '$DEPLOY_BASE/app/backend_store.py' '$DEPLOY_BASE/app/recommender.py' '$DEPLOY_BASE/app/coach_state.py' '$DEPLOY_BASE/app/coach_features.py' '$DEPLOY_BASE/app/coach_signals.py' '$DEPLOY_BASE/app/refresh_recommendation.py' '$DEPLOY_BASE/app/weekly_report.py' '$DEPLOY_BASE/app/backup_db.py' '/etc/systemd/system/$BACKEND_SERVICE' && \
             test -f /etc/trainer-miniapp/backend.env && \
             systemctl daemon-reload && \
             systemctl enable --now '$BACKEND_SERVICE' && \

@@ -102,6 +102,7 @@ BACKEND_MODULES=(
   recommender.py
   coach_state.py
   coach_features.py
+  coach_signals.py
   refresh_recommendation.py
   weekly_report.py
   backup_db.py
