@@ -37,7 +37,11 @@ jobs:
           if [ "$EVENT_NAME" = "pull_request" ]; then
             git fetch --no-tags origin "$BASE_REF"
             changed_files="$(git diff --name-only "origin/$BASE_REF...$HEAD_SHA")"
-          elif [ -n "${BEFORE_SHA:-}" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+          elif [ -n "${BEFORE_SHA:-}" ] \
+            && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ] \
+            && git cat-file -e "$BEFORE_SHA" 2>/dev/null; then
+            # After a force-push `before` may be an unreachable commit — fall
+            # through to diff-tree instead of failing the whole run.
             changed_files="$(git diff --name-only "$BEFORE_SHA" "$HEAD_SHA")"
           else
             changed_files="$(git diff-tree --no-commit-id --name-only -r "$HEAD_SHA")"
