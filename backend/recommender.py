@@ -370,10 +370,20 @@ def _build_system_prompt(
         "них не строй. Пики и даты ПР по каждому тренажёру уже посчитаны в данных — "
         "считай их фактами, не выводи заново из сырой истории.\n"
         "- Возврат после перерыва: если с последней тренировки прошло ≥14 дней — "
-        "первая сессия medium/light на ~85–90% последних рабочих весов, 10–14 "
+        "первая сессия medium/light на ~85–90% последних рабочих весов (чем "
+        "длиннее перерыв, тем ниже: 3–5 недель ~85%, 5–8 недель ~80%), 10–14 "
         "подходов, без отказа (коридор подходов фазы не действует); возврат к "
-        "прежним весам за 2–3 сессии. Если в данных есть готовые СТУПЕНИ разгона до "
-        "пика — веди атлета по ним. Длинный перерыв сам по себе — разгрузка: "
+        "прежним весам за 2–3 сессии. ПОЧЕМУ: при простое нервная сила уходит "
+        "последней, а связки, сухожилия и рабочая выносливость — первыми, "
+        "поэтому вес, который до перерыва шёл «легко», сейчас бьёт по "
+        "неподготовленным тканям; первая сессия — это вход обратно, а не "
+        "проверка формы. Отсюда следствие, которое легко упустить: правило "
+        "двойной прогрессии на возвратной сессии НЕ применяется — отметки «-» "
+        "(легко) и запас RIR из последней сессии описывают форму ДО перерыва, "
+        "прибавлять к ним вес или повторы нельзя ни по одному движению. Если в "
+        "данных есть возвратные ПОТОЛКИ или готовые СТУПЕНИ разгона до пика — "
+        "это границы, а не ориентир «примерно»: планируй на них или ниже. "
+        "Длинный перерыв сам по себе — разгрузка: "
         "счётчик deload обнуляется, правило «после heavy не heavy» через перерыв "
         "не применяется. После перерыва в rationale вместо сводки нулевых объёмов "
         "опиши план разгона на 2–3 сессии.\n"
@@ -533,6 +543,13 @@ def _build_user_prompt(
     stall_line = coach_features.render_stall_report(stall)
     if stall_line:
         chunks.append(stall_line)
+
+    if returning and days is not None:
+        ceilings = coach_features.render_return_ceilings(
+            coach_features.return_ceilings(workouts, catalog or [], today, days), days
+        )
+        if ceilings:
+            chunks.append(ceilings)
 
     ramp_lines = coach_features.comeback_ramp(workouts, catalog or [], today)
     if ramp_lines:
@@ -995,13 +1012,40 @@ def _semantic_violations(
     #    rung (+one step) instead — the ±15%-of-peak ceiling would happily
     #    wave through a peak-weight first session.
     ramp_by_id: dict[int, dict[str, Any]] = {}
+    ceiling_by_id: dict[int, dict[str, Any]] = {}
     if returning:
         ramp_by_id = {
             item["exercise_id"]: item
             for item in coach_features.comeback_ramp_steps(workouts, catalog, today)
         }
+        # Movements the athlete left AT their peak get no ladder — without an
+        # explicit ceiling the generic ±15% band below would wave through a PR
+        # attempt on the first session back.
+        days_off = _days_since_last(workouts, today) or coach_state.BREAK_DAYS
+        ceiling_by_id = {
+            item["exercise_id"]: item
+            for item in coach_features.return_ceilings(workouts, catalog, today, days_off)
+            if item["exercise_id"] not in ramp_by_id
+        }
     for exercise in recommendation.get("exercises", []) or []:
         exercise_id = exercise["exercise_id"]
+        ceiling = ceiling_by_id.get(exercise_id)
+        if ceiling:
+            allowed = ceiling["ceiling"]
+            for workout_set in exercise["sets"]:
+                weight = workout_set["weight"]
+                too_hard = (
+                    weight < allowed - 1e-9 if ceiling["inverted"] else weight > allowed + 1e-9
+                )
+                if too_hard:
+                    what = "противовес" if ceiling["inverted"] else "вес"
+                    violations.append(
+                        f"{exercise['name']}: {what} {weight:g} кг тяжелее возвратного "
+                        f"потолка {allowed:g} (прежний рабочий "
+                        f"{ceiling['last_working']:g}) — после перерыва первая сессия "
+                        "идёт ниже прежних весов, без прогрессии"
+                    )
+            continue
         ramp = ramp_by_id.get(exercise_id)
         if ramp:
             steps = ramp["steps"]

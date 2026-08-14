@@ -430,11 +430,11 @@ class SemanticValidatorTests(unittest.TestCase):
                 {"exercise_id": 8, "name": "Жим ногами", "note": "n",
                  "sets": [{"reps": 12, "weight": 80}] * 4},      # −20%
                 {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
-                 "sets": [{"reps": 12, "weight": 50}] * 4},      # −17%
+                 "sets": [{"reps": 12, "weight": 47.5}] * 4},    # на возвратном потолке
                 {"exercise_id": 18, "name": "Жим в тренажере", "note": "n",
-                 "sets": [{"reps": 12, "weight": 45}] * 2},
+                 "sets": [{"reps": 12, "weight": 40}] * 2},
                 {"exercise_id": 15, "name": "Сгибания ног", "note": "n",
-                 "sets": [{"reps": 12, "weight": 25}] * 2},
+                 "sets": [{"reps": 12, "weight": 22.5}] * 2},
             ],
         }
         catalog = self.CATALOG + [
@@ -714,11 +714,11 @@ class ReturnRampValidatorTests(unittest.TestCase):
                 {"exercise_id": 8, "name": "Жим ногами", "note": "n",
                  "sets": [{"reps": 12, "weight": leg_press_weight}] * 4},
                 {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
-                 "sets": [{"reps": 12, "weight": 55}] * 4},
+                 "sets": [{"reps": 12, "weight": 47.5}] * 4},
                 {"exercise_id": 18, "name": "Жим в тренажере", "note": "n",
-                 "sets": [{"reps": 12, "weight": 45}] * 2},
+                 "sets": [{"reps": 12, "weight": 40}] * 2},
                 {"exercise_id": 15, "name": "Сгибания ног", "note": "n",
-                 "sets": [{"reps": 12, "weight": 25}] * 2},
+                 "sets": [{"reps": 12, "weight": 22.5}] * 2},
             ],
         }
 
@@ -741,6 +741,118 @@ class ReturnRampValidatorTests(unittest.TestCase):
 
     def test_first_rung_passes(self) -> None:
         self.assertEqual(self._violations(self._plan(leg_press_weight=90)), [])
+
+
+class ReturnCeilingTests(unittest.TestCase):
+    """After a break EVERY exercise is capped — including the ones the athlete
+    left at their peak, which have no comeback ladder at all."""
+
+    CATALOG = [{"id": 8, "name": "Жим ногами"}, {"id": 9, "name": "Тяга верт."},
+               {"id": 18, "name": "Жим в тренажере"}, {"id": 15, "name": "Сгибания ног"}]
+
+    def _history(self, last: str = "2026-05-22"):
+        # Two identical sessions at the same weights: nothing is below peak,
+        # so comeback_ramp_steps yields NO ladder for any movement.
+        return [
+            {"workout_date": last, "data": {"load_type": "medium", "exercises": [
+                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 12, "weight": 100}] * 3},
+                {"exercise_id": 9, "name": "Тяга верт.", "sets": [{"reps": 12, "weight": 60}] * 3},
+                {"exercise_id": 18, "name": "Жим в тренажере", "sets": [{"reps": 12, "weight": 50}] * 2},
+                {"exercise_id": 15, "name": "Сгибания ног", "sets": [{"reps": 12, "weight": 30}] * 2},
+            ]}},
+            {"workout_date": "2026-05-19", "data": {"load_type": "medium", "exercises": [
+                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 12, "weight": 100}] * 3},
+                {"exercise_id": 9, "name": "Тяга верт.", "sets": [{"reps": 12, "weight": 60}] * 3},
+                {"exercise_id": 18, "name": "Жим в тренажере", "sets": [{"reps": 12, "weight": 50}] * 2},
+                {"exercise_id": 15, "name": "Сгибания ног", "sets": [{"reps": 12, "weight": 30}] * 2},
+            ]}},
+        ]
+
+    def _plan(self, leg_press: float):
+        return {
+            "focus": "возврат", "load_type": "medium", "rest_days": 0, "rationale": "r",
+            "exercises": [
+                {"exercise_id": 8, "name": "Жим ногами", "note": "n",
+                 "sets": [{"reps": 12, "weight": leg_press}] * 4},
+                {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
+                 "sets": [{"reps": 12, "weight": 50}] * 4},
+                {"exercise_id": 18, "name": "Жим в тренажере", "note": "n",
+                 "sets": [{"reps": 12, "weight": 42.5}] * 2},
+                {"exercise_id": 15, "name": "Сгибания ног", "note": "n",
+                 "sets": [{"reps": 12, "weight": 25}] * 2},
+            ],
+        }
+
+    def _violations(self, plan, today):
+        import coach_state
+
+        rec = recommender._validate(plan, self.CATALOG)
+        return recommender._semantic_violations(
+            rec, plan, self.CATALOG, self._history(), today, coach_state.load_state(None)
+        )
+
+    def test_progression_after_a_break_is_rejected(self) -> None:
+        from datetime import date as _date
+
+        # 21 days off and the model still adds weight to the pre-break 100.
+        violations = self._violations(self._plan(leg_press=105), _date(2026, 6, 12))
+        self.assertTrue(any("возвратного потолка" in v for v in violations))
+        # Even repeating the exact pre-break weight is too much.
+        violations = self._violations(self._plan(leg_press=100), _date(2026, 6, 12))
+        self.assertTrue(any("возвратного потолка" in v for v in violations))
+
+    def test_ceiling_weight_passes(self) -> None:
+        from datetime import date as _date
+
+        # 21 days → 85% of 100 = 85.
+        self.assertEqual(self._violations(self._plan(leg_press=85), _date(2026, 6, 12)), [])
+
+    def test_ceiling_scales_with_break_length(self) -> None:
+        from datetime import date as _date
+
+        import coach_features
+
+        self.assertEqual(coach_features.return_ceiling_ratio(15), 0.90)
+        self.assertEqual(coach_features.return_ceiling_ratio(21), 0.85)
+        self.assertEqual(coach_features.return_ceiling_ratio(40), 0.80)
+        self.assertEqual(coach_features.return_ceiling_ratio(90), 0.75)
+
+        ceilings = coach_features.return_ceilings(
+            self._history(), self.CATALOG, _date(2026, 6, 12), 21
+        )
+        by_id = {item["exercise_id"]: item for item in ceilings}
+        self.assertEqual(by_id[8]["ceiling"], 85)     # 100 → 85
+        self.assertEqual(by_id[9]["ceiling"], 50)     # 60 → 51 → 50 (плитка 5 кг)
+        self.assertEqual(by_id[8]["last_working"], 100)
+
+    def test_no_ceilings_outside_a_break(self) -> None:
+        from datetime import date as _date
+
+        import coach_state
+
+        # Trained 3 days ago: normal progression rules, no return ceilings.
+        rec = recommender._validate(self._plan(leg_press=105), self.CATALOG)
+        violations = recommender._semantic_violations(
+            rec, rec, self.CATALOG, self._history(last="2026-06-09"),
+            _date(2026, 6, 12), coach_state.load_state(None),
+        )
+        self.assertFalse(any("возвратного потолка" in v for v in violations))
+
+    def test_prompt_explains_the_principle(self) -> None:
+        from datetime import date as _date
+
+        import coach_features
+
+        text = coach_features.render_return_ceilings(
+            coach_features.return_ceilings(
+                self._history(), self.CATALOG, _date(2026, 6, 12), 21
+            ),
+            21,
+        )
+        self.assertIn("21 дн. без тренировок", text)
+        self.assertIn("~85%", text)
+        self.assertIn("связки", text)          # the WHY, not just the order
+        self.assertIn("Жим ногами: было 100 → не больше 85", text)
 
 
 class RequestModelCachingTests(unittest.TestCase):

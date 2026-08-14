@@ -16,6 +16,7 @@ Stdlib-only, like the rest of the backend.
 """
 from __future__ import annotations
 
+import math
 from collections import Counter
 from datetime import date, timedelta
 from typing import Any
@@ -679,6 +680,100 @@ def comeback_ramp_steps(
             }
         )
     return items
+
+
+# Detraining after a lay-off: neural strength survives a few weeks, but
+# connective tissue, work capacity and technique lag behind — the first
+# sessions back are a re-entry, not a test. Ceiling of the first session as a
+# share of the athlete's own pre-break working weight, by break length.
+RETURN_CEILING_BY_BREAK_DAYS: tuple[tuple[int, float], ...] = (
+    (21, 0.90),   # 14–20 days off
+    (35, 0.85),   # 3–5 weeks
+    (56, 0.80),   # 5–8 weeks
+)
+RETURN_CEILING_LONG_BREAK = 0.75  # 8+ weeks
+
+
+def return_ceiling_ratio(break_days: int) -> float:
+    for limit, ratio in RETURN_CEILING_BY_BREAK_DAYS:
+        if break_days < limit:
+            return ratio
+    return RETURN_CEILING_LONG_BREAK
+
+
+def return_ceilings(
+    workouts: list[dict[str, Any]],
+    catalog: list[dict[str, Any]],
+    today: date,
+    break_days: int,
+) -> list[dict[str, Any]]:
+    """First-session weight ceilings for EVERY exercise with history.
+
+    The comeback ladder only covers movements that fell below their peak; an
+    athlete who stopped AT his peak had no ladder at all, and the generic
+    ±15%-of-recent-range rule then happily allowed a PR attempt on the first
+    session back. This closes that hole: after a break every exercise is capped
+    at a share of its own last working weight (gravitron inverted — the
+    counterweight goes UP, i.e. more assistance)."""
+    ratio = return_ceiling_ratio(break_days)
+    names = {item["id"]: item["name"] for item in catalog}
+    ceilings: list[dict[str, Any]] = []
+    for exercise_id, sessions in _iter_exercise_sessions(workouts).items():
+        inverted = exercise_id == GRAVITRON_ID
+        current = current_working_weight(sessions, inverted=inverted)
+        if not current or current <= 0:
+            continue
+        if inverted:
+            # More counterweight = easier: round the assistance UP so the
+            # ceiling never lands harder than intended.
+            ceiling = math.ceil(current / ratio * 2) / 2
+        else:
+            raw = current * ratio
+            granularity = _weight_granularity(sessions)
+            ceiling = int(raw / granularity) * granularity
+            # A coarse machine (20-kg jumps) can snap the ceiling to 0 — or to
+            # the pre-break weight itself, which would defeat the whole point.
+            if ceiling < 0.5 or ceiling >= current:
+                ceiling = math.floor(raw * 2) / 2
+            ceiling = max(0.5, ceiling)
+        ceilings.append(
+            {
+                "exercise_id": exercise_id,
+                "name": names.get(exercise_id, f"#{exercise_id}"),
+                "inverted": inverted,
+                "last_working": current,
+                "ceiling": ceiling,
+            }
+        )
+    order = {exercise_id: index for index, exercise_id in enumerate(MAIN_MOVEMENT_IDS)}
+    ceilings.sort(key=lambda item: order.get(item["exercise_id"], 99))
+    return ceilings
+
+
+def render_return_ceilings(items: list[dict[str, Any]], break_days: int) -> str | None:
+    if not items:
+        return None
+    ratio = int(round(return_ceiling_ratio(break_days) * 100))
+    lines = [
+        f"  {item['name']}: было {item['last_working']:g} → "
+        + (
+            f"не легче {item['ceiling']:g} противовеса"
+            if item["inverted"]
+            else f"не больше {item['ceiling']:g}"
+        )
+        for item in items
+    ]
+    return (
+        f"Потолки весов на первую сессию после перерыва ({break_days} дн. без "
+        f"тренировок, ~{ratio}% от прежних рабочих). Почему так: сила нервной "
+        "системы держится дольше всего, а связки, сухожилия и рабочая "
+        "выносливость теряются быстрее — первая сессия это ВХОД обратно, а не "
+        "проверка формы. Прогрессию (плюс вес или плюс повторы к прежним "
+        "рабочим) на этой сессии не планируй ни по одному движению, даже если "
+        "прошлые подходы были помечены как лёгкие: те отметки относятся к "
+        "форме ДО перерыва. Возвращайся к прежним весам за 2–3 сессии, дальше "
+        "прогрессия как обычно.\n" + "\n".join(lines)
+    )
 
 
 def render_comeback_ramp(items: list[dict[str, Any]]) -> list[str]:
