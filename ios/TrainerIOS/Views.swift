@@ -2962,9 +2962,10 @@ private struct ProgressTabScreen: View {
                     TopTitle(sub: nil, title: "Прогресс")
                         .padding(.horizontal, 4)
 
-                    weeklyProgressSection
+                    weeklySummarySection
                     disciplineSection
                     weeklyReportSection
+                    weeklyVolumeSection
 
                     sectionHeader
 
@@ -3048,10 +3049,10 @@ private struct ProgressTabScreen: View {
 
     // MARK: rolling seven-day progress
 
-    /// One visual section: an algorithmic summary followed by the exact rows
-    /// that prove it. This is deliberately separate from the LLM-authored
-    /// report for the last closed week.
-    private var weeklyProgressSection: some View {
+    /// Rolling algorithmic summary. Its exact per-group breakdown lives in a
+    /// separate section below the closed-week report to keep the first screen
+    /// focused on the higher-level story.
+    private var weeklySummarySection: some View {
         let context = store.recommendation?.recommendation?.coachContext
         let rows = TrainerLogic.weeklyVolumeByGroup(
             store.workouts,
@@ -3059,7 +3060,7 @@ private struct ProgressTabScreen: View {
         )
         let adherence = TrainerLogic.adherenceSummary(store.workouts, range: .days7)
         return VStack(alignment: .leading, spacing: 8) {
-            miniHeader("НЕДЕЛЬНЫЙ ПРОГРЕСС", volumeTrailing(context))
+            miniHeader("НЕДЕЛЬНЫЙ ПРОГРЕСС", "7 дней")
 
             WeekCoachSummaryCard(
                 rows: rows,
@@ -3070,13 +3071,17 @@ private struct ProgressTabScreen: View {
                 basedOnWorkoutCount: store.recommendation?.basedOnWorkoutCount,
                 loadType: store.recommendation?.recommendation?.loadType
             )
+        }
+    }
 
-            Text("ОБЪЁМ ПО ГРУППАМ")
-                .font(.jbm(11, weight: .bold))
-                .tracking(0.45)
-                .foregroundStyle(DesignPalette.ink3)
-                .padding(.horizontal, 4)
-                .padding(.top, 3)
+    private var weeklyVolumeSection: some View {
+        let context = store.recommendation?.recommendation?.coachContext
+        let rows = TrainerLogic.weeklyVolumeByGroup(
+            store.workouts,
+            targets: context?.groupTargets
+        )
+        return VStack(alignment: .leading, spacing: 8) {
+            miniHeader("ОБЪЁМ ПО ГРУППАМ", volumeTrailing(context))
 
             // Targets come from the coach's current block week when available
             // (ramp/deload-aware); static policy ranges are the fallback.
