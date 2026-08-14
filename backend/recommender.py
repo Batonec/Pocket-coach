@@ -930,9 +930,47 @@ def _semantic_violations(
 
     # 2) planned weights within ±15% of the exercise's 8-week working range.
     #    Return-from-break / deload sessions may go lower (for the gravitron —
-    #    higher counterweight, i.e. more assistance) without a flag.
+    #    higher counterweight, i.e. more assistance) without a flag. On a
+    #    return, exercises WITH a comeback ladder validate against their first
+    #    rung (+one step) instead — the ±15%-of-peak ceiling would happily
+    #    wave through a peak-weight first session.
+    ramp_by_id: dict[int, dict[str, Any]] = {}
+    if returning:
+        ramp_by_id = {
+            item["exercise_id"]: item
+            for item in coach_features.comeback_ramp_steps(workouts, catalog, today)
+        }
     for exercise in recommendation.get("exercises", []) or []:
         exercise_id = exercise["exercise_id"]
+        ramp = ramp_by_id.get(exercise_id)
+        if ramp:
+            steps = ramp["steps"]
+            first = steps[0]
+            if ramp["inverted"]:
+                rung = (first - steps[1]) if len(steps) >= 2 else max(
+                    ramp["current"] - first, 0.0
+                )
+                floor_allowed = first - rung
+                for workout_set in exercise["sets"]:
+                    if workout_set["weight"] < floor_allowed - 1e-9:
+                        violations.append(
+                            f"{exercise['name']}: противовес {workout_set['weight']:g} кг "
+                            f"меньше возвратной ступени {first:g} (допустимо до "
+                            f"{floor_allowed:g}) — на возврате не форсируем"
+                        )
+            else:
+                rung = (steps[1] - first) if len(steps) >= 2 else max(
+                    first - ramp["current"], 0.0
+                )
+                ceiling_allowed = first + rung
+                for workout_set in exercise["sets"]:
+                    if workout_set["weight"] > ceiling_allowed + 1e-9:
+                        violations.append(
+                            f"{exercise['name']}: вес {workout_set['weight']:g} кг выше "
+                            f"возвратной ступени {first:g} (+шаг, допустимо до "
+                            f"{ceiling_allowed:g}) — веди по лестнице разгона"
+                        )
+            continue
         bounds = coach_features.recent_weight_range(workouts, exercise_id, today)
         if bounds is None:
             continue

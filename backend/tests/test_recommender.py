@@ -666,6 +666,67 @@ class RepRangeValidatorTests(unittest.TestCase):
         self.assertFalse(any("повторов" in v for v in violations))
 
 
+class ReturnRampValidatorTests(unittest.TestCase):
+    CATALOG = [{"id": 8, "name": "Жим ногами"}, {"id": 9, "name": "Тяга верт."},
+               {"id": 18, "name": "Жим в тренажере"}, {"id": 15, "name": "Сгибания ног"}]
+
+    def _history(self):
+        # 40-day break; leg-press peak 120, last working weight 80 → ladder
+        # 90 → 100 → 110 → 120, so the first return session tops out at 100.
+        return [
+            {"workout_date": "2026-05-03", "data": {"load_type": "medium", "exercises": [
+                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 12, "weight": 80}] * 3},
+                {"exercise_id": 9, "name": "Тяга верт.", "sets": [{"reps": 12, "weight": 60}] * 3},
+                {"exercise_id": 18, "name": "Жим в тренажере", "sets": [{"reps": 12, "weight": 50}] * 2},
+                {"exercise_id": 15, "name": "Сгибания ног", "sets": [{"reps": 12, "weight": 30}] * 2},
+            ]}},
+            {"workout_date": "2026-04-15", "data": {"load_type": "medium", "exercises": [
+                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 12, "weight": 120}] * 3},
+            ]}},
+            {"workout_date": "2026-04-08", "data": {"load_type": "medium", "exercises": [
+                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 12, "weight": 110}] * 3},
+            ]}},
+            {"workout_date": "2026-04-01", "data": {"load_type": "medium", "exercises": [
+                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 12, "weight": 100}] * 3},
+            ]}},
+        ]
+
+    def _plan(self, leg_press_weight: float):
+        return {
+            "focus": "возврат", "load_type": "medium", "rest_days": 0, "rationale": "r",
+            "exercises": [
+                {"exercise_id": 8, "name": "Жим ногами", "note": "n",
+                 "sets": [{"reps": 12, "weight": leg_press_weight}] * 4},
+                {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
+                 "sets": [{"reps": 12, "weight": 55}] * 4},
+                {"exercise_id": 18, "name": "Жим в тренажере", "note": "n",
+                 "sets": [{"reps": 12, "weight": 45}] * 2},
+                {"exercise_id": 15, "name": "Сгибания ног", "note": "n",
+                 "sets": [{"reps": 12, "weight": 25}] * 2},
+            ],
+        }
+
+    def _violations(self, plan):
+        from datetime import date as _date
+
+        import coach_state
+
+        rec = recommender._validate(plan, self.CATALOG)
+        return recommender._semantic_violations(
+            rec, plan, self.CATALOG, self._history(), _date(2026, 6, 12),
+            coach_state.load_state(None),
+        )
+
+    def test_return_weight_is_validated_against_the_ladder_not_the_peak(self) -> None:
+        # 120 sits inside ±15% of the 8-week range — the OLD rule waved it
+        # through; against the ladder (first rung 90 + one step) it must fail.
+        violations = self._violations(self._plan(leg_press_weight=120))
+        self.assertTrue(any("ступени" in v for v in violations))
+
+    def test_first_rung_passes(self) -> None:
+        self.assertEqual(self._violations(self._plan(leg_press_weight=90)), [])
+
+
 class RequestModelCachingTests(unittest.TestCase):
     def test_body_carries_cache_control_and_optional_schema(self) -> None:
         captured: dict = {}

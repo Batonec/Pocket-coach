@@ -163,6 +163,155 @@ class StallTests(unittest.TestCase):
         self.assertTrue(any("темпа" in reason for reason in report["reasons"]))
 
 
+class CurrentWorkingWeightTests(unittest.TestCase):
+    def _sessions(self, workouts, exercise_id=8):
+        return coach_features._iter_exercise_sessions(workouts)[exercise_id]
+
+    def test_light_day_next_to_a_real_session_is_not_a_regression(self) -> None:
+        workouts = [
+            _workout("2026-07-22", [(8, [(40, 12)] * 3)]),   # лёгкий день
+            _workout("2026-07-19", [(8, [(60, 12)] * 3)]),
+        ]
+        current = coach_features.current_working_weight(
+            self._sessions(workouts), inverted=False
+        )
+        self.assertEqual(current, 60)
+
+    def test_single_garbage_set_is_filtered(self) -> None:
+        workouts = [
+            _workout("2026-08-12", [(11, [(10, 12), (10, 12), (20, 3)])]),  # «20×3+»
+            _workout("2026-08-09", [(11, [(10, 12)] * 3)]),
+        ]
+        sessions = coach_features._iter_exercise_sessions(workouts)[11]
+        current = coach_features.current_working_weight(sessions, inverted=False)
+        self.assertEqual(current, 10)
+
+    def test_sessions_from_a_previous_era_are_ignored(self) -> None:
+        workouts = [
+            _workout("2026-08-10", [(8, [(80, 12)] * 3)]),   # после перерыва
+            _workout("2026-04-20", [(8, [(120, 12)] * 3)]),  # прошлая эпоха
+        ]
+        current = coach_features.current_working_weight(
+            self._sessions(workouts), inverted=False
+        )
+        self.assertEqual(current, 80)
+
+    def test_summary_uses_the_filtered_metric(self) -> None:
+        workouts = [
+            _workout("2026-08-12", [(9, [(65, 12), (65, 12)])]),
+            _workout("2026-08-09", [(9, [(75, 15), (80, 11)])]),
+        ]
+        summary = coach_features.exercise_summaries(workouts, CATALOG, TODAY)[0]
+        # Peak = the real best-e1RM SET (75×15), never max-weight × alien reps.
+        self.assertEqual(summary["top_weight"], 75)
+        self.assertEqual(summary["top_reps"], 15)
+        self.assertEqual(summary["current_weight"], 80)  # max working of last sessions
+
+
+class RampInvariantTests(unittest.TestCase):
+    def test_peak_matches_the_summary_set_not_max_weight(self) -> None:
+        workouts = [
+            _workout("2026-08-10", [(9, [(65, 12)] * 3)]),
+            _workout("2026-07-01", [(9, [(75, 15)] * 2)]),   # e1RM peak 112.5
+            _workout("2026-06-20", [(9, [(80, 11)] * 2)]),   # heavier but weaker
+            _workout("2026-06-10", [(9, [(70, 12)] * 2)]),
+        ]
+        items = coach_features.comeback_ramp_steps(workouts, CATALOG, TODAY)
+        item = next(i for i in items if i["exercise_id"] == 9)
+        summary = next(
+            s for s in coach_features.exercise_summaries(workouts, CATALOG, TODAY)
+            if s["exercise_id"] == 9
+        )
+        self.assertEqual(item["peak_weight"], summary["top_weight"])  # 75, не 80
+        self.assertEqual(item["peak_reps"], summary["top_reps"])      # 15
+        # From 65 to 75 with the machine's 5-kg step: no jump above 13%.
+        self.assertEqual(item["steps"], [70, 75])
+
+    def test_degenerate_one_jump_ladder_is_rebuilt(self) -> None:
+        # A machine whose historical step is huge (20 kg) would produce a
+        # single 40→60 (+50%) jump — the invariant rebuilds it as equal steps
+        # (which on a 50% gap still beats one jump: three ~17% rungs).
+        workouts = [
+            _workout("2026-08-10", [(10, [(40, 12)] * 3)]),
+            _workout("2026-07-05", [(10, [(60, 12)] * 3)]),
+            _workout("2026-06-25", [(10, [(40, 12)] * 3)]),
+            _workout("2026-06-15", [(10, [(60, 12)] * 3)]),
+        ]
+        catalog = CATALOG + [{"id": 10, "name": "Тяга горизонт."}]
+        items = coach_features.comeback_ramp_steps(workouts, catalog, TODAY)
+        item = next(i for i in items if i["exercise_id"] == 10)
+        self.assertGreaterEqual(len(item["steps"]), 3)   # no single 40→60 jump
+        previous = item["current"]
+        for step in item["steps"]:
+            self.assertGreater(step, previous)           # strictly ascending
+            self.assertLess(step - previous, 20)         # each rung < the raw gap
+            previous = step
+        self.assertEqual(item["steps"][-1], item["peak_weight"])
+
+    def test_at_peak_means_no_ladder(self) -> None:
+        workouts = [
+            _workout("2026-08-10", [(8, [(120, 12)] * 3)]),
+            _workout("2026-08-05", [(8, [(115, 12)] * 3)]),
+        ]
+        self.assertEqual(coach_features.comeback_ramp_steps(workouts, CATALOG, TODAY), [])
+
+    def test_gravitron_ladder_descends(self) -> None:
+        workouts = [
+            _workout("2026-08-10", [(4, [(32, 10)] * 3)]),
+            _workout("2026-07-01", [(4, [(25, 12)] * 2)]),
+            _workout("2026-06-20", [(4, [(27.5, 12)] * 2)]),
+        ]
+        items = coach_features.comeback_ramp_steps(workouts, CATALOG, TODAY)
+        item = next(i for i in items if i["exercise_id"] == 4)
+        self.assertTrue(item["inverted"])
+        previous = item["current"]
+        for step in item["steps"]:
+            self.assertLess(step, previous)
+            previous = step
+        self.assertEqual(item["steps"][-1], 25)
+
+
+class TrendValidityTests(unittest.TestCase):
+    def test_gap_between_measurements_invalidates_the_trend(self) -> None:
+        points = [(TODAY - timedelta(days=27), 77.25), (TODAY, 79.0)]
+        self.assertIsNone(coach_features.weight_trend_per_week(points, TODAY))
+
+    def test_phase_boundary_resets_the_base(self) -> None:
+        phase_start = TODAY - timedelta(days=3)
+        points = [
+            (TODAY - timedelta(days=10), 77.0),  # прошлая фаза
+            (TODAY - timedelta(days=2), 78.6),
+            (TODAY, 79.0),
+        ]
+        self.assertIsNone(
+            coach_features.weight_trend_per_week(points, TODAY, since=phase_start)
+        )
+        # Without the boundary the same points give a number.
+        self.assertIsNotNone(coach_features.weight_trend_per_week(points, TODAY))
+
+    def test_dense_in_phase_measurements_yield_a_trend(self) -> None:
+        points = [
+            (TODAY - timedelta(days=7), 79.4),
+            (TODAY - timedelta(days=3), 79.2),
+            (TODAY, 79.0),
+        ]
+        trend = coach_features.weight_trend_per_week(points, TODAY)
+        self.assertAlmostEqual(trend, -0.4, places=1)
+
+    def test_matrix_asks_for_measurements_instead_of_advising(self) -> None:
+        state = dict(coach_state.DEFAULT_STATE, phase_started=(TODAY - timedelta(days=1)).isoformat())
+        params = coach_state.phase_params(state)
+        weights = [
+            {"entry_date": (TODAY - timedelta(days=27)).isoformat(), "weight": 77.25},
+            {"entry_date": TODAY.isoformat(), "weight": 79.0},
+        ]
+        result = coach_features.nutrition_matrix(state, params, weights, [], TODAY)
+        self.assertIsNone(result["trend_per_week"])
+        self.assertTrue(any("недостаточно" in line for line in result["lines"]))
+        self.assertFalse(any("−100–150" in line for line in result["lines"]))
+        self.assertFalse(any("тренд веса" in line for line in result["lines"]))
+
+
 class CombackRampTests(unittest.TestCase):
     def test_steps_from_current_to_peak_use_the_machine_step(self) -> None:
         workouts = [
