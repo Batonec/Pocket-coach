@@ -199,6 +199,36 @@ final class TrainerStoreTests: XCTestCase {
         XCTAssertEqual(store.coachSignals.map(\.signalID), ["return_soon"])
     }
 
+    func testPendingRecommendationSuppressesEveryPresentableCoachSignal() {
+        let store = TrainerStore(defaults: .isolatedTestDefaults())
+        store.coachSignals = [
+            CoachSignal(
+                signalID: "weekly_report_ready",
+                instanceKey: "weekly_report_ready:period=2026-08-10",
+                severity: "info",
+                title: "Готов отчёт недели",
+                body: "Итоги недели",
+                note: nil,
+                glyph: "doc",
+                action: CoachSignalAction(
+                    type: "open_weekly_report", label: "Отчёт", target: nil
+                ),
+                snoozable: true
+            ),
+        ]
+
+        var pending = readyRecommendation()
+        pending.status = "pending"
+        store.recommendation = pending
+        XCTAssertTrue(store.presentableCoachSignals.isEmpty)
+
+        store.recommendation = readyRecommendation()
+        XCTAssertEqual(store.presentableCoachSignals.map(\.signalID), ["weekly_report_ready"])
+
+        store.isRefreshingRecommendation = true
+        XCTAssertTrue(store.presentableCoachSignals.isEmpty)
+    }
+
     func testAutoApplySkipsNonReadyRecommendation() {
         let store = TrainerStore(defaults: .isolatedTestDefaults())
         store.exercises = TestFixtures.catalog

@@ -275,6 +275,29 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
             [],
         )
 
+    def test_pending_recommendation_suppresses_every_banner_family(self) -> None:
+        self.store.save_body_weight(
+            self.uid, {"entry_date": TODAY.isoformat(), "weight": 79.0}
+        )
+        before = coach_signals.compute_signals(
+            self.store, self.uid, dict(STATE), today=TODAY
+        )
+        self.assertEqual([signal["id"] for signal in before], ["measurements_overdue"])
+
+        self.store.set_recommendation_pending(self.uid)
+        self.assertEqual(
+            coach_signals.compute_signals(
+                self.store, self.uid, dict(STATE), today=TODAY
+            ),
+            [],
+        )
+
+        self.store.fail_recommendation(self.uid, "generation failed")
+        after = coach_signals.compute_signals(
+            self.store, self.uid, dict(STATE), today=TODAY
+        )
+        self.assertEqual([signal["id"] for signal in after], ["measurements_overdue"])
+
     def test_waist_limit_is_first_and_replaces_freshness_reminder(self) -> None:
         self._add_workout("2026-08-02")  # warn: return_soon
         self.store.save_body_weight(

@@ -57,6 +57,13 @@ final class TrainerStore: ObservableObject {
         didSet { persistAppliedPlan() }
     }
 
+    /// History must never mix an old banner snapshot with a plan currently
+    /// being regenerated. The stored array may only be presented after the
+    /// recommendation reaches a terminal state.
+    var presentableCoachSignals: [CoachSignal] {
+        isCoachSignalsSuppressed ? [] : coachSignals
+    }
+
     private let defaults: UserDefaults
     private var toastTask: Task<Void, Never>?
     private var recommendationPollTask: Task<Void, Never>?
@@ -343,6 +350,15 @@ final class TrainerStore: ObservableObject {
         coachSignals.removeAll { ids.contains($0.signalID) }
     }
 
+    private var isCoachSignalsSuppressed: Bool {
+        isRefreshingRecommendation || recommendation?.status == "pending"
+    }
+
+    private func suppressCoachSignalsForRecommendationRefresh() {
+        invalidateCoachSignalsLoads()
+        coachSignals = []
+    }
+
     private func beginCoachSignalsLoad() -> Int {
         coachSignalsLoadGeneration += 1
         return coachSignalsLoadGeneration
@@ -359,6 +375,7 @@ final class TrainerStore: ObservableObject {
         ).fetchCoachSignals() else { return }
         guard case .loaded = bootState,
               coachSignalsLoadGeneration == generation,
+              !isCoachSignalsSuppressed,
               let signals = response.signals else { return }
         coachSignals = signals
     }
@@ -488,7 +505,14 @@ final class TrainerStore: ObservableObject {
     /// reload deadline. Failures are silent — we keep whatever we already had.
     func loadRecommendation() async {
         do {
-            recommendation = try await APIClient(baseURLString: apiBaseURLString).fetchRecommendation()
+            let response = try await APIClient(
+                baseURLString: apiBaseURLString
+            ).fetchRecommendation()
+            recommendation = response
+            if response.status == "pending" {
+                suppressCoachSignalsForRecommendationRefresh()
+                return
+            }
             autoApplyRecommendationIfReady()
         } catch {
             // ignore — the card just keeps its previous content (or stays hidden)
@@ -509,6 +533,7 @@ final class TrainerStore: ObservableObject {
         recommendationPollGeneration += 1
         let generation = recommendationPollGeneration
         recommendationPollTask?.cancel()
+        suppressCoachSignalsForRecommendationRefresh()
         isRefreshingRecommendation = true
 
         let current = recommendation
@@ -584,6 +609,7 @@ final class TrainerStore: ObservableObject {
     /// on the long-running session and shows the pending overlay meanwhile.
     func refreshRecommendation() async {
         guard !isRefreshingRecommendation else { return }
+        suppressCoachSignalsForRecommendationRefresh()
         isRefreshingRecommendation = true
         do {
             let response = try await APIClient(

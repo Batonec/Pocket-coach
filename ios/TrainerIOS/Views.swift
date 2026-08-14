@@ -2363,8 +2363,9 @@ private struct HistoryScreen: View {
     /// Default is one banner. A critical first item opens one additional slot,
     /// matching the design taxonomy without letting History become an inbox.
     private var visibleCoachSignals: [CoachSignal] {
-        guard let first = store.coachSignals.first else { return [] }
-        return Array(store.coachSignals.prefix(first.severity == "critical" ? 2 : 1))
+        let signals = store.presentableCoachSignals
+        guard let first = signals.first else { return [] }
+        return Array(signals.prefix(first.severity == "critical" ? 2 : 1))
     }
 
     private var streakStrip: some View {

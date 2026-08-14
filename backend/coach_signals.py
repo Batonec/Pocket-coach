@@ -434,10 +434,17 @@ def compute_signals(
     today = today or date.today()
     now_ts = now_ts or int(time.time())
 
+    recommendation = store.get_recommendation(user_id)
+    # A recommendation refresh changes the plan context that several banners
+    # lead into. Do not mix the old banner snapshot with an in-flight plan:
+    # History stays quiet until generation reaches a terminal state, then the
+    # next request recomputes every family from fresh facts.
+    if recommendation and recommendation.get("status") == "pending":
+        return []
+
     workouts = store.list_workouts(user_id)
     body_weights = store.list_body_weights(user_id)
     waists = store.list_waists(user_id)
-    recommendation = store.get_recommendation(user_id)
 
     # One family, one message: the critical waist-limit episode supersedes a
     # routine freshness reminder instead of stacking two measurement banners.
