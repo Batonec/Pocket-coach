@@ -254,6 +254,27 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
         payload = sample_workout_payload(client_id=f"w-{when}", workout_date=when)
         self.store.save_workout(self.uid, payload)
 
+    def test_saving_missing_waist_clears_calorie_pause_signal(self) -> None:
+        self.store.save_body_weight(
+            self.uid, {"entry_date": TODAY.isoformat(), "weight": 79.0}
+        )
+        before = coach_signals.compute_signals(
+            self.store, self.uid, dict(STATE), today=TODAY
+        )
+        self.assertEqual([signal["id"] for signal in before], ["measurements_overdue"])
+        self.assertEqual(before[0]["action"]["target"], "waist")
+
+        self.store.save_waist(
+            self.uid, {"entry_date": TODAY.isoformat(), "waist": 84.0}
+        )
+
+        self.assertEqual(
+            coach_signals.compute_signals(
+                self.store, self.uid, dict(STATE), today=TODAY
+            ),
+            [],
+        )
+
     def test_waist_limit_is_first_and_replaces_freshness_reminder(self) -> None:
         self._add_workout("2026-08-02")  # warn: return_soon
         self.store.save_body_weight(

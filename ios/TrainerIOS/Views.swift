@@ -815,6 +815,11 @@ private struct MainShellView: View {
             SettingsSheet()
                 .environmentObject(store)
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                store.refreshCoachSignals()
+            }
+        }
     }
 
     // Old persisted .progress value should land on History (the new entry point).

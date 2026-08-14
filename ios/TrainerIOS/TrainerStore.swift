@@ -61,6 +61,10 @@ final class TrainerStore: ObservableObject {
     private var toastTask: Task<Void, Never>?
     private var recommendationPollTask: Task<Void, Never>?
     private var recommendationPollGeneration = 0
+    // Several screens and mutations can request the same server-computed
+    // banners at once. Only the newest request may publish its response;
+    // otherwise an older pre-mutation snapshot can resurrect a dead banner.
+    private var coachSignalsLoadGeneration = 0
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -84,6 +88,7 @@ final class TrainerStore: ObservableObject {
     }
 
     func reload(showSuccess: Bool = true) async {
+        invalidateCoachSignalsLoads()
         // Cap the whole boot at 3 seconds. The splash/loading screen sits on
         // top of this; URLSession's default request timeout is 60s which feels
         // like a hang on flaky networks. After 3s we cancel the in-flight
@@ -130,6 +135,7 @@ final class TrainerStore: ObservableObject {
         recommendationPollTask?.cancel()
         recommendationPollTask = nil
         recommendationPollGeneration += 1
+        invalidateCoachSignalsLoads()
         isRefreshingRecommendation = false
         do {
             _ = try await APIClient(baseURLString: apiBaseURLString).logout()
@@ -313,23 +319,48 @@ final class TrainerStore: ObservableObject {
 
     /// Silent refetch: the endpoint is cheap local SQLite on the server, so we
     /// call it on appear/foreground and right after relevant mutations.
+    /// Request generations enforce "latest requested snapshot wins".
     func loadCoachSignals() async {
-        guard case .loaded = bootState else { return }
-        if let response = try? await APIClient(baseURLString: apiBaseURLString).fetchCoachSignals(),
-           let signals = response.signals {
-            coachSignals = signals
-        }
+        let generation = beginCoachSignalsLoad()
+        await fetchCoachSignals(generation: generation)
     }
 
     func refreshCoachSignals() {
-        Task { [weak self] in await self?.loadCoachSignals() }
+        // Reserve the generation synchronously. This closes the small window
+        // in which an already-running stale request could finish after a local
+        // optimistic hide but before this Task starts executing.
+        let generation = beginCoachSignalsLoad()
+        Task { [weak self] in
+            await self?.fetchCoachSignals(generation: generation)
+        }
     }
 
     /// Optimistic hide by signal TYPE right after the user's own action —
     /// «взвесился → баннер погас в тот же кадр». The refetch that follows is
     /// the source of truth.
     func hideCoachSignals(withIDs ids: [String]) {
+        invalidateCoachSignalsLoads()
         coachSignals.removeAll { ids.contains($0.signalID) }
+    }
+
+    private func beginCoachSignalsLoad() -> Int {
+        coachSignalsLoadGeneration += 1
+        return coachSignalsLoadGeneration
+    }
+
+    private func invalidateCoachSignalsLoads() {
+        coachSignalsLoadGeneration += 1
+    }
+
+    private func fetchCoachSignals(generation: Int) async {
+        guard case .loaded = bootState else { return }
+        guard let response = try? await APIClient(
+            baseURLString: apiBaseURLString
+        ).fetchCoachSignals() else { return }
+        guard case .loaded = bootState,
+              coachSignalsLoadGeneration == generation,
+              let signals = response.signals else { return }
+        coachSignals = signals
     }
 
     func dismissCoachSignal(_ signal: CoachSignal) {
@@ -461,7 +492,12 @@ final class TrainerStore: ObservableObject {
             autoApplyRecommendationIfReady()
         } catch {
             // ignore — the card just keeps its previous content (or stays hidden)
+            return
         }
+        // Some banners (notably return mode) include the cached plan status.
+        // A successful recommendation transition therefore gets one matching
+        // authoritative signal snapshot.
+        await loadCoachSignals()
     }
 
     /// A weight/waist mutation starts server-side generation in the background.
@@ -517,12 +553,14 @@ final class TrainerStore: ObservableObject {
                         self.isRefreshingRecommendation = false
                         self.recommendationPollTask = nil
                         self.showToast("План обновлён по свежим замерам")
+                        await self.loadCoachSignals()
                         return
                     }
                     if response.status == "failed" {
                         self.isRefreshingRecommendation = false
                         self.recommendationPollTask = nil
                         self.showToast(response.error ?? "Не удалось обновить план")
+                        await self.loadCoachSignals()
                         return
                     }
                 } catch {
@@ -538,6 +576,7 @@ final class TrainerStore: ObservableObject {
                     ? "Замер сохранён, план ещё обновляется"
                     : "Замер сохранён, план обновится после восстановления связи"
             )
+            await self.loadCoachSignals()
         }
     }
 
@@ -546,7 +585,6 @@ final class TrainerStore: ObservableObject {
     func refreshRecommendation() async {
         guard !isRefreshingRecommendation else { return }
         isRefreshingRecommendation = true
-        defer { isRefreshingRecommendation = false }
         do {
             let response = try await APIClient(
                 baseURLString: apiBaseURLString,
@@ -569,6 +607,8 @@ final class TrainerStore: ObservableObject {
             )
             showToast(error.localizedDescription)
         }
+        isRefreshingRecommendation = false
+        await loadCoachSignals()
     }
 
     /// Auto-apply the latest ready recommendation as today's plan — there is no

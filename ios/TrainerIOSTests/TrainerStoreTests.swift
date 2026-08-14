@@ -161,6 +161,44 @@ final class TrainerStoreTests: XCTestCase {
         XCTAssertTrue(store.isTodayPlanUnavailable)
     }
 
+    func testFreshMeasurementOptimisticallyRemovesMeasurementSignalsOnly() {
+        let store = TrainerStore(defaults: .isolatedTestDefaults())
+        store.coachSignals = [
+            CoachSignal(
+                signalID: "measurements_overdue",
+                instanceKey: "measurements_overdue:waist=none",
+                severity: "warn",
+                title: "Советы по калориям на паузе",
+                body: "Внеси талию — вернутся",
+                note: nil,
+                glyph: "nutrition",
+                action: CoachSignalAction(
+                    type: "open_measurements", label: "Замеры", target: "waist"
+                ),
+                snoozable: true
+            ),
+            CoachSignal(
+                signalID: "return_soon",
+                instanceKey: "return_soon:last_workout=2026-08-02",
+                severity: "warn",
+                title: "Потренируйся",
+                body: "Возвратный режим близко",
+                note: nil,
+                glyph: "back",
+                action: CoachSignalAction(
+                    type: "open_next_workout", label: "План", target: nil
+                ),
+                snoozable: true
+            ),
+        ]
+
+        store.hideCoachSignals(withIDs: [
+            "measurements_due", "measurements_overdue", "waist_limit",
+        ])
+
+        XCTAssertEqual(store.coachSignals.map(\.signalID), ["return_soon"])
+    }
+
     func testAutoApplySkipsNonReadyRecommendation() {
         let store = TrainerStore(defaults: .isolatedTestDefaults())
         store.exercises = TestFixtures.catalog
