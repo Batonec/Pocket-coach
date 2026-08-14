@@ -416,7 +416,8 @@ final class TrainerStoreTests: XCTestCase {
 
         XCTAssertEqual(store.waistValue, "84")
         store.setWaistValue("230")
-        XCTAssertFalse(await store.saveWaist())
+        let didSave = await store.saveWaist()
+        XCTAssertFalse(didSave)
         XCTAssertEqual(store.toast, "Талия должна быть от 50 до 160 см")
     }
 
