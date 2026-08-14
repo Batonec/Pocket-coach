@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Generate and cache the coach weekly report.
+
+Run by deploy/trainer-weekly-report.timer every Sunday evening so the athlete
+opens an instant, token-free report in the Coach MCP chat. Standalone like
+refresh_recommendation.py: no HTTP, reads the same env, talks to SQLite and
+the Claude API directly.
+
+    python3 weekly_report.py            # generate unless today's is cached
+    python3 weekly_report.py --force    # regenerate unconditionally
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from datetime import date
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import backend_store  # noqa: E402
+import coach_state  # noqa: E402
+import recommender  # noqa: E402
+
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
+STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "static")))
+STATE_PATH = coach_state.default_state_path(DB_PATH)
+USER_ID = int(os.getenv("MINIAPP_TELEGRAM_RECOVERY_USER_ID", "3") or "3")
+REPORT_DAYS = int(os.getenv("WEEKLY_REPORT_DAYS", "7"))
+
+
+def run(store: backend_store.MiniAppStore, user_id: int, force: bool = False) -> bool:
+    """Returns True if a report was generated."""
+    period_end = date.today().isoformat()
+    if not force and store.get_coach_report(user_id, period_end, REPORT_DAYS):
+        print(f"[weekly] отчёт за {period_end} уже в кэше")
+        return False
+
+    try:
+        report, usage, model = recommender.generate_weekly_report(
+            store.list_workouts(user_id),
+            store.list_body_weights(user_id),
+            store.list_waists(user_id),
+            recommender.load_catalog(STATIC_DIR),
+            state=coach_state.load_state(STATE_PATH),
+            days=REPORT_DAYS,
+        )
+    except recommender.RecommendationError as exc:
+        print(f"[weekly] ошибка генерации: {exc}")
+        return False
+
+    store.save_coach_report(
+        user_id,
+        period_end,
+        REPORT_DAYS,
+        report,
+        model,
+        usage.get("input_tokens"),
+        usage.get("output_tokens"),
+    )
+    print(
+        f"[weekly] отчёт за {period_end} сохранён "
+        f"({usage.get('input_tokens')} in / {usage.get('output_tokens')} out, {model})"
+    )
+    return True
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Generate and cache the weekly coach report")
+    parser.add_argument("--force", action="store_true", help="regenerate unconditionally")
+    args = parser.parse_args()
+
+    store = backend_store.MiniAppStore(DB_PATH)
+    run(store, USER_ID, force=args.force)
+
+
+if __name__ == "__main__":
+    main()

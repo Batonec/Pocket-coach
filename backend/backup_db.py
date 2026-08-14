@@ -26,6 +26,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
 PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
+STATE_PATH = Path(os.getenv("COACH_STATE_PATH", str(DB_PATH.parent / "coach_state.json")))
 BACKUP_DIR = Path(os.getenv("BACKUP_DIR", str(DB_PATH.parent / "backups")))
 KEEP = int(os.getenv("BACKUP_KEEP", "14"))
 
@@ -77,19 +78,25 @@ def main() -> None:
     size_kb = gz_path.stat().st_size / 1024
     print(f"[backup] создан {gz_path.name} ({size_kb:.0f} КБ)")
 
-    # The profile is small and not in git — snapshot it next to the DB backup.
-    if PROFILE_PATH.exists():
-        profile_copy = BACKUP_DIR / f"coach_profile-{stamp}.json"
-        shutil.copy2(PROFILE_PATH, profile_copy)
-        print(f"[backup] профиль сохранён {profile_copy.name}")
+    # The profile and coaching state are small and not in git — snapshot them
+    # next to the DB backup so one directory restores everything.
+    for source, prefix, label in (
+        (PROFILE_PATH, "coach_profile", "профиль"),
+        (STATE_PATH, "coach_state", "состояние"),
+    ):
+        if source.exists():
+            copy = BACKUP_DIR / f"{prefix}-{stamp}.json"
+            shutil.copy2(source, copy)
+            print(f"[backup] {label} сохранён {copy.name}")
 
     removed = rotate(BACKUP_DIR, KEEP)
-    # Keep profile copies in lockstep with the db backups we removed.
+    # Keep companion copies in lockstep with the db backups we removed.
     for path in removed:
         stamp_part = path.name[len(DB_PREFIX):-len(DB_SUFFIX)]
-        companion = BACKUP_DIR / f"coach_profile-{stamp_part}.json"
-        if companion.exists():
-            companion.unlink()
+        for prefix in ("coach_profile", "coach_state"):
+            companion = BACKUP_DIR / f"{prefix}-{stamp_part}.json"
+            if companion.exists():
+                companion.unlink()
     if removed:
         print(f"[backup] удалено старых: {len(removed)} (оставляем {KEEP})")
 

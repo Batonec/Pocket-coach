@@ -1,0 +1,13 @@
+[Unit]
+Description=Trainer: Sunday-evening coach weekly report
+
+[Timer]
+# VPS runs Europe/Moscow — Sunday 18:00 local: the training week is over and
+# the athlete reads an instant cached report. Persistent=true catches up after
+# VPS downtime.
+OnCalendar=Sun *-*-* 18:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

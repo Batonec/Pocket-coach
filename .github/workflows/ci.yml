@@ -55,7 +55,7 @@ jobs:
             fi
           }
 
-          echo "backend=$(has_match '^(backend/server\.py$|backend/backend_store\.py$|backend/recommender\.py$|backend/coach_state\.py$|backend/coach_features\.py$|backend/refresh_recommendation\.py$|backend/backup_db\.py$|backend/deploy/trainer-miniapp-backend\.service$|\.github/workflows/deploy-backend\.yml$)')" >> "$GITHUB_OUTPUT"
+          echo "backend=$(has_match '^(backend/server\.py$|backend/backend_store\.py$|backend/recommender\.py$|backend/coach_state\.py$|backend/coach_features\.py$|backend/refresh_recommendation\.py$|backend/weekly_report\.py$|backend/backup_db\.py$|coach_mcp/server\.py$|backend/deploy/trainer-miniapp-backend\.service$|\.github/workflows/deploy-backend\.yml$)')" >> "$GITHUB_OUTPUT"
 
   test:
     name: Run test suite

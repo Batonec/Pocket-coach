@@ -55,6 +55,16 @@ RAW_HISTORY_COUNT = 10
 # Allowed deviation of a planned weight from the exercise's 8-week range.
 WEIGHT_TOLERANCE = 0.15
 
+# Intensity waves for BASE movements (presses, pulls, leg press) per session
+# load_type; isolation stays at 10–15+ regardless and is not checked. The
+# validator allows ±1 rep around the range before flagging.
+BASE_REP_RANGES: dict[str, tuple[int, int]] = {
+    "heavy": (6, 10),
+    "medium": (10, 14),
+    "light": (12, 18),
+}
+REP_TOLERANCE = 1
+
 ALLOWED_LOAD_TYPES = ("heavy", "medium", "light")
 
 _EFFORT_MARK = {"easy": "-", "ok": "", "hard": "+"}
@@ -988,6 +998,23 @@ def _semantic_violations(
                 f"группа «{group}» больше 10 дней без единого эффективного подхода "
                 "и отсутствует в плане — добавь хотя бы 1–2 подхода"
             )
+
+    # 3c) intensity waves: base movements must land in the session load_type's
+    # rep range (±1). Return/deload sessions ramp however they need to.
+    load_type = recommendation.get("load_type")
+    rep_range = BASE_REP_RANGES.get(load_type)
+    if rep_range and not easing:
+        low_reps, high_reps = rep_range
+        for exercise in recommendation["exercises"]:
+            if exercise["exercise_id"] not in coach_features.MAIN_MOVEMENT_IDS:
+                continue
+            for workout_set in exercise["sets"]:
+                reps = workout_set["reps"]
+                if not low_reps - REP_TOLERANCE <= reps <= high_reps + REP_TOLERANCE:
+                    violations.append(
+                        f"{exercise['name']}: {reps} повторов в {load_type}-сессии — "
+                        f"базовые движения в {load_type} идут на {low_reps}–{high_reps}"
+                    )
 
     # 4) rest_days 0–4.
     rest_days = recommendation.get("rest_days", 0)

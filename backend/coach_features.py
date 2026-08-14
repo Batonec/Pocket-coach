@@ -175,6 +175,7 @@ def exercise_summaries(
         best: dict[str, Any] | None = None
         best_when: date | None = None
         last_pr: date | None = None
+        pr_dates: list[str] = []  # improvement events only (baseline excluded)
         for when, sets in sessions:
             top = _session_top(sets, inverted=inverted)
             if best is None:
@@ -190,6 +191,7 @@ def exercise_summaries(
                 ) + 1e-9
             if is_pr:
                 best, best_when, last_pr = top, when, when
+                pr_dates.append(when.isoformat())
 
         current_when, current_sets = sessions[-1]
         current_top = _session_top(current_sets, inverted=inverted)
@@ -212,6 +214,7 @@ def exercise_summaries(
                 "e1rm": None if inverted else round(epley_e1rm(best["weight"], best["reps"]), 1),
                 "last_pr_date": last_pr.isoformat(),
                 "days_since_pr": (today - last_pr).days,
+                "pr_dates": pr_dates,
                 "current_weight": current_weight,
                 "current_date": current_when.isoformat(),
                 "pct_of_peak": pct,
@@ -652,6 +655,131 @@ def render_measurements(
         age = (today - waist[-1][0]).days
         lines.append(f"Талия: {tail}. Дней с последнего замера: {age}.")
     return lines
+
+
+# --------------------------------------------------------------------------- #
+# Phase summary (what a preparation phase actually delivered)
+# --------------------------------------------------------------------------- #
+def phase_summary(
+    workouts: list[dict[str, Any]],
+    body_weights: list[dict[str, Any]],
+    waists: list[dict[str, Any]],
+    catalog: list[dict[str, Any]],
+    *,
+    phase: str,
+    started: date,
+    ended: date,
+) -> dict[str, Any]:
+    """Everything is derived from history by date range, so past phases can be
+    summarized at any time — the phase journal only stores the boundaries."""
+    days = max(1, (ended - started).days + 1)
+    weeks = days / 7
+
+    session_dates = sorted(
+        {
+            when
+            for when in (_workout_date(w) for w in workouts)
+            if when is not None and started <= when <= ended
+        }
+    )
+
+    weights = weight_points(body_weights)
+    weight_start = moving_average(weights, started) or next(
+        (value for when, value in weights if when >= started), None
+    )
+    weight_end = moving_average(weights, ended) or next(
+        (value for when, value in reversed(weights) if when <= ended), None
+    )
+    weight_rate = (
+        (weight_end - weight_start) / weeks
+        if weight_start is not None and weight_end is not None and weeks >= 1
+        else None
+    )
+
+    waist = [(when, value) for when, value in waist_points(waists) if started <= when <= ended]
+    waist_start = waist[0][1] if waist else None
+    waist_end = waist[-1][1] if waist else None
+
+    summaries = exercise_summaries(workouts, catalog, ended)
+    prs: list[dict[str, Any]] = []
+    for summary in summaries:
+        in_phase = [
+            pr for pr in summary["pr_dates"]
+            if started <= date.fromisoformat(pr) <= ended
+        ]
+        if in_phase:
+            prs.append(
+                {
+                    "name": summary["name"],
+                    "count": len(in_phase),
+                    "top_weight": summary["top_weight"],
+                    "top_reps": summary["top_reps"],
+                    "inverted": summary["inverted"],
+                }
+            )
+    prs.sort(key=lambda item: -item["count"])
+
+    return {
+        "phase": phase,
+        "started": started.isoformat(),
+        "ended": ended.isoformat(),
+        "days": days,
+        "weeks": round(weeks, 1),
+        "workouts": len(session_dates),
+        "per_week": round(len(session_dates) / weeks, 1) if weeks else None,
+        "weight_start": weight_start,
+        "weight_end": weight_end,
+        "weight_rate_per_week": round(weight_rate, 2) if weight_rate is not None else None,
+        "waist_start": waist_start,
+        "waist_end": waist_end,
+        "pr_events": sum(item["count"] for item in prs),
+        "prs": prs,
+        "adherence": adherence_stats(workouts, ended, days=days),
+    }
+
+
+def render_phase_summary(summary: dict[str, Any]) -> str:
+    lines = [
+        f"Фаза {summary['phase']}: {summary['started']} → {summary['ended']} "
+        f"({summary['weeks']} нед)."
+    ]
+    per_week = f" ({summary['per_week']}/нед)" if summary["per_week"] is not None else ""
+    lines.append(f"Тренировок: {summary['workouts']}{per_week}.")
+    if summary["weight_start"] is not None and summary["weight_end"] is not None:
+        rate = (
+            f", темп {summary['weight_rate_per_week']:+.2f} кг/нед"
+            if summary["weight_rate_per_week"] is not None
+            else ""
+        )
+        lines.append(
+            f"Вес: {summary['weight_start']:.1f} → {summary['weight_end']:.1f} кг "
+            f"({summary['weight_end'] - summary['weight_start']:+.1f}{rate})."
+        )
+    else:
+        lines.append("Вес: замеров в периоде фазы нет.")
+    if summary["waist_start"] is not None and summary["waist_end"] is not None:
+        lines.append(
+            f"Талия: {summary['waist_start']:g} → {summary['waist_end']:g} см "
+            f"({summary['waist_end'] - summary['waist_start']:+.1f})."
+        )
+    if summary["prs"]:
+        top = "; ".join(
+            f"{item['name']} ×{item['count']} (лучшее "
+            + (
+                f"противовес {item['top_weight']:g}×{item['top_reps']}"
+                if item["inverted"]
+                else f"{item['top_weight']:g}×{item['top_reps']}"
+            )
+            + ")"
+            for item in summary["prs"][:5]
+        )
+        lines.append(f"ПР за фазу: {summary['pr_events']} — {top}.")
+    else:
+        lines.append("ПР за фазу: нет.")
+    adherence_line = render_adherence_stats(summary["adherence"])
+    if adherence_line:
+        lines.append(adherence_line)
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #

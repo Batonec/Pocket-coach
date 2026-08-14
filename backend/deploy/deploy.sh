@@ -21,6 +21,7 @@ Usage:
   $(basename "$0") web
   $(basename "$0") bot
   $(basename "$0") backend
+  $(basename "$0") coach-mcp
   $(basename "$0") all
 
 Optional environment variables:
@@ -102,8 +103,22 @@ BACKEND_MODULES=(
   coach_state.py
   coach_features.py
   refresh_recommendation.py
+  weekly_report.py
   backup_db.py
 )
+
+# The Coach MCP server on the VPS lives OUTSIDE $REMOTE_BASE (its own venv +
+# systemd unit) — this is the only scripted way to update it.
+COACH_MCP_REMOTE_DIR="${COACH_MCP_REMOTE_DIR:-/opt/coach-mcp/app}"
+COACH_MCP_SERVICE="${COACH_MCP_SERVICE:-coach-mcp.service}"
+
+deploy_coach_mcp() {
+  log "Deploying coach-mcp to $TARGET_HOST:$COACH_MCP_REMOTE_DIR"
+  scp "$MINIAPP_DIR/../coach_mcp/server.py" "${TARGET_HOST}:${COACH_MCP_REMOTE_DIR}/server.py" >/dev/null
+  scp "$MINIAPP_DIR/../coach_mcp/README.md" "${TARGET_HOST}:${COACH_MCP_REMOTE_DIR}/README.md" >/dev/null
+  remote "systemctl restart '$COACH_MCP_SERVICE' && systemctl is-active '$COACH_MCP_SERVICE'"
+  log "coach-mcp deploy finished"
+}
 
 deploy_backend() {
   log "Deploying backend files to $TARGET_HOST"
@@ -143,10 +158,14 @@ main() {
     backend)
       deploy_backend
       ;;
+    coach-mcp)
+      deploy_coach_mcp
+      ;;
     all)
       deploy_web
       deploy_bot
       deploy_backend
+      deploy_coach_mcp
       ;;
     -h|--help|help)
       usage

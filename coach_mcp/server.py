@@ -51,6 +51,7 @@ if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
 import backend_store  # noqa: E402
+import coach_features  # noqa: E402
 import coach_state  # noqa: E402
 import recommender  # noqa: E402
 
@@ -105,7 +106,9 @@ _INSTRUCTIONS = """\
    если пользователь хочет обновить рекомендацию в самом приложении;
 4) coach_weekly_report — недельный отчёт тренера (итоги, ПР, вес/талия,
    дисциплина, фокус следующей недели); зови по просьбе «как прошла неделя /
-   недельный отчёт».
+   недельный отчёт» — сегодняшний отчёт отдаётся из кэша мгновенно;
+5) coach_phase_summary — итоги текущей или завершённой фазы подготовки
+   («что дала фаза»); coach_costs — расходы на API по месяцам.
 
 Записывающие инструменты: coach_set_phase (смена фазы подготовки — только по
 явной просьбе пользователя), coach_update_state (лимит/база талии, день
@@ -533,10 +536,27 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
 
 
 @mcp.tool()
-def coach_weekly_report(days: int = 7, user_id: int | None = None) -> CallToolResult:
-    """Недельный отчёт тренера (Markdown): итоги недели, прогресс/ПР, вес и талия, дисциплина, фокус следующей недели. Один вызов модели; в базу ничего не пишет."""
+def coach_weekly_report(
+    days: int = 7, fresh: bool = False, user_id: int | None = None
+) -> CallToolResult:
+    """Недельный отчёт тренера (Markdown): итоги недели, прогресс/ПР, вес и талия, дисциплина, фокус следующей недели. Сегодняшний отчёт отдаётся из кэша мгновенно и бесплатно (воскресный таймер генерирует его сам); fresh=true — перегенерировать за токены."""
     try:
         uid = _uid(user_id)
+        period_end = date.today().isoformat()
+        if not fresh:
+            cached = STORE.get_coach_report(uid, period_end, days)
+            if cached:
+                return _result(
+                    {
+                        "ok": True,
+                        "summary": cached["report"],
+                        "user_id": uid,
+                        "cached": True,
+                        "model": cached.get("model"),
+                        "report": cached["report"],
+                        "period_end": period_end,
+                    }
+                )
         api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
         if not api_key:
             return _result(_err("ANTHROPIC_API_KEY не задан в окружении."))
@@ -548,13 +568,19 @@ def coach_weekly_report(days: int = 7, user_id: int | None = None) -> CallToolRe
             state=coach_state.load_state(_STATE_PATH),
             days=days,
         )
+        STORE.save_coach_report(
+            uid, period_end, days, report, model,
+            usage.get("input_tokens"), usage.get("output_tokens"),
+        )
         return _result(
             {
                 "ok": True,
                 "summary": report,
                 "user_id": uid,
+                "cached": False,
                 "model": model,
                 "report": report,
+                "period_end": period_end,
                 "usage": usage,
                 "cost": _estimate_cost(model, usage),
             }
@@ -563,6 +589,98 @@ def coach_weekly_report(days: int = 7, user_id: int | None = None) -> CallToolRe
         return _result(_err(str(exc)))
     except Exception as exc:  # noqa: BLE001
         return _result(_err(f"Ошибка отчёта: {exc}"))
+
+
+@mcp.tool()
+def coach_phase_summary(history_index: int | None = None, user_id: int | None = None) -> CallToolResult:
+    """Итоги фазы подготовки: длительность, тренировки и частота, вес/талия старт→финиш с темпом, ПР за фазу, дисциплина. Без аргументов — текущая фаза; history_index (0 = самая старая) — завершённая фаза из журнала переходов."""
+    try:
+        uid = _uid(user_id)
+        state = coach_state.load_state(_STATE_PATH)
+        today = date.today()
+        history = state.get("phase_history") or []
+
+        if history_index is None:
+            phase = state.get("phase")
+            started_raw = state.get("phase_started")
+            if not started_raw:
+                return _result(_err("У текущей фазы нет даты старта (phase_started)."))
+            started, ended = date.fromisoformat(started_raw), today
+        else:
+            index = int(history_index)
+            if not 0 <= index < len(history):
+                return _result(_err(
+                    f"history_index={index} вне журнала (закрытых фаз: {len(history)})."
+                ))
+            entry = history[index]
+            if not entry.get("started") or not entry.get("ended"):
+                return _result(_err("У этой записи журнала нет полных дат."))
+            phase = entry["phase"]
+            started = date.fromisoformat(entry["started"])
+            ended = date.fromisoformat(entry["ended"])
+
+        summary = coach_features.phase_summary(
+            STORE.list_workouts(uid),
+            STORE.list_body_weights(uid),
+            STORE.list_waists(uid),
+            _catalog(),
+            phase=phase,
+            started=started,
+            ended=ended,
+        )
+        text = coach_features.render_phase_summary(summary)
+        return _result(
+            {
+                "ok": True,
+                "summary": text,
+                "user_id": uid,
+                "current": history_index is None,
+                "phase_summary": summary,
+                "phase_history": history,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+@mcp.tool()
+def coach_costs(user_id: int | None = None) -> CallToolResult:
+    """Расходы на Claude API по месяцам: генерации рекомендаций и недельные отчёты — вызовы, токены, оценка в USD."""
+    try:
+        uid = _uid(user_id)
+        rows = STORE.token_spend(uid)
+        total_usd = 0.0
+        enriched = []
+        for row in rows:
+            cost = _estimate_cost(
+                row.get("model") or "",
+                {"input_tokens": row["input_tokens"], "output_tokens": row["output_tokens"]},
+            )
+            usd = cost["usd"] if cost else None
+            if usd:
+                total_usd += usd
+            enriched.append({**row, "usd": usd})
+        lines = [
+            f"  {row['month']} {row['source']} [{row.get('model') or '?'}]: "
+            f"{row['calls']} выз., {row['input_tokens']} in / {row['output_tokens']} out"
+            + (f", ~${row['usd']:.2f}" if row.get("usd") else "")
+            for row in enriched
+        ]
+        return _result(
+            {
+                "ok": True,
+                "summary": (
+                    "Расходы по месяцам:\n" + "\n".join(lines) + f"\nИтого: ~${total_usd:.2f}"
+                    if enriched
+                    else "Журнал вызовов пуст."
+                ),
+                "user_id": uid,
+                "months": enriched,
+                "total_usd": round(total_usd, 2),
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
 
 
 @mcp.tool()

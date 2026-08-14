@@ -594,6 +594,70 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
         self.assertTrue(any("разгрузочная" in v for v in violations))
 
 
+class RepRangeValidatorTests(unittest.TestCase):
+    CATALOG = [
+        {"id": 8, "name": "Жим ногами"},
+        {"id": 9, "name": "Тяга верт."},
+        {"id": 16, "name": "Разгибания ног"},
+        {"id": 15, "name": "Сгибания ног"},
+        {"id": 18, "name": "Жим в тренажере"},
+    ]
+
+    def _history(self, when: str = "2026-06-10"):
+        return [{
+            "workout_date": when,
+            "data": {"load_type": "medium", "exercises": [
+                {"exercise_id": eid, "name": f"#{eid}",
+                 "sets": [{"reps": 10, "weight": 60}] * 2}
+                for eid in (8, 9, 18, 15)
+            ]},
+        }]
+
+    def _plan(self, base_reps: int, load_type: str):
+        return {
+            "focus": "f", "load_type": load_type, "rest_days": 1, "rationale": "r",
+            "exercises": [
+                {"exercise_id": 8, "name": "Жим ногами", "note": "n",
+                 "sets": [{"reps": base_reps, "weight": 60}] * 4},
+                {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
+                 "sets": [{"reps": base_reps, "weight": 60}] * 4},
+                {"exercise_id": 16, "name": "Разгибания ног", "note": "n",
+                 "sets": [{"reps": 15, "weight": 60}] * 4},   # isolation: never checked
+                {"exercise_id": 15, "name": "Сгибания ног", "note": "n",
+                 "sets": [{"reps": 15, "weight": 60}] * 2},
+            ],
+        }
+
+    def _violations(self, raw, workouts=None):
+        from datetime import date as _date
+
+        import coach_state
+
+        rec = recommender._validate(raw, self.CATALOG)
+        return recommender._semantic_violations(
+            rec, raw, self.CATALOG,
+            workouts if workouts is not None else self._history(),
+            _date(2026, 6, 12), coach_state.load_state(None),
+        )
+
+    def test_heavy_session_with_pump_reps_on_base_movement_is_flagged(self) -> None:
+        violations = self._violations(self._plan(base_reps=14, load_type="heavy"))
+        flagged = [v for v in violations if "повторов" in v]
+        self.assertEqual(len(flagged), 8)  # both base movements, every set
+        self.assertIn("6–10", flagged[0])
+
+    def test_matching_reps_and_isolation_pass(self) -> None:
+        self.assertEqual(self._violations(self._plan(base_reps=8, load_type="heavy")), [])
+        self.assertEqual(self._violations(self._plan(base_reps=12, load_type="medium")), [])
+
+    def test_return_from_break_is_exempt(self) -> None:
+        violations = self._violations(
+            self._plan(base_reps=18, load_type="medium"),
+            workouts=self._history("2026-05-01"),   # 42 days → return mode
+        )
+        self.assertFalse(any("повторов" in v for v in violations))
+
+
 class RequestModelCachingTests(unittest.TestCase):
     def test_body_carries_cache_control_and_optional_schema(self) -> None:
         captured: dict = {}

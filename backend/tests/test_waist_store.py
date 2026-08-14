@@ -70,6 +70,39 @@ class WaistStoreTests(unittest.TestCase):
         self.assertEqual(self.store.list_waists(other["id"]), [])
 
 
+class CoachReportStoreTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.store = MiniAppStore(Path(self.temp_dir.name) / "trainer.db")
+        self.user = self.store.ensure_debug_user("report-tests")
+
+    def test_save_get_and_upsert(self) -> None:
+        uid = self.user["id"]
+        self.assertIsNone(self.store.get_coach_report(uid, "2026-08-16", 7))
+        saved = self.store.save_coach_report(
+            uid, "2026-08-16", 7, "**Итоги**", "claude-opus-4-8", 100, 50
+        )
+        self.assertEqual(saved["report"], "**Итоги**")
+
+        updated = self.store.save_coach_report(
+            uid, "2026-08-16", 7, "**Итоги v2**", "claude-opus-4-8", 120, 60
+        )
+        self.assertEqual(updated["report"], "**Итоги v2**")
+        self.assertEqual(updated["input_tokens"], 120)
+
+    def test_token_spend_aggregates_both_sources(self) -> None:
+        uid = self.user["id"]
+        self.store.save_coach_report(uid, "2026-08-16", 7, "r", "claude-opus-4-8", 100, 50)
+        self.store.save_coach_report(uid, "2026-08-23", 7, "r", "claude-opus-4-8", 200, 70)
+        rows = self.store.token_spend(uid)
+        report_rows = [row for row in rows if row["source"] == "weekly_report"]
+        self.assertEqual(len(report_rows), 1)
+        self.assertEqual(report_rows[0]["calls"], 2)
+        self.assertEqual(report_rows[0]["input_tokens"], 300)
+        self.assertEqual(report_rows[0]["output_tokens"], 120)
+
+
 class SetRirTests(unittest.TestCase):
     def test_normalize_set_rir_values(self) -> None:
         self.assertIsNone(normalize_set_rir(None))

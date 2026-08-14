@@ -79,6 +79,24 @@ class StateFileTests(unittest.TestCase):
             # Defaults survive alongside the override.
             self.assertEqual(params["ramp_cap"], (10, 16))
 
+    def test_set_phase_journals_the_closed_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "coach_state.json"
+            coach_state.set_phase(path, "cut_recomp", today=date(2026, 8, 14))
+            state = coach_state.set_phase(path, "lean_bulk", today=date(2026, 10, 25))
+            self.assertEqual(
+                state["phase_history"],
+                [{"phase": "cut_recomp", "started": "2026-08-14", "ended": "2026-10-25"}],
+            )
+            # And the journal survives a reload.
+            self.assertEqual(len(coach_state.load_state(path)["phase_history"]), 1)
+
+    def test_set_phase_without_start_date_journals_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "coach_state.json"
+            state = coach_state.set_phase(path, "maintenance", today=date(2026, 8, 14))
+            self.assertEqual(state["phase_history"], [])
+
     def test_set_phase_validates_input(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "coach_state.json"

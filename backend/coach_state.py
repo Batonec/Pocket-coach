@@ -95,10 +95,21 @@ DEFAULT_STATE: dict[str, Any] = {
     "phase": "cut_recomp",
     "phase_started": None,          # ISO date; None → block week counts as 1
     "phase_params": {},             # per-phase overrides: {phase: {key: value}}
+    "phase_history": [],            # closed phases: [{phase, started, ended}]
     "waist_limit_cm": None,         # hard aesthetic limit; set by the athlete
     "waist_base_cm": None,          # first measurement of the current phase
     "injection_day": DEFAULT_INJECTION_DAY,
 }
+
+
+def _valid_iso_date(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return None
+    return value
 
 
 def default_state_path(db_path: Path | str) -> Path:
@@ -140,15 +151,20 @@ def load_state(path: Path | str | None) -> dict[str, Any]:
 
     if raw.get("phase") in PHASES:
         state["phase"] = raw["phase"]
-    started = raw.get("phase_started")
-    if isinstance(started, str):
-        try:
-            date.fromisoformat(started)
-            state["phase_started"] = started
-        except ValueError:
-            pass
+    if _valid_iso_date(raw.get("phase_started")):
+        state["phase_started"] = raw["phase_started"]
     if isinstance(raw.get("phase_params"), dict):
         state["phase_params"] = raw["phase_params"]
+    if isinstance(raw.get("phase_history"), list):
+        state["phase_history"] = [
+            {
+                "phase": entry["phase"],
+                "started": _valid_iso_date(entry.get("started")),
+                "ended": _valid_iso_date(entry.get("ended")),
+            }
+            for entry in raw["phase_history"]
+            if isinstance(entry, dict) and entry.get("phase") in PHASES
+        ]
     for key in ("waist_limit_cm", "waist_base_cm"):
         value = raw.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool) and 40 <= value <= 200:
@@ -200,8 +216,22 @@ def set_phase(
     if phase not in PHASES:
         raise ValueError(f"Неизвестная фаза {phase!r}; допустимые: {', '.join(PHASES)}")
     state = load_state(path)
+    today = today or date.today()
+    # Close the outgoing phase into the history journal — the phase-summary
+    # tool derives all its numbers from workouts/measurements by date range,
+    # so the journal only needs the boundaries.
+    if state.get("phase_started"):
+        history = list(state.get("phase_history") or [])
+        history.append(
+            {
+                "phase": state["phase"],
+                "started": state["phase_started"],
+                "ended": today.isoformat(),
+            }
+        )
+        state["phase_history"] = history
     state["phase"] = phase
-    state["phase_started"] = (today or date.today()).isoformat()
+    state["phase_started"] = today.isoformat()
     if params:
         if not isinstance(params, dict):
             raise ValueError("params должен быть объектом {ключ: значение}")

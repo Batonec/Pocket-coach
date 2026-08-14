@@ -389,6 +389,21 @@ class MiniAppStore:
                 CREATE INDEX IF NOT EXISTS idx_waists_user_date
                 ON waists(user_id, entry_date ASC, id ASC);
 
+                -- Cached coach weekly reports: generated once (by the Sunday
+                -- timer or on demand), then served instantly and token-free.
+                CREATE TABLE IF NOT EXISTS coach_reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    period_end TEXT NOT NULL,
+                    days INTEGER NOT NULL,
+                    report TEXT NOT NULL,
+                    model TEXT,
+                    input_tokens INTEGER,
+                    output_tokens INTEGER,
+                    created_at INTEGER NOT NULL,
+                    UNIQUE(user_id, period_end, days)
+                );
+
                 CREATE TABLE IF NOT EXISTS recommendations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1095,6 +1110,82 @@ class MiniAppStore:
             )
 
         return self._deserialize_waist(row)
+
+    # --- cached coach reports + token spend -------------------------------- #
+    def save_coach_report(
+        self,
+        user_id: int,
+        period_end: str,
+        days: int,
+        report: str,
+        model: str | None,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> dict[str, Any]:
+        timestamp = utc_now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO coach_reports (
+                    user_id, period_end, days, report, model,
+                    input_tokens, output_tokens, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, period_end, days) DO UPDATE SET
+                    report = excluded.report,
+                    model = excluded.model,
+                    input_tokens = excluded.input_tokens,
+                    output_tokens = excluded.output_tokens,
+                    created_at = excluded.created_at
+                """,
+                (user_id, period_end, int(days), report, model, input_tokens, output_tokens, timestamp),
+            )
+        stored = self.get_coach_report(user_id, period_end, days)
+        if stored is None:
+            raise RuntimeError("Failed to persist coach report")
+        return stored
+
+    def get_coach_report(
+        self, user_id: int, period_end: str, days: int
+    ) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT period_end, days, report, model, input_tokens, output_tokens, created_at
+                FROM coach_reports
+                WHERE user_id = ? AND period_end = ? AND days = ?
+                """,
+                (user_id, period_end, int(days)),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def token_spend(self, user_id: int) -> list[dict[str, Any]]:
+        """Monthly token totals per source/model — recommendation generations
+        (the append-only log) plus cached weekly reports."""
+        query = """
+            SELECT strftime('%Y-%m', created_at, 'unixepoch') AS month,
+                   'recommendation' AS source,
+                   model,
+                   COUNT(*) AS calls,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens
+            FROM recommendation_log
+            WHERE user_id = ?
+            GROUP BY month, model
+            UNION ALL
+            SELECT strftime('%Y-%m', created_at, 'unixepoch') AS month,
+                   'weekly_report' AS source,
+                   model,
+                   COUNT(*) AS calls,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens
+            FROM coach_reports
+            WHERE user_id = ?
+            ORDER BY month DESC, source
+        """
+        with self._connection() as connection:
+            rows = connection.execute(query, (user_id, user_id)).fetchall()
+        return [dict(row) for row in rows]
 
     def _get_workout_row(
         self,

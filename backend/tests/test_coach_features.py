@@ -327,6 +327,50 @@ class AdherenceStatsTests(unittest.TestCase):
         self.assertIsNone(coach_features.adherence_stats(workouts, TODAY))
 
 
+class PhaseSummaryTests(unittest.TestCase):
+    def test_summary_derives_everything_from_the_date_range(self) -> None:
+        started, ended = date(2026, 8, 1), date(2026, 8, 28)  # 4 weeks
+        workouts = [
+            _workout("2026-08-05", [(8, [(100, 10)] * 3)]),
+            _workout("2026-08-12", [(8, [(105, 10)] * 3)]),   # PR in range
+            _workout("2026-08-19", [(8, [(105, 10)] * 3)]),
+            _workout("2026-07-01", [(8, [(90, 10)] * 3)]),    # before the phase
+        ]
+        weights = [
+            {"entry_date": "2026-07-30", "weight": 79.0},
+            {"entry_date": "2026-08-27", "weight": 77.6},
+        ]
+        waists = [
+            {"entry_date": "2026-08-02", "waist": 86.0},
+            {"entry_date": "2026-08-26", "waist": 84.5},
+        ]
+        summary = coach_features.phase_summary(
+            workouts, weights, waists, CATALOG,
+            phase="cut_recomp", started=started, ended=ended,
+        )
+        self.assertEqual(summary["workouts"], 3)
+        self.assertEqual(summary["weight_start"], 79.0)
+        self.assertEqual(summary["weight_end"], 77.6)
+        self.assertAlmostEqual(summary["weight_rate_per_week"], -0.35, places=2)
+        self.assertEqual(summary["waist_start"], 86.0)
+        self.assertEqual(summary["waist_end"], 84.5)
+        self.assertEqual(summary["pr_events"], 2)  # 100 and 105 both beat the July baseline
+        self.assertEqual(summary["prs"][0]["name"], "Жим ногами")
+
+        text = coach_features.render_phase_summary(summary)
+        self.assertIn("Фаза cut_recomp", text)
+        self.assertIn("79.0 → 77.6", text)
+        self.assertIn("ПР за фазу: 2", text)
+
+    def test_pr_dates_exclude_the_baseline_session(self) -> None:
+        workouts = [
+            _workout("2026-08-10", [(8, [(105, 10)])]),   # improvement
+            _workout("2026-08-01", [(8, [(100, 10)])]),   # baseline
+        ]
+        summary = coach_features.exercise_summaries(workouts, CATALOG, TODAY)[0]
+        self.assertEqual(summary["pr_dates"], ["2026-08-10"])
+
+
 class WeightRangeTests(unittest.TestCase):
     def test_eight_week_range_merges_the_duplicate_id(self) -> None:
         workouts = [
