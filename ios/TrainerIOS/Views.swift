@@ -2188,12 +2188,16 @@ struct SignalBannerView: View {
                                 .foregroundStyle(ctaColor)
                         }
                     }
+                    // Match the natural width of the 8-letter «ПРОГРЕСС» CTA
+                    // below, so shorter labels keep their chevron on the same
+                    // vertical guide instead of drifting toward the edge.
+                    .frame(width: 45)
                     .frame(maxHeight: .infinity, alignment: .center)
                     .padding(.leading, 2)
                 }
             }
             .padding(.leading, 12)
-            .padding(.trailing, 12)
+            .padding(.trailing, 14)
             .padding(.vertical, 11)
             .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
             .background {
