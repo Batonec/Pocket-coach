@@ -40,30 +40,18 @@ DEFAULT_RETRY_BACKOFF = float(os.getenv("ANTHROPIC_RETRY_BACKOFF", "1.5"))
 RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
 
 # Server-side sanity bounds (JSON Schema can't express numeric ranges, so the
-# model output is clamped/filtered after parsing).
+# model output is clamped/filtered after parsing). These are sanitation, not
+# methodology: rep ranges, session size and weight jumps are the model's
+# coaching judgement and are deliberately NOT validated.
 MAX_REPS = 100
 MAX_WEIGHT = 1000.0
 MAX_EXERCISES = 10
 MAX_SETS_PER_EXERCISE = 12
-MAX_REST_DAYS = 7   # structural clamp; the semantic validator narrows to 0–4
-SEMANTIC_MAX_REST_DAYS = 4
+MAX_REST_DAYS = 4   # rest_days is clamped to 0–4 silently, never reprompted
 
 # Raw history shown to the model; everything older is covered by the computed
 # per-exercise summaries (the prompt must not grow from the feature work).
 RAW_HISTORY_COUNT = 10
-
-# Allowed deviation of a planned weight from the exercise's 8-week range.
-WEIGHT_TOLERANCE = 0.15
-
-# Intensity waves for BASE movements (presses, pulls, leg press) per session
-# load_type; isolation stays at 10–15+ regardless and is not checked. The
-# validator allows ±1 rep around the range before flagging.
-BASE_REP_RANGES: dict[str, tuple[int, int]] = {
-    "heavy": (6, 10),
-    "medium": (10, 14),
-    "light": (12, 18),
-}
-REP_TOLERANCE = 1
 
 ALLOWED_LOAD_TYPES = ("heavy", "medium", "light")
 
@@ -287,9 +275,11 @@ def _render_phase_policy() -> str:
     maintenance = coach_state.PHASE_DEFAULTS["maintenance"]
     return (
         "Подготовка ведётся ФАЗАМИ. Текущая фаза, её неделя блока и целевые ориентиры "
-        "приходят в блоке КОНТЕКСТ каждого запроса — они главнее общих цифр ниже. Фазу "
-        "переключает ТОЛЬКО атлет (руками); если данные показывают, что цель фазы "
-        "достигнута, предложи смену фазы в rationale — но план строй по текущей.\n"
+        "приходят в блоке КОНТЕКСТ каждого запроса — они главнее общих цифр ниже. Все "
+        "числа фаз (калории, подходы, объёмы) — ориентиры для планирования, а не "
+        "жёсткие рамки. Фазу переключает ТОЛЬКО атлет (руками); если данные "
+        "показывают, что цель фазы достигнута, предложи смену фазы в rationale — но "
+        "план строй по текущей.\n"
         f"- cut_recomp («{cut['title']}»): калории {_format_range(cut['calories'])} ккал, "
         f"темп {cut['rate_text']}, {cut['frequency_text']}, сессия "
         f"{_format_range(cut['session_sets'])} рабочих подходов, недельный объём — ramp "
@@ -334,30 +324,35 @@ def _build_system_prompt(
         "В план включай ТОЛЬКО эти упражнения (id и названия точные):\n"
         f"{catalog_lines}\n"
         f"Структурные пробелы каталога: {CATALOG_GAPS}.\n"
-        "Поле name каждого элемента exercises[] должно ДОСЛОВНО совпадать с названием "
-        "из каталога для его exercise_id. Если для цели не хватает движения (в первую "
-        "очередь задняя дельта при таком объёме жимов) — предложи его ТЕКСТОМ в "
-        "rationale («советую добавить X, потому что Y»), но не в каждой карточке — "
-        "примерно раз в пару недель; атлет сам решит и добавит. В exercises[] "
-        "несуществующие упражнения не включай никогда.\n\n"
+        "Если для цели не хватает движения (в первую очередь задняя дельта при таком "
+        "объёме жимов) — предложи его ТЕКСТОМ в rationale («советую добавить X, потому "
+        "что Y»), но не в каждой карточке — примерно раз в пару недель; атлет сам решит "
+        "и добавит. В exercises[] несуществующие упражнения не включай никогда.\n\n"
         "=== ФАЗЫ ПОДГОТОВКИ ===\n"
         f"{_render_phase_policy()}\n\n"
-        "=== ТРЕНЕРСКАЯ ПОЛИТИКА ===\n"
-        "- Ритм и недельный объём диктует текущая фаза (см. КОНТЕКСТ запроса). Малые "
-        "группы держи ниже своих потолков: средняя дельта 6–12, бицепс/трицепс напрямую "
-        "4–8 (жимы добирают трицепсу и передней дельте, тяги — бицепсу примерно половину "
-        "стимула — эффективные сеты уже посчитаны в данных), бицепс бедра 5–10 — ставь "
-        "сгибания ног почти в каждую сессию, пока группа хронически недобирает.\n"
-        "- Сессия: ориентир ~60 минут (при 18+ подходах предупреди, что выйдет ближе к "
-        "75–90 мин, или сократи отдых на изоляции до 60–90 сек). Разминочные подходы в "
-        "план НЕ включай — атлет делает их сам.\n"
-        "- Волны интенсивности ДЛЯ БАЗОВЫХ движений (жимы, тяги, жим ногами): heavy "
-        "6–10 повторов, medium 10–14, light 12–18. Изоляция (дельты, бицепс, трицепс, "
-        "бабочка, разгибания/сгибания ног) остаётся в 10–15+ повторах даже в "
-        "heavy-день. После heavy-сессии heavy не ставь.\n"
-        "- Метки нагрузки в истории ([heavy]/[medium]/[light]/[?]) проставлялись "
-        "автоматикой/атлетом и могут быть неточны — оценивай реальную тяжесть сессии "
-        "сам по весам и повторам относительно истории.\n"
+        "=== ТРЕНЕРСКАЯ ПОЛИТИКА (ориентиры по умолчанию) ===\n"
+        "Всё в этом разделе — рабочие настройки по умолчанию, а не законы: ты видишь "
+        "больше контекста, чем любое правило. Отступай от ориентиров, когда видишь "
+        "причину, и называй её в note/rationale.\n"
+        "- Ритм и недельный объём подсказывает текущая фаза (см. КОНТЕКСТ запроса). "
+        "Малые группы обычно держат ниже потолков: средняя дельта 6–12, бицепс/трицепс "
+        "напрямую 4–8 (жимы и тяги уже добирают им часть стимула — эффективные сеты "
+        "посчитаны в данных), бицепс бедра 5–10 — ставь сгибания ног почти в каждую "
+        "сессию, пока группа хронически недобирает.\n"
+        "- Размер сессии выбирай сам под цель дня, время (~60 минут; при 18+ подходах "
+        "предупреди, что выйдет ближе к 75–90 мин, или сократи отдых на изоляции до "
+        "60–90 сек) и реальную дисциплину атлета. Разминочные подходы в план НЕ "
+        "включай — атлет делает их сам.\n"
+        "- Волны интенсивности для базовых движений (жимы, тяги, жим ногами) — "
+        "привычная атлету схема: heavy 6–10 повторов, medium 10–14, light 12–18; "
+        "изоляция (дельты, бицепс, трицепс, бабочка, разгибания/сгибания ног) 10–15+ "
+        "даже в heavy-день. Это default, а не рамка — выбирай другой диапазон, когда "
+        "для конкретного дня есть причина. Два по-настоящему тяжёлых дня подряд без "
+        "необходимости не ставь — но суди по реальной тяжести весов и интервалу "
+        "отдыха, а не по меткам.\n"
+        "- Метки нагрузки в истории ([heavy]/[medium]/[light]/[?]) могут быть неточны "
+        "или отсутствовать — оценивай реальную тяжесть сессии сам по весам и повторам "
+        "относительно истории.\n"
         "- Усилие: рабочие подходы с запасом 1–2 повтора; на изоляции в последнем "
         "подходе допустимо 0–1; жимы (ногами, от груди) до отказа не доводить. Если у "
         "подхода в истории есть @N — это записанный RIR (повторы в запасе, 0–4) "
@@ -373,17 +368,16 @@ def _build_system_prompt(
         "веди возврат по принятым тренерским принципам работы после простоя "
         "(детренированность и её разная скорость по системам, готовность "
         "соединительной ткани, разгон за несколько сессий). Ты профессионал — "
-        "насколько снизить вход и как быстро возвращать прежние веса, решаешь "
-        "сам по длительности перерыва, данным о доперерывных весах и профилю "
-        "атлета. Жёстко фиксировано только одно: возвратная сессия не место "
-        "для прибавки — вес выше доперерывного рабочего сервер не примет ни по "
-        "одному движению. Сессия medium/light, 10–14 подходов, без отказа "
-        "(коридор подходов фазы не действует). Если в данных есть готовые "
-        "СТУПЕНИ разгона до пика — это границы, а не ориентир «примерно». "
-        "Длинный перерыв сам по себе — разгрузка: "
-        "счётчик deload обнуляется, правило «после heavy не heavy» через перерыв "
-        "не применяется. После перерыва в rationale вместо сводки нулевых объёмов "
-        "опиши план разгона на 2–3 сессии.\n"
+        "насколько снизить вход, каким темпом возвращать прежние веса, сколько "
+        "подходов и какой тяжести делать первые сессии, решаешь сам по длительности "
+        "перерыва, данным о доперерывных весах и профилю атлета; обычно возврат — "
+        "это medium/light сессия умеренного объёма без отказа. Жёстко фиксировано "
+        "только одно: возвратная сессия не место для прибавки — вес выше "
+        "доперерывного рабочего сервер не примет ни по одному движению. Ступени "
+        "разгона в данных (если есть) — ориентир от сервера, не предписание. "
+        "Длинный перерыв сам по себе — разгрузка: счётчик deload обнуляется. "
+        "После перерыва в rationale вместо сводки нулевых объёмов опиши план "
+        "разгона на 2–3 сессии.\n"
         "- Разгрузка (deload): плановая разгрузочная неделя приходит ФЛАГОМ в "
         "КОНТЕКСТЕ (каждые ~6 недель реально накопленной работы): объём −30–40%, "
         "веса рабочие, без отказа, со следующей недели ramp заново — построй сессию "
@@ -393,26 +387,24 @@ def _build_system_prompt(
         "ПР нет ≥4 недель) — предложи deload −10% с разгоном или вариацию именно по "
         "нему. Если предусловия НЕ выполнены — плато объясняй посещаемостью/питанием, "
         "слова «потолок» избегай.\n"
-        "- Покрытие групп: крупная группа (грудь, спина, квадрицепс/ягодичные) или "
-        "бицепс бедра, у которых больше 10 дней ноль эффективных сетов, должна "
-        "получить хотя бы 1–2 подхода в плане — не оставляй её сохнуть ещё сессию.\n"
         "- Дисциплина: сводка «факт vs план» за 30 дней приходит в данных. Если "
         "какое-то упражнение стабильно пропускается — ставь его РАНЬШЕ в сессии и/или "
         "делай план реалистичного размера; адаптируйся к реальному поведению, а не "
         "читай нотации.\n"
         "- Регулярность: если перерывы >10 дней повторяются, мягко предложи в "
-        "rationale привязать тренировки к конкретным дням недели — без нотаций.\n\n"
-        "=== ПЛАНИРОВЩИК: ГОРМОНАЛЬНЫЙ НЕДЕЛЬНЫЙ ЦИКЛ ===\n"
-        "День цикла и фон (высокий/средний/минимальный) приходят в КОНТЕКСТЕ запроса. "
-        "Приоритеты при выборе дня и тяжести (строго по порядку):\n"
-        "1) восстановление — давность и тяжесть прошлой сессии всегда важнее цикла;\n"
-        "2) при прочих равных heavy-сессии ставь в окно пика, light/изоляцию — в окно "
-        "спада;\n"
-        "3) ритм фазы (частота из КОНТЕКСТА).\n"
-        "Для maintenance единственную недельную heavy-сессию по возможности ставь в "
-        "окно пика. Медицинская граница: вопросы ГЗТ, дозировок, анализов и давления — "
-        "зона лечащего врача. Никаких советов и интерпретаций по ним не давай; "
-        "гормональный фон используй только как контекст восстановления и планирования.\n\n"
+        "rationale привязать тренировки к конкретным дням недели — без нотаций.\n"
+        "- Медицинская граница: вопросы ГЗТ, дозировок, анализов и давления — зона "
+        "лечащего врача. Никаких советов и интерпретаций по ним не давай; гормональный "
+        "фон атлета (из профиля) — просто часть контекста восстановления.\n\n"
+        "=== ЖЁСТКИЕ ГРАНИЦЫ (проверяет сервер) ===\n"
+        "Жёстких правил всего три — остальное в этом промпте лишь ориентиры, "
+        "решение за тобой:\n"
+        "1) в exercises[] — только упражнения каталога (id из схемы);\n"
+        "2) крупная группа (грудь, спина, квадрицепс/ягодичные) или бицепс бедра, у "
+        "которых 10+ дней ноль эффективных сетов, должна получить хотя бы 1–2 "
+        "подхода;\n"
+        "3) на возврате после перерыва (≥14 дней) вес любого движения — не выше "
+        "доперерывного рабочего.\n\n"
         "=== ПИТАНИЕ ===\n"
         "Решение по калориям НЕ выводи сам из сырых замеров: сервер уже сравнил тренды "
         "веса и талии с целями фазы и положил готовую ветку в блок «Матрица питания» — "
@@ -442,7 +434,8 @@ def _build_system_prompt(
         "5) при необходимости — **Совет** с новым упражнением или разгрузкой.\n"
         "В note каждого упражнения — одна фраза: почему такой вес/повторы относительно "
         "прошлого раза («+2.5 кг — прошлый раз все подходы easy», «закрепляем вес — было "
-        "тяжело»).\n\n"
+        "тяжело»); если отступаешь от ориентиров политики — причина тоже сюда. Изредка "
+        "вместо этого можно дать одну важную техническую подсказку.\n\n"
         "Все веса в килограммах. Отвечай строго в заданной JSON-схеме, без текста вне JSON."
     )
 
@@ -465,7 +458,6 @@ def _build_user_prompt(
     returning = coach_state.is_return_from_break(workouts, today)
     position = coach_state.cycle_position(state, workouts, today)
     week = position["block_week"]
-    cycle = coach_state.cycle_info(state, today)
     if position["deload_week"]:
         # The planned light week caps the target back at the ramp start.
         week_target = params.get("ramp_start")
@@ -481,9 +473,7 @@ def _build_user_prompt(
             "веса рабочие, без отказа; со следующей недели ramp начинается заново"
         )
     context_lines = [
-        f"Сегодня: {today.isoformat()} ({_RU_WEEKDAYS[today.weekday()]}). "
-        f"День гормонального цикла: {cycle['day']} из 7 — фон {cycle['level']} "
-        f"(пик {cycle['peak_days']}, спад {cycle['trough_days']}).",
+        f"Сегодня: {today.isoformat()} ({_RU_WEEKDAYS[today.weekday()]}).",
         f"Фаза: {phase} («{params['title']}»), {week_label}. Ориентиры фазы: "
         f"{_format_range(params['calories'])} ккал, {params['rate_text']}, белок "
         f"{_format_range(params['protein_g'])} г, сессия "
@@ -493,9 +483,9 @@ def _build_user_prompt(
         context_lines.append("Дата последней тренировки неизвестна.")
     elif returning:
         context_lines.append(
-            f"Дней с последней тренировки: {days} — ВОЗВРАТ ПОСЛЕ ПЕРЕРЫВА (≥14 дн): "
-            "сессия medium/light, 10–14 подходов, ~85–90% рабочих весов; ступени "
-            "разгона ниже."
+            f"Дней с последней тренировки: {days} — ВОЗВРАТ ПОСЛЕ ПЕРЕРЫВА (≥14 дн). "
+            "Методика возврата на тебе; жёсткая граница одна: не выше доперерывных "
+            "рабочих весов (они ниже)."
         )
     else:
         context_lines.append(f"Дней с последней тренировки: {days}.")
@@ -551,8 +541,8 @@ def _build_user_prompt(
     ramp_lines = coach_features.comeback_ramp(workouts, catalog or [], today)
     if ramp_lines:
         chunks.append(
-            "Ступени разгона к пиковым весам (сервер уже разложил возврат по "
-            "сессиям):\n" + "\n".join(ramp_lines)
+            "Ступени разгона к пиковым весам (посчитаны сервером как ориентир — "
+            "темп возврата решаешь ты):\n" + "\n".join(ramp_lines)
         )
 
     discipline_lines: list[str] = []
@@ -609,8 +599,7 @@ def _build_schema(catalog: list[dict[str, Any]]) -> dict[str, Any]:
                     "Через сколько дней от сегодня проводить эту тренировку: "
                     "0 = сегодня, 1 = завтра, 2 = послезавтра, максимум 4. "
                     "Учитывай давность последней тренировки, нагрузку прошлой "
-                    "сессии, усталость/сон/стресс, ритм фазы и гормональный "
-                    "цикл (тяжёлые сессии — в окно пика)"
+                    "сессии, усталость/сон/стресс и ритм фазы"
                 ),
             },
             "rationale": {
@@ -627,12 +616,12 @@ def _build_schema(catalog: list[dict[str, Any]]) -> dict[str, Any]:
                     "type": "object",
                     "properties": {
                         "exercise_id": {"type": "integer", "enum": exercise_ids},
-                        "name": {"type": "string"},
                         "note": {
                             "type": "string",
                             "description": (
                                 "Короткое (одна фраза) обоснование выбора веса/повторов "
-                                "для этого упражнения относительно прошлого раза"
+                                "для этого упражнения относительно прошлого раза; "
+                                "изредка — одна важная техническая подсказка"
                             ),
                         },
                         "sets": {
@@ -648,7 +637,7 @@ def _build_schema(catalog: list[dict[str, Any]]) -> dict[str, Any]:
                             },
                         },
                     },
-                    "required": ["exercise_id", "name", "note", "sets"],
+                    "required": ["exercise_id", "note", "sets"],
                     "additionalProperties": False,
                 },
             },
@@ -903,221 +892,59 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
 # --------------------------------------------------------------------------- #
 # Semantic validation (on top of the JSON schema)
 # --------------------------------------------------------------------------- #
-def _mentions_deload(recommendation: dict[str, Any]) -> bool:
-    text = f"{recommendation.get('focus', '')} {recommendation.get('rationale', '')}".lower()
-    return "deload" in text or "разгруз" in text
-
-
-def _session_set_corridor(
+def _comeback_ceilings(
     workouts: list[dict[str, Any]],
+    catalog: list[dict[str, Any]],
     today: date,
-    state: dict[str, Any],
-) -> tuple[tuple[int, int], str]:
-    """Return the hard session-volume corridor and its user-facing label."""
-    params = coach_state.phase_params(state)
-    if coach_state.is_return_from_break(workouts, today):
-        return (10, 14), "возврат после перерыва"
-    if coach_state.cycle_position(state, workouts, today)["deload_week"]:
-        return (10, 14), "плановая разгрузочная неделя"
-    return tuple(params["session_sets"]), f"фаза {params['phase']}"
-
-
-def _enforce_session_set_ceiling(
-    recommendation: dict[str, Any],
-    workouts: list[dict[str, Any]],
-    today: date,
-    state: dict[str, Any],
-) -> list[str]:
-    """Deterministically trim excess work sets instead of failing a whole plan.
-
-    The model still chooses exercises, weights and reps. The server owns the
-    hard ceiling: it removes sets from the most overrepresented exercise first
-    (later exercise wins a tie), preserving one set per exercise when possible.
-    All semantic checks run again after this normalization.
-    """
-    (_minimum, maximum), _label = _session_set_corridor(workouts, today, state)
-    exercises = recommendation.get("exercises", [])
-    before = sum(len(exercise.get("sets", [])) for exercise in exercises)
-    total = before
-    while total > maximum and exercises:
-        removable = [
-            (len(exercise.get("sets", [])), index)
-            for index, exercise in enumerate(exercises)
-            if len(exercise.get("sets", [])) > 1
-        ]
-        if removable:
-            _count, index = max(removable, key=lambda item: (item[0], item[1]))
-            exercises[index]["sets"].pop()
-        else:
-            # Defensive fallback for a future phase whose ceiling is lower
-            # than the number of one-set exercises. Coverage validation below
-            # will reject the result if the removed exercise was mandatory.
-            exercises.pop()
-        total -= 1
-
-    if total == before:
-        return []
-
-    rationale = str(recommendation.get("rationale", "")).rstrip()
-    adjustment_note = (
-        f"**Проверка методики:** объём автоматически ограничен {maximum} "
-        f"рабочими подходами (модель предложила {before})."
-    )
-    recommendation["rationale"] = (
-        f"{rationale}\n\n{adjustment_note}" if rationale else adjustment_note
-    )
-    return [f"рабочие подходы: {before} → {total}"]
+) -> dict[int, dict[str, Any]]:
+    """Per-exercise hard weight ceilings for a return-from-break session, or an
+    empty dict outside one. The ceiling is the pre-break working weight: a
+    comeback session is not the place for progression. Everything else about
+    the return (how far below to start, ramp speed, session size) is the
+    model's coaching judgement — the ladder in the prompt is data, not a bound."""
+    if not coach_state.is_return_from_break(workouts, today):
+        return {}
+    return {
+        item["exercise_id"]: item
+        for item in coach_features.pre_break_working_weights(workouts, catalog)
+    }
 
 
 def _semantic_violations(
     recommendation: dict[str, Any],
-    raw: dict[str, Any],
     catalog: list[dict[str, Any]],
     workouts: list[dict[str, Any]],
     today: date,
-    state: dict[str, Any],
 ) -> list[str]:
-    """Methodology checks the JSON schema cannot express. Each violation is a
-    human-readable line — the list goes verbatim into the reprompt."""
+    """The two hard bounds the JSON schema cannot express: the comeback
+    no-progression ceiling and muscle-group coverage. Rep ranges, session
+    size, weight jumps and load sequencing are deliberately NOT checked —
+    that is the model's coaching judgement, guided by the prompt. Each
+    violation is a human-readable line — the list goes verbatim into the
+    reprompt."""
     violations: list[str] = []
-    names_by_id = {item["id"]: item["name"] for item in catalog}
-    returning = coach_state.is_return_from_break(workouts, today)
-    deload_week = coach_state.cycle_position(state, workouts, today)["deload_week"]
-    easing = returning or deload_week or _mentions_deload(recommendation)
 
-    # 1) name must literally match the catalog for its exercise_id.
-    for exercise in raw.get("exercises", []) or []:
-        if not isinstance(exercise, dict):
-            continue
-        try:
-            exercise_id = int(exercise.get("exercise_id"))
-        except (TypeError, ValueError):
-            continue
-        exercise_id = coach_features.EXERCISE_ALIASES.get(exercise_id, exercise_id)
-        expected = names_by_id.get(exercise_id)
-        actual = str(exercise.get("name", "")).strip()
-        if expected is not None and actual != expected:
-            violations.append(
-                f"name упражнения id={exercise_id} должно быть дословно «{expected}», "
-                f"а не «{actual}»"
-            )
-
-    # 2) planned weights within ±15% of the exercise's 8-week working range.
-    #    Return-from-break / deload sessions may go lower (for the gravitron —
-    #    higher counterweight, i.e. more assistance) without a flag. On a
-    #    return, exercises WITH a comeback ladder validate against their first
-    #    rung (+one step) instead — the ±15%-of-peak ceiling would happily
-    #    wave through a peak-weight first session.
-    ramp_by_id: dict[int, dict[str, Any]] = {}
-    ceiling_by_id: dict[int, dict[str, Any]] = {}
-    if returning:
-        ramp_by_id = {
-            item["exercise_id"]: item
-            for item in coach_features.comeback_ramp_steps(workouts, catalog, today)
-        }
-        # Movements the athlete left AT their peak get no ladder — without an
-        # explicit ceiling the generic ±15% band below would wave through a PR
-        # attempt on the first session back.
-        ceiling_by_id = {
-            item["exercise_id"]: item
-            for item in coach_features.pre_break_working_weights(workouts, catalog)
-            if item["exercise_id"] not in ramp_by_id
-        }
+    # 1) return from a break: no weight above the pre-break working weight.
+    ceilings = _comeback_ceilings(workouts, catalog, today)
     for exercise in recommendation.get("exercises", []) or []:
-        exercise_id = exercise["exercise_id"]
-        ceiling = ceiling_by_id.get(exercise_id)
-        if ceiling:
-            # The only hard rule on a comeback: no progression. How far BELOW
-            # the pre-break weight to start is the coach's judgement, not ours.
-            allowed = ceiling["last_working"]
-            for workout_set in exercise["sets"]:
-                weight = workout_set["weight"]
-                too_hard = (
-                    weight < allowed - 1e-9 if ceiling["inverted"] else weight > allowed + 1e-9
-                )
-                if too_hard:
-                    what = "противовес" if ceiling["inverted"] else "вес"
-                    violations.append(
-                        f"{exercise['name']}: {what} {weight:g} кг тяжелее доперерывного "
-                        f"рабочего ({allowed:g}) — возвратная сессия не место для "
-                        "прибавки"
-                    )
+        ceiling = ceilings.get(exercise["exercise_id"])
+        if not ceiling:
             continue
-        ramp = ramp_by_id.get(exercise_id)
-        if ramp:
-            steps = ramp["steps"]
-            first = steps[0]
-            if ramp["inverted"]:
-                rung = (first - steps[1]) if len(steps) >= 2 else max(
-                    ramp["current"] - first, 0.0
-                )
-                floor_allowed = first - rung
-                for workout_set in exercise["sets"]:
-                    if workout_set["weight"] < floor_allowed - 1e-9:
-                        violations.append(
-                            f"{exercise['name']}: противовес {workout_set['weight']:g} кг "
-                            f"меньше возвратной ступени {first:g} (допустимо до "
-                            f"{floor_allowed:g}) — на возврате не форсируем"
-                        )
-            else:
-                rung = (steps[1] - first) if len(steps) >= 2 else max(
-                    first - ramp["current"], 0.0
-                )
-                ceiling_allowed = first + rung
-                for workout_set in exercise["sets"]:
-                    if workout_set["weight"] > ceiling_allowed + 1e-9:
-                        violations.append(
-                            f"{exercise['name']}: вес {workout_set['weight']:g} кг выше "
-                            f"возвратной ступени {first:g} (+шаг, допустимо до "
-                            f"{ceiling_allowed:g}) — веди по лестнице разгона"
-                        )
-            continue
-        bounds = coach_features.recent_weight_range(workouts, exercise_id, today)
-        if bounds is None:
-            continue
-        low, high = bounds
-        floor = low * (1 - WEIGHT_TOLERANCE)
-        ceiling = high * (1 + WEIGHT_TOLERANCE)
-        inverted = exercise_id == coach_features.GRAVITRON_ID
+        allowed = ceiling["last_working"]
         for workout_set in exercise["sets"]:
             weight = workout_set["weight"]
-            if inverted:
-                if weight < floor:
-                    violations.append(
-                        f"{exercise['name']}: противовес {weight:g} кг меньше "
-                        f"{floor:g} (диапазон 8 недель {low:g}–{high:g}; меньше "
-                        "противовес = тяжелее, так резко не прыгаем)"
-                    )
-                elif weight > ceiling and not easing:
-                    violations.append(
-                        f"{exercise['name']}: противовес {weight:g} кг больше "
-                        f"{ceiling:g} (диапазон 8 недель {low:g}–{high:g})"
-                    )
-            else:
-                if weight > ceiling:
-                    violations.append(
-                        f"{exercise['name']}: вес {weight:g} кг выше {ceiling:g} "
-                        f"(диапазон 8 недель {low:g}–{high:g} ±15%)"
-                    )
-                elif weight < floor and not easing:
-                    violations.append(
-                        f"{exercise['name']}: вес {weight:g} кг ниже {floor:g} "
-                        f"(диапазон 8 недель {low:g}–{high:g} ±15%; это не "
-                        "возврат/deload-сессия)"
-                    )
+            too_hard = (
+                weight < allowed - 1e-9 if ceiling["inverted"] else weight > allowed + 1e-9
+            )
+            if too_hard:
+                what = "противовес" if ceiling["inverted"] else "вес"
+                violations.append(
+                    f"{exercise['name']}: {what} {weight:g} кг тяжелее доперерывного "
+                    f"рабочего ({allowed:g}) — возвратная сессия не место для "
+                    "прибавки"
+                )
 
-    # 3) total session sets inside the phase corridor. The generation pipeline
-    #    trims ceiling overflow before this check; the validator remains strict
-    #    so direct callers and too-small plans are still rejected.
-    total_sets = sum(len(exercise["sets"]) for exercise in recommendation["exercises"])
-    corridor, corridor_label = _session_set_corridor(workouts, today, state)
-    if not corridor[0] <= total_sets <= corridor[1]:
-        violations.append(
-            f"в сессии {total_sets} рабочих подходов, а коридор ({corridor_label}) — "
-            f"{corridor[0]}–{corridor[1]}"
-        )
-
-    # 3b) group coverage: a big group (or the chronically lagging hamstrings)
+    # 2) group coverage: a big group (or the chronically lagging hamstrings)
     # that has been dry for 10+ days must get at least a set in the plan.
     recent_volume = coach_features.weekly_volume(workouts, today, days=10)
     plan_coverage: dict[str, float] = {}
@@ -1135,40 +962,58 @@ def _semantic_violations(
                 "и отсутствует в плане — добавь хотя бы 1–2 подхода"
             )
 
-    # 3c) intensity waves: base movements must land in the session load_type's
-    # rep range (±1). Return/deload sessions ramp however they need to.
-    load_type = recommendation.get("load_type")
-    rep_range = BASE_REP_RANGES.get(load_type)
-    if rep_range and not easing:
-        low_reps, high_reps = rep_range
-        for exercise in recommendation["exercises"]:
-            if exercise["exercise_id"] not in coach_features.MAIN_MOVEMENT_IDS:
-                continue
-            for workout_set in exercise["sets"]:
-                reps = workout_set["reps"]
-                if not low_reps - REP_TOLERANCE <= reps <= high_reps + REP_TOLERANCE:
-                    violations.append(
-                        f"{exercise['name']}: {reps} повторов в {load_type}-сессии — "
-                        f"базовые движения в {load_type} идут на {low_reps}–{high_reps}"
-                    )
-
-    # 4) rest_days 0–4.
-    rest_days = recommendation.get("rest_days", 0)
-    if not 0 <= rest_days <= SEMANTIC_MAX_REST_DAYS:
-        violations.append(
-            f"rest_days={rest_days}, допустимо 0–{SEMANTIC_MAX_REST_DAYS}"
-        )
-
-    # 5) no heavy right after a heavy session (a long break resets this).
-    if not returning and recommendation.get("load_type") == "heavy" and workouts:
-        last_load = ((workouts[0].get("data", {}) or {}).get("load_type"))
-        if last_load == "heavy":
-            violations.append(
-                "прошлая сессия была heavy — подряд две heavy не ставим (кроме "
-                "возврата после перерыва)"
-            )
-
     return violations
+
+
+def _resolve_violations(
+    recommendation: dict[str, Any],
+    catalog: list[dict[str, Any]],
+    workouts: list[dict[str, Any]],
+    today: date,
+) -> list[str]:
+    """Deterministic last resort after the reprompt also failed: clamp comeback
+    weights to their pre-break ceilings and surface anything unfixable (group
+    coverage) as an honest note in the rationale. A slightly imperfect plan
+    with a visible note beats an error card — generation must not fail over
+    methodology."""
+    adjustments: list[str] = []
+    ceilings = _comeback_ceilings(workouts, catalog, today)
+    for exercise in recommendation.get("exercises", []) or []:
+        ceiling = ceilings.get(exercise["exercise_id"])
+        if not ceiling:
+            continue
+        allowed = ceiling["last_working"]
+        for workout_set in exercise["sets"]:
+            weight = workout_set["weight"]
+            too_hard = (
+                weight < allowed - 1e-9 if ceiling["inverted"] else weight > allowed + 1e-9
+            )
+            if too_hard:
+                workout_set["weight"] = allowed
+                adjustments.append(
+                    f"{exercise['name']}: {weight:g} → {allowed:g} кг (доперерывный "
+                    "рабочий)"
+                )
+
+    notes: list[str] = []
+    if adjustments:
+        notes.append(
+            "**Проверка методики:** возвратные веса ограничены доперерывными "
+            "рабочими: " + "; ".join(adjustments) + "."
+        )
+    remaining = _semantic_violations(recommendation, catalog, workouts, today)
+    if remaining:
+        notes.append(
+            "**Проверка методики:** сервер не смог согласовать с моделью: "
+            + "; ".join(remaining) + " — учти при выполнении."
+        )
+    if notes:
+        rationale = str(recommendation.get("rationale", "")).rstrip()
+        appendix = "\n\n".join(notes)
+        recommendation["rationale"] = (
+            f"{rationale}\n\n{appendix}" if rationale else appendix
+        )
+    return adjustments
 
 
 # --------------------------------------------------------------------------- #
@@ -1200,9 +1045,10 @@ def generate_with_trace(
     max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> tuple[dict[str, Any], dict[str, Any], str, list[dict[str, Any]]]:
     """Like :func:`generate`, but also returns the attempt trace
-    ``[{raw, adjustments, violations, usage}, ...]`` for the MCP debugging tools. On a
-    final semantic failure the raised :class:`RecommendationError` carries the
-    trace in ``exc.trace``."""
+    ``[{raw, adjustments, violations, usage}, ...]`` for the MCP debugging
+    tools. Semantic violations never fail the generation: after one corrective
+    reprompt the server resolves what it can deterministically and annotates
+    the rationale — errors are reserved for API/structural failures."""
     if not workouts:
         raise RecommendationError("Нет истории тренировок для рекомендации")
 
@@ -1233,16 +1079,11 @@ def generate_with_trace(
     trace: list[dict[str, Any]] = []
     parsed, usage = call(user)
     recommendation = _validate(parsed, catalog)
-    adjustments = _enforce_session_set_ceiling(
-        recommendation, workouts, today, state
-    )
-    violations = _semantic_violations(
-        recommendation, parsed, catalog, workouts, today, state
-    )
+    violations = _semantic_violations(recommendation, catalog, workouts, today)
     trace.append(
         {
             "raw": parsed,
-            "adjustments": adjustments,
+            "adjustments": [],
             "violations": violations,
             "usage": usage,
         }
@@ -1250,9 +1091,11 @@ def generate_with_trace(
 
     if violations:
         # One corrective round-trip in the same conversation: name the exact
-        # violations and ask for a fixed plan. A second miss is a hard error.
+        # violations and ask for a rethought plan. If the model misses again,
+        # the server resolves deterministically (clamp comeback weights,
+        # annotate the rationale) instead of failing the generation.
         reprompt = (
-            "Твой план нарушает ограничения методики:\n- "
+            "Твой план нарушает жёсткие границы:\n- "
             + "\n- ".join(violations)
             + "\nИсправь ТОЛЬКО эти нарушения, сохрани остальную логику и верни "
             "полный план заново в той же JSON-схеме."
@@ -1264,12 +1107,10 @@ def generate_with_trace(
         ]
         parsed, usage_retry = call(messages)
         recommendation = _validate(parsed, catalog)
-        adjustments = _enforce_session_set_ceiling(
-            recommendation, workouts, today, state
-        )
-        violations = _semantic_violations(
-            recommendation, parsed, catalog, workouts, today, state
-        )
+        violations = _semantic_violations(recommendation, catalog, workouts, today)
+        adjustments: list[str] = []
+        if violations:
+            adjustments = _resolve_violations(recommendation, catalog, workouts, today)
         trace.append(
             {
                 "raw": parsed,
@@ -1279,12 +1120,6 @@ def generate_with_trace(
             }
         )
         usage = _sum_usage(usage, usage_retry)
-        if violations:
-            error = RecommendationError(
-                "Модель дважды нарушила ограничения методики: " + "; ".join(violations)
-            )
-            error.trace = trace
-            raise error
 
     # Resolve the model's relative rest_days into an absolute date at generation
     # time (auto-freshness regenerates daily, so it stays current). The card
@@ -1400,7 +1235,6 @@ def _build_report_prompt(
 ) -> str:
     params = coach_state.phase_params(state)
     position = coach_state.cycle_position(state, workouts, today)
-    cycle = coach_state.cycle_info(state, today)
 
     week_workouts = [
         workout
@@ -1482,9 +1316,7 @@ def _build_report_prompt(
     if discipline:
         chunks.append(discipline)
 
-    next_bits = [
-        f"Гормональный цикл сегодня: день {cycle['day']} из 7 (пик {cycle['peak_days']})."
-    ]
+    next_bits: list[str] = []
     every = params.get("deload_every_weeks")
     if position["deload_week"]:
         next_bits.append(
@@ -1503,7 +1335,8 @@ def _build_report_prompt(
                 f"Цель следующей недели блока: {next_week[0]}–{next_week[1]} "
                 "эффективных сетов на крупную группу."
             )
-    chunks.append("\n".join(next_bits))
+    if next_bits:
+        chunks.append("\n".join(next_bits))
 
     chunks.append("Напиши недельный отчёт по формату из системного промпта.")
     return "\n\n".join(chunks)

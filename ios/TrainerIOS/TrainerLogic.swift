@@ -657,22 +657,6 @@ enum TrainerLogic {
         )
     }
 
-    static func inferLoadType(_ draftExercises: [DraftExercise]) -> String {
-        let totalVolume = draftExercises.reduce(0.0) { exerciseTotal, exercise in
-            exerciseTotal + exercise.sets.reduce(0.0) { setTotal, set in
-                set.weight > 0 && set.reps > 0 ? setTotal + set.weight * Double(set.reps) : setTotal
-            }
-        }
-
-        if totalVolume >= 3000 {
-            return "heavy"
-        }
-        if totalVolume >= 1600 {
-            return "medium"
-        }
-        return "light"
-    }
-
     static func workoutPayload(
         from draft: DraftWorkout,
         recommendation: RecommendationSnapshot? = nil
@@ -699,7 +683,10 @@ enum TrainerLogic {
             data: WorkoutData(
                 focus: nil,
                 notes: nil,
-                loadType: inferLoadType(draft.exercises),
+                // The coach's own label when the session followed an applied
+                // plan; otherwise honestly unknown. The old tonnage heuristic
+                // (>=3000 kg -> heavy) marked nearly every real session heavy.
+                loadType: recommendation?.loadType,
                 exercises: exercises,
                 recommendation: recommendation
             )

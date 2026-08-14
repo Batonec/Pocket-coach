@@ -272,7 +272,7 @@ def _trainings_signal(
         return _signal(
             "return_soon", "trainings", "warn",
             f"Потренируйся до {_ru_date(deadline)}",
-            "Иначе следующая сессия — возвратная, ~85–90% весов",
+            "Иначе следующая сессия — возвратная, с облегчёнными весами",
             instance_fact=f"last_workout={last.isoformat()}",
             action_type="open_next_workout", action_label="План",
             glyph="back",
@@ -286,7 +286,7 @@ def _trainings_signal(
 
         if plan_state == "ready":
             title = "Возвратная тренировка готова"
-            body = "~85–90% рабочих весов. Догонять пропущенное не надо"
+            body = "Облегчённый вход по плану тренера. Догонять пропущенное не надо"
             action_type = "open_next_workout"
             action_label = "План"
             recommendation_fact = "ready"

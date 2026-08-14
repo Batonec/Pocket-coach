@@ -106,7 +106,8 @@ final class PayloadAndModelTests: XCTestCase {
 
         XCTAssertEqual(object?["workout_date"] as? String, "2026-05-10")
         XCTAssertNotNil(object?["client_id"] as? String)
-        XCTAssertEqual(payloadData?["load_type"] as? String, "medium")
+        // No applied plan → no load label; the server stores it as unknown.
+        XCTAssertNil(payloadData?["load_type"] as? String)
         XCTAssertEqual(exercises?.count, 1)
         XCTAssertEqual(exercises?.first?["exercise_id"] as? Int, 8)
         XCTAssertEqual(sets?.map { $0["set_index"] as? Int }, [1, 2])
@@ -115,7 +116,9 @@ final class PayloadAndModelTests: XCTestCase {
         XCTAssertNil(sets?[1]["notes"] as? String)
     }
 
-    func testWorkoutPayloadPreservesEditingClientIDAndInfersLoadTypeThresholds() {
+    func testWorkoutPayloadPreservesEditingClientIDAndTakesLoadTypeFromPlan() {
+        // The old tonnage heuristic (>=3000 kg -> heavy) labeled nearly every
+        // real session heavy; the label now comes from the applied plan only.
         let editingDraft = TestFixtures.draft(
             date: "2026-05-11",
             editingWorkoutID: 42,
@@ -127,29 +130,27 @@ final class PayloadAndModelTests: XCTestCase {
             ]
         )
 
-        let light = TrainerLogic.workoutPayload(from: editingDraft)
-        let medium = TrainerLogic.workoutPayload(from: TestFixtures.draft(exercises: [
-            TestFixtures.draftExercise(sets: [
-                TestFixtures.draftSet(reps: 10, weight: 50),
-                TestFixtures.draftSet(reps: 10, weight: 50),
-                TestFixtures.draftSet(reps: 10, weight: 50),
-                TestFixtures.draftSet(reps: 10, weight: 50)
-            ])
-        ]))
-        let heavy = TrainerLogic.workoutPayload(from: TestFixtures.draft(exercises: [
-            TestFixtures.draftExercise(sets: [
-                TestFixtures.draftSet(reps: 10, weight: 80),
-                TestFixtures.draftSet(reps: 10, weight: 80),
-                TestFixtures.draftSet(reps: 10, weight: 80),
-                TestFixtures.draftSet(reps: 10, weight: 80)
-            ])
-        ]))
+        let unplanned = TrainerLogic.workoutPayload(from: editingDraft)
+        let snapshot = RecommendationSnapshot(
+            schema: 1, source: "coach", model: nil, generatedAt: nil, appliedAt: nil,
+            basedOnWorkoutID: nil, basedOnWorkoutCount: nil, focus: nil, loadType: "medium",
+            exercises: nil
+        )
+        let planned = TrainerLogic.workoutPayload(
+            from: TestFixtures.draft(exercises: [
+                TestFixtures.draftExercise(sets: [
+                    TestFixtures.draftSet(reps: 10, weight: 80),
+                    TestFixtures.draftSet(reps: 10, weight: 80)
+                ])
+            ]),
+            recommendation: snapshot
+        )
 
-        XCTAssertEqual(light.id, 42)
-        XCTAssertEqual(light.clientID, "editable-workout")
-        XCTAssertEqual(light.data.loadType, "light")
-        XCTAssertEqual(medium.data.loadType, "medium")
-        XCTAssertEqual(heavy.data.loadType, "heavy")
+        XCTAssertEqual(unplanned.id, 42)
+        XCTAssertEqual(unplanned.clientID, "editable-workout")
+        XCTAssertNil(unplanned.data.loadType)
+        XCTAssertEqual(planned.data.loadType, "medium")
+        XCTAssertEqual(planned.data.recommendation?.loadType, "medium")
     }
 
     func testAPIModelsDecodeServerSnakeCaseResponses() throws {

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Coach preparation-phase state machine + weekly hormone-cycle configuration.
+"""Coach preparation-phase state machine.
 
 The mutable coaching state (current phase, its start date, per-phase parameter
-overrides, waist limit, injection day) lives in a small JSON file next to the
-database — ``coach_state.json`` — the same pattern as ``coach_profile.json``.
-The profile stays prose (who the athlete is); this file is structured state
-(what the program is doing right now) and is switched via the Coach MCP tools,
-never automatically.
+overrides, waist limits) lives in a small JSON file next to the database —
+``coach_state.json`` — the same pattern as ``coach_profile.json``. The profile
+stays prose (who the athlete is); this file is structured state (what the
+program is doing right now) and is switched via the Coach MCP tools, never
+automatically.
 
 Stdlib-only on purpose, like the rest of the backend.
 """
@@ -71,25 +71,12 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
     },
 }
 
-# --- weekly hormone cycle (HRT) ----------------------------------------------
-# MEDICAL BOUNDARY (do not remove): this config exists ONLY to time training
-# load around the weekly recovery background (peak vs trough). It must never
-# grow dosage logic, HRT-scheme advice or lab interpretation — that is the
-# treating physician's territory, and the prompts repeat the same boundary.
-DEFAULT_INJECTION_DAY = 5  # Saturday (Monday=0)
-
-_WEEKDAY_ALIASES = {
-    "mon": 0, "пн": 0, "понедельник": 0,
-    "tue": 1, "вт": 1, "вторник": 1,
-    "wed": 2, "ср": 2, "среда": 2,
-    "thu": 3, "чт": 3, "четверг": 3,
-    "fri": 4, "пт": 4, "пятница": 4,
-    "sat": 5, "сб": 5, "суббота": 5,
-    "sun": 6, "вс": 6, "воскресенье": 6,
-}
-
-_RU_WEEKDAYS_SHORT = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
-
+# MEDICAL BOUNDARY (do not remove): the coach layer never grows dosage logic,
+# HRT-scheme advice or lab interpretation — that is the treating physician's
+# territory, and the prompts repeat the same boundary. The athlete's hormonal
+# context lives in the prose profile only; planning does not schedule around
+# the injection cycle (supraphysiological background all week — day-to-day
+# timing is speculative and recovery/history always dominate anyway).
 DEFAULT_STATE: dict[str, Any] = {
     "schema": 1,
     "phase": "cut_recomp",
@@ -98,7 +85,6 @@ DEFAULT_STATE: dict[str, Any] = {
     "phase_history": [],            # closed phases: [{phase, started, ended}]
     "waist_limit_cm": None,         # hard aesthetic limit; set by the athlete
     "waist_base_cm": None,          # first measurement of the current phase
-    "injection_day": DEFAULT_INJECTION_DAY,
 }
 
 
@@ -117,22 +103,6 @@ def default_state_path(db_path: Path | str) -> Path:
     return Path(
         os.getenv("COACH_STATE_PATH") or str(Path(db_path).parent / "coach_state.json")
     )
-
-
-def parse_weekday(value: Any) -> int:
-    """Accept 0–6 (Mon=0), or en/ru weekday names/abbreviations."""
-    if isinstance(value, bool):
-        raise ValueError("injection_day must be a weekday, not a bool")
-    if isinstance(value, int):
-        if 0 <= value <= 6:
-            return value
-        raise ValueError("injection_day as a number must be 0–6 (Monday=0)")
-    text = str(value).strip().lower()
-    if text[:3] in _WEEKDAY_ALIASES:
-        return _WEEKDAY_ALIASES[text[:3]]
-    if text in _WEEKDAY_ALIASES:
-        return _WEEKDAY_ALIASES[text]
-    raise ValueError(f"Не понял день недели: {value!r}")
 
 
 def load_state(path: Path | str | None) -> dict[str, Any]:
@@ -169,10 +139,8 @@ def load_state(path: Path | str | None) -> dict[str, Any]:
         value = raw.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool) and 40 <= value <= 200:
             state[key] = float(value)
-    try:
-        state["injection_day"] = parse_weekday(raw.get("injection_day", state["injection_day"]))
-    except ValueError:
-        pass
+    # Legacy files may still carry injection_day — ignored: planning no longer
+    # schedules around the injection cycle.
     return state
 
 
@@ -384,33 +352,3 @@ def weekly_volume_target(state: dict[str, Any], week: int) -> tuple[int, int] | 
     low = min(start[0] + (week - 1), cap[0])
     high = min(start[1] + 2 * (week - 1), cap[1])
     return int(low), int(high)
-
-
-# --------------------------------------------------------------------------- #
-# Weekly hormone cycle (timing only — see the medical boundary note above)
-# --------------------------------------------------------------------------- #
-def cycle_info(state: dict[str, Any], today: date) -> dict[str, Any]:
-    """Where `today` sits in the weekly injection cycle.
-
-    Day 1 = injection day. Peak background: days +1..+3 after the injection;
-    trough: the day before and the day of the next injection. Changing the
-    injection day is a one-parameter edit in coach_state.json."""
-    injection_day = state.get("injection_day", DEFAULT_INJECTION_DAY)
-    if not isinstance(injection_day, int) or not 0 <= injection_day <= 6:
-        injection_day = DEFAULT_INJECTION_DAY
-    day = (today.weekday() - injection_day) % 7 + 1  # 1..7, 1 = injection day
-    if day in (2, 3, 4):
-        level = "высокий (пик)"
-    elif day in (5, 6):
-        level = "средний"
-    else:  # day 7 (eve of injection) and day 1 (injection day)
-        level = "минимальный"
-    peak = f"{_RU_WEEKDAYS_SHORT[(injection_day + 1) % 7]}–{_RU_WEEKDAYS_SHORT[(injection_day + 3) % 7]}"
-    trough = f"{_RU_WEEKDAYS_SHORT[(injection_day - 1) % 7]}–{_RU_WEEKDAYS_SHORT[injection_day]}"
-    return {
-        "day": day,
-        "level": level,
-        "injection_weekday": injection_day,
-        "peak_days": peak,
-        "trough_days": trough,
-    }

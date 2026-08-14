@@ -35,7 +35,7 @@ DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(DATA_DIR / "trainer.db")))
 # Athlete profile for the coach prompt: personal/medical context, lives next to
 # the DB on the server only (never in the public repo).
 COACH_PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
-# Mutable coaching state (preparation phase, waist limit, injection day) —
+# Mutable coaching state (preparation phase, waist limits) —
 # same location policy as the profile; switched via the Coach MCP tools.
 COACH_STATE_PATH = coach_state.default_state_path(DB_PATH)
 SESSION_COOKIE_NAME = "trainer_session"

@@ -111,8 +111,8 @@ _INSTRUCTIONS = """\
    («что дала фаза»); coach_costs — расходы на API по месяцам.
 
 Записывающие инструменты: coach_set_phase (смена фазы подготовки — только по
-явной просьбе пользователя), coach_update_state (лимит/база талии, день
-инъекции), coach_add_waist / coach_delete_waist (замеры талии, см).
+явной просьбе пользователя), coach_update_state (лимит/база талии),
+coach_add_waist / coach_delete_waist (замеры талии, см).
 
 Это аналитика и сценарии, не медицинский совет: никаких рекомендаций по
 дозировкам/схеме ГЗТ/анализам. Веса — в килограммах, талия — в сантиметрах,
@@ -236,10 +236,10 @@ def coach_get_catalog() -> CallToolResult:
         return _result(_err(f"Каталог недоступен: {exc}"))
 
 
-# --- tools: coaching state (phase machine, cycle config, waist limits) --------
+# --- tools: coaching state (phase machine, waist limits) ----------------------
 @mcp.tool()
 def coach_get_state(user_id: int | None = None) -> CallToolResult:
-    """Текущее состояние подготовки: фаза + её параметры, неделя блока, целевой объём недели, день гормонального цикла, лимит/база талии."""
+    """Текущее состояние подготовки: фаза + её параметры, неделя блока, целевой объём недели, лимит/база талии."""
     try:
         uid = _uid(user_id)
         state = coach_state.load_state(_STATE_PATH)
@@ -269,7 +269,6 @@ def coach_get_state(user_id: int | None = None) -> CallToolResult:
                 "sessions_in_cycle": position["sessions_in_cycle"],
                 "weekly_volume_target": week_target,
                 "return_from_break": coach_state.is_return_from_break(workouts, today),
-                "cycle_today": coach_state.cycle_info(state, today),
                 "state_path": str(_STATE_PATH),
             }
         )
@@ -304,9 +303,8 @@ def coach_set_phase(phase: str, params: dict[str, Any] | None = None) -> CallToo
 def coach_update_state(
     waist_limit_cm: float | None = None,
     waist_base_cm: float | None = None,
-    injection_day: str | None = None,
 ) -> CallToolResult:
-    """Обновить глобальные параметры состояния: жёсткий лимит талии (см), базовую талию фазы (см), день инъекции (пн..вс / mon..sun). Не переданные поля не трогаются."""
+    """Обновить глобальные параметры состояния: жёсткий лимит талии (см), базовую талию фазы (см). Не переданные поля не трогаются."""
     try:
         state = coach_state.load_state(_STATE_PATH)
         changed: list[str] = []
@@ -318,9 +316,6 @@ def coach_update_state(
                 return _result(_err(f"{key}={number:g} вне разумного диапазона 40–200 см."))
             state[key] = number
             changed.append(f"{key}={number:g}")
-        if injection_day is not None:
-            state["injection_day"] = coach_state.parse_weekday(injection_day)
-            changed.append(f"injection_day={state['injection_day']}")
         if not changed:
             return _result(_err("Не передано ни одного параметра для обновления."))
         coach_state.save_state(_STATE_PATH, state)
@@ -454,7 +449,6 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
                 "model": recommender.DEFAULT_MODEL,
                 "phase": coach_state.phase_params(state)["phase"],
                 "cycle_position": coach_state.cycle_position(state, workouts, today),
-                "cycle": coach_state.cycle_info(state, today),
                 "history_raw": min(limit, recommender.RAW_HISTORY_COUNT, len(workouts)),
                 "system_prompt": system,
                 "user_prompt": user,

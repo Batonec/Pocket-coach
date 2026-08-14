@@ -15,25 +15,10 @@ def _workout(when: str) -> dict:
     return {"workout_date": when, "data": {"exercises": []}}
 
 
-class WeekdayParsingTests(unittest.TestCase):
-    def test_accepts_int_en_and_ru(self) -> None:
-        self.assertEqual(coach_state.parse_weekday(5), 5)
-        self.assertEqual(coach_state.parse_weekday("sat"), 5)
-        self.assertEqual(coach_state.parse_weekday("Суббота"), 5)
-        self.assertEqual(coach_state.parse_weekday("СБ"), 5)
-        self.assertEqual(coach_state.parse_weekday("воскресенье"), 6)
-
-    def test_rejects_garbage(self) -> None:
-        for bad in (9, -1, True, "someday"):
-            with self.assertRaises(ValueError):
-                coach_state.parse_weekday(bad)
-
-
 class StateFileTests(unittest.TestCase):
     def test_missing_or_broken_file_falls_back_to_defaults(self) -> None:
         state = coach_state.load_state(None)
         self.assertEqual(state["phase"], "cut_recomp")
-        self.assertEqual(state["injection_day"], 5)  # Saturday
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "coach_state.json"
@@ -51,7 +36,7 @@ class StateFileTests(unittest.TestCase):
                         "phase_started": "2026-08-01",
                         "waist_limit_cm": 86.5,
                         "waist_base_cm": 9000,     # implausible → ignored
-                        "injection_day": "вс",
+                        "injection_day": "вс",     # legacy field → ignored
                     }
                 ),
                 "utf-8",
@@ -61,7 +46,7 @@ class StateFileTests(unittest.TestCase):
             self.assertEqual(state["phase_started"], "2026-08-01")
             self.assertEqual(state["waist_limit_cm"], 86.5)
             self.assertIsNone(state["waist_base_cm"])
-            self.assertEqual(state["injection_day"], 6)
+            self.assertNotIn("injection_day", state)
 
     def test_set_phase_writes_file_and_stamps_today(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -193,36 +178,6 @@ class CyclePositionTests(unittest.TestCase):
         position = coach_state.cycle_position(state, workouts, start + timedelta(days=42))
         self.assertFalse(position["deload_week"])
         self.assertEqual(position["cycle_week"], position["block_week"])
-
-
-class CycleTests(unittest.TestCase):
-    def test_cycle_day_and_levels_for_saturday_injection(self) -> None:
-        state = dict(coach_state.DEFAULT_STATE)  # injection sat
-        friday = coach_state.cycle_info(state, date(2026, 8, 14))
-        self.assertEqual(friday["day"], 7)
-        self.assertIn("минимальный", friday["level"])
-
-        saturday = coach_state.cycle_info(state, date(2026, 8, 15))
-        self.assertEqual(saturday["day"], 1)
-        self.assertIn("минимальный", saturday["level"])
-
-        sunday = coach_state.cycle_info(state, date(2026, 8, 16))
-        self.assertEqual(sunday["day"], 2)
-        self.assertIn("пик", sunday["level"])
-
-        wednesday = coach_state.cycle_info(state, date(2026, 8, 19))
-        self.assertEqual(wednesday["day"], 5)
-        self.assertIn("средний", wednesday["level"])
-
-        self.assertEqual(friday["peak_days"], "вс–вт")
-        self.assertEqual(friday["trough_days"], "пт–сб")
-
-    def test_changing_injection_day_shifts_the_windows(self) -> None:
-        state = dict(coach_state.DEFAULT_STATE, injection_day=2)  # Wednesday
-        info = coach_state.cycle_info(state, date(2026, 8, 19))   # that Wednesday
-        self.assertEqual(info["day"], 1)
-        self.assertEqual(info["peak_days"], "чт–сб")
-        self.assertEqual(info["trough_days"], "вт–ср")
 
 
 if __name__ == "__main__":

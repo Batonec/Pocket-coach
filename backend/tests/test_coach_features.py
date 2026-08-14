@@ -101,7 +101,9 @@ class WeeklyVolumeTests(unittest.TestCase):
         self.assertEqual(volume["грудь"]["effective"], 3.0)
         self.assertEqual(volume["спина"]["direct"], 2)
         self.assertEqual(volume["трицепс"]["effective"], 1.5)   # 3 presses × 0.5
-        self.assertEqual(volume["дельты"]["effective"], 1.5)
+        # Horizontal press hits the front delt, not the measured mid delt →
+        # only a quarter-set credit per press.
+        self.assertEqual(volume["дельты"]["effective"], 0.75)   # 3 presses × 0.25
         self.assertEqual(volume["бицепс"]["effective"], 1.0)    # 2 pulls × 0.5
 
     def test_duplicate_press_id_counts_into_chest(self) -> None:

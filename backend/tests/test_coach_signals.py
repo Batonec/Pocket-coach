@@ -152,7 +152,7 @@ class TrainingsSignalTests(unittest.TestCase):
         self.assertEqual(signal["title"], "Возвратная тренировка готова")
         self.assertEqual(
             signal["body"],
-            "~85–90% рабочих весов. Догонять пропущенное не надо",
+            "Облегчённый вход по плану тренера. Догонять пропущенное не надо",
         )
         self.assertEqual(signal["action"]["type"], "open_next_workout")
 

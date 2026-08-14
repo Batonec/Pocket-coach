@@ -45,11 +45,14 @@ MUSCLE_GROUPS: dict[str, tuple[int, ...]] = {
 }
 
 # Effective weekly sets: direct work counts 1.0 for the primary group, and the
-# compounds feed secondary muscles ~half a set each (presses → triceps + front
-# delts; every pull → biceps). The leg press's extra glute share is folded into
-# the combined quad/glute group, so it stays 1.0 there.
+# compounds feed secondary muscles a fraction of a set (presses → triceps ~half;
+# every pull → biceps ~half). The press credits «дельты» only 0.25: a horizontal
+# press loads the FRONT delt, while the group's only direct machine measures the
+# mid delt — a half-set credit would overstate coverage of the visible head.
+# The leg press's extra glute share is folded into the combined quad/glute
+# group, so it stays 1.0 there.
 EFFECTIVE_SETS: dict[int, dict[str, float]] = {
-    18: {"грудь": 1.0, "трицепс": 0.5, "дельты": 0.5},
+    18: {"грудь": 1.0, "трицепс": 0.5, "дельты": 0.25},
     17: {"грудь": 1.0},
     9: {"спина": 1.0, "бицепс": 0.5},
     GRAVITRON_ID: {"спина": 1.0, "бицепс": 0.5},

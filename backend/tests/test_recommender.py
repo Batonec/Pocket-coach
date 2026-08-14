@@ -30,6 +30,9 @@ class RecommenderTests(unittest.TestCase):
         # id 1 is the catalog duplicate of 18 — never offered to the model.
         self.assertEqual(item["properties"]["exercise_id"]["enum"], [8, 9])
         self.assertIn("note", item["required"])
+        # The model never writes names — the server injects catalog names.
+        self.assertNotIn("name", item["properties"])
+        self.assertNotIn("name", item["required"])
 
     def test_validate_drops_unknown_id_clamps_and_uses_catalog_name(self) -> None:
         raw = {
@@ -188,6 +191,13 @@ class ProfileTests(unittest.TestCase):
         self.assertIn("широчайшие", prompt)              # catalog semantics
         self.assertIn("ТРЕНЕРСКАЯ ПОЛИТИКА", prompt)
         self.assertIn("rationale", prompt)
+        # The policy is explicitly defaults; the hard bounds are named apart.
+        self.assertIn("ориентиры по умолчанию", prompt)
+        self.assertIn("ЖЁСТКИЕ ГРАНИЦЫ", prompt)
+        # Planning no longer schedules around the injection cycle.
+        self.assertNotIn("гормональный цикл", prompt.lower())
+        # The medical boundary must survive the cycle removal.
+        self.assertIn("зона лечащего врача", prompt)
 
     def test_system_prompt_without_profile_uses_fallback(self) -> None:
         prompt = recommender._build_system_prompt(CATALOG)
@@ -210,7 +220,7 @@ class ProfileTests(unittest.TestCase):
         prompt = recommender._build_user_prompt(workouts, [], date(2026, 6, 12), 20)
         self.assertTrue(prompt.startswith("=== КОНТЕКСТ ==="))
         self.assertIn("пятница", prompt)
-        self.assertIn("День гормонального цикла", prompt)
+        self.assertNotIn("гормонального цикла", prompt)
         self.assertIn("Фаза: cut_recomp", prompt)
         self.assertIn("Объём за последние 7 дней", prompt)
         self.assertIn("квадрицепс/ягодичные: 1 прямых / 1 эффективных", prompt)
@@ -230,6 +240,11 @@ class ProfileTests(unittest.TestCase):
         prompt = recommender._build_user_prompt(workouts, [], date(2026, 6, 12), 20)
         self.assertIn("ВОЗВРАТ ПОСЛЕ ПЕРЕРЫВА", prompt)
         self.assertIn("неделя блока 1", prompt)
+        # The comeback methodology is delegated: the context names the single
+        # hard bound and prescribes no percentages or set counts.
+        self.assertIn("не выше доперерывных", prompt)
+        self.assertNotIn("85–90%", prompt)
+        self.assertNotIn("10–14 подходов", prompt)
 
 
 class RestDaysTests(unittest.TestCase):
@@ -266,7 +281,7 @@ class RestDaysTests(unittest.TestCase):
         self.addCleanup(lambda: os.environ.pop("ANTHROPIC_API_KEY", None))
         orig = recommender._call_anthropic
         self.addCleanup(lambda: setattr(recommender, "_call_anthropic", orig))
-        # 2×7 sets → inside the 14–20 building corridor, so no reprompt fires.
+        # Fullbody-ish plan over fresh history → no hard-bound violations.
         raw = self._raw(
             rest_days=2,
             exercises=[
@@ -346,6 +361,12 @@ class SerializationTests(unittest.TestCase):
 
 
 class SemanticValidatorTests(unittest.TestCase):
+    """The validator owns exactly two hard bounds (comeback ceiling, group
+    coverage). Everything the old validator policed — weight bands, session
+    corridors, rep waves, rest_days, load sequencing — is now the model's
+    coaching judgement, and these tests pin the freedom down so it doesn't
+    silently regrow."""
+
     CATALOG = [
         {"id": 8, "name": "Жим ногами"},
         {"id": 9, "name": "Тяга верт."},
@@ -375,9 +396,7 @@ class SemanticValidatorTests(unittest.TestCase):
         ]
 
     def _rec(self, weight: float = 100.0, sets: int = 14, load_type: str = "medium",
-             rest_days: int = 1, focus: str = "f", rationale: str = "r"):
-        # Two exercises so the per-exercise 12-set clamp never distorts the
-        # session total the corridor check sees.
+             rest_days: int = 1, reps: int = 10, focus: str = "f", rationale: str = "r"):
         first = sets - sets // 2
         return {
             "focus": focus,
@@ -386,142 +405,53 @@ class SemanticValidatorTests(unittest.TestCase):
             "rationale": rationale,
             "exercises": [
                 {"exercise_id": 8, "name": "Жим ногами", "note": "n",
-                 "sets": [{"reps": 10, "weight": weight}] * first},
+                 "sets": [{"reps": reps, "weight": weight}] * first},
                 {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
                  "sets": [{"reps": 12, "weight": 60}] * (sets // 2)},
             ],
         }
 
-    def _violations(self, rec, raw=None, workouts=None, today=None, state=None):
+    def _violations(self, rec, workouts=None, today=None):
         from datetime import date as _date
-
-        import coach_state
 
         return recommender._semantic_violations(
             rec,
-            raw if raw is not None else rec,
             self.CATALOG,
             workouts if workouts is not None else self._history(),
             today or _date(2026, 6, 12),
-            state or coach_state.load_state(None),
         )
 
     def test_clean_plan_has_no_violations(self) -> None:
         rec = recommender._validate(self._rec(weight=105, sets=14), self.CATALOG)
         self.assertEqual(self._violations(rec), [])
 
-    def test_weight_out_of_range_is_flagged(self) -> None:
-        rec = recommender._validate(self._rec(weight=140, sets=14), self.CATALOG)  # +40%
-        violations = self._violations(rec)
-        self.assertEqual(len(violations), 7)  # every set of the offending exercise
-        self.assertTrue(all("выше" in v for v in violations))
+    def test_weight_jumps_are_the_models_call(self) -> None:
+        # +40% over the recent range used to be rejected; the model may now
+        # judge it (the prompt carries the progression defaults instead).
+        rec = recommender._validate(self._rec(weight=140, sets=14), self.CATALOG)
+        self.assertEqual(self._violations(rec), [])
+        low = recommender._validate(self._rec(weight=60, sets=14), self.CATALOG)
+        self.assertEqual(self._violations(low), [])
 
-    def test_low_weight_allowed_on_return_from_break(self) -> None:
-        # 40 days since the last session → return-from-break: low side waived,
-        # corridor 10–14, and the fullbody plan covers every dry group.
-        from datetime import date as _date
+    def test_session_size_is_the_models_call(self) -> None:
+        tiny = recommender._validate(self._rec(sets=5), self.CATALOG)
+        self.assertEqual(self._violations(tiny), [])
+        big = recommender._validate(self._rec(sets=24), self.CATALOG)
+        self.assertEqual(self._violations(big), [])
 
-        import coach_state
-
-        raw = {
-            "focus": "возврат", "load_type": "medium", "rest_days": 0,
-            "rationale": "r",
-            "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "note": "n",
-                 "sets": [{"reps": 12, "weight": 80}] * 4},      # −20%
-                {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
-                 "sets": [{"reps": 12, "weight": 47.5}] * 4},    # на возвратном потолке
-                {"exercise_id": 18, "name": "Жим в тренажере", "note": "n",
-                 "sets": [{"reps": 12, "weight": 40}] * 2},
-                {"exercise_id": 15, "name": "Сгибания ног", "note": "n",
-                 "sets": [{"reps": 12, "weight": 22.5}] * 2},
-            ],
-        }
-        catalog = self.CATALOG + [
-            {"id": 18, "name": "Жим в тренажере"},
-            {"id": 15, "name": "Сгибания ног"},
-        ]
-        rec = recommender._validate(raw, catalog)
-        violations = recommender._semantic_violations(
-            rec, raw, catalog, self._history("2026-05-03"), _date(2026, 6, 12),
-            coach_state.load_state(None),
+    def test_rep_ranges_and_load_sequencing_are_the_models_call(self) -> None:
+        pump_heavy = recommender._validate(
+            self._rec(sets=14, load_type="heavy", reps=14), self.CATALOG
+        )
+        violations = self._violations(
+            pump_heavy, workouts=self._history(load_type="heavy")
         )
         self.assertEqual(violations, [])
 
-    def test_low_weight_without_return_is_flagged_unless_deload(self) -> None:
-        rec = recommender._validate(self._rec(weight=80, sets=14), self.CATALOG)
-        self.assertTrue(any("ниже" in v for v in self._violations(rec)))
-        deload = recommender._validate(
-            self._rec(weight=80, sets=14, rationale="**Совет:** разгрузочная неделя"),
-            self.CATALOG,
-        )
-        self.assertEqual(self._violations(deload), [])
-
-    def test_session_set_corridor_by_phase(self) -> None:
-        import coach_state
-
-        too_few = recommender._validate(self._rec(sets=5), self.CATALOG)
-        self.assertTrue(any("коридор" in v for v in self._violations(too_few)))
-
-        maintenance = dict(coach_state.load_state(None), phase="maintenance")
-        ok_maintenance = recommender._validate(self._rec(sets=10), self.CATALOG)
-        self.assertEqual(self._violations(ok_maintenance, state=maintenance), [])
-        too_many = recommender._validate(self._rec(sets=14), self.CATALOG)
-        self.assertTrue(
-            any("8–12" in v for v in self._violations(too_many, state=maintenance))
-        )
-
-    def test_return_ceiling_normalizer_trims_15_to_14(self) -> None:
-        from datetime import date as _date
-
-        import coach_state
-
-        workouts = self._history("2026-05-20")
-        rec = recommender._validate(self._rec(sets=15), self.CATALOG)
-
-        adjustments = recommender._enforce_session_set_ceiling(
-            rec, workouts, _date(2026, 6, 12), coach_state.load_state(None)
-        )
-
-        self.assertEqual(adjustments, ["рабочие подходы: 15 → 14"])
-        self.assertEqual([len(exercise["sets"]) for exercise in rec["exercises"]], [7, 7])
-        self.assertIn("автоматически ограничен 14", rec["rationale"])
-
-    def test_rest_days_and_double_heavy_are_flagged(self) -> None:
+    def test_rest_days_are_clamped_not_flagged(self) -> None:
         rec = recommender._validate(self._rec(sets=14, rest_days=6), self.CATALOG)
-        self.assertTrue(any("rest_days" in v for v in self._violations(rec)))
-
-        heavy = recommender._validate(self._rec(sets=14, load_type="heavy"), self.CATALOG)
-        violations = self._violations(heavy, workouts=self._history(load_type="heavy"))
-        self.assertTrue(any("две heavy" in v for v in violations))
-
-    def test_name_mismatch_is_flagged(self) -> None:
-        raw = self._rec(sets=14)
-        raw["exercises"][0]["name"] = "Придуманное имя"
-        rec = recommender._validate(raw, self.CATALOG)
-        violations = self._violations(rec, raw=raw)
-        self.assertTrue(any("дословно" in v for v in violations))
-
-    def test_gravitron_bounds_are_inverted(self) -> None:
-        workouts = [
-            {
-                "workout_date": "2026-06-10",
-                "data": {"load_type": "medium", "exercises": [
-                    {"exercise_id": 4, "name": "Гравитрон",
-                     "sets": [{"reps": 10, "weight": 30}] * 3},
-                ]},
-            }
-        ]
-        raw = {
-            "focus": "f", "load_type": "medium", "rest_days": 1, "rationale": "r",
-            "exercises": [
-                {"exercise_id": 4, "name": "Гравитрон", "note": "n",
-                 "sets": [{"reps": 10, "weight": 20}] * 14},  # −33% counterweight
-            ],
-        }
-        rec = recommender._validate(raw, self.CATALOG)
-        violations = self._violations(rec, raw=raw, workouts=workouts)
-        self.assertTrue(any("противовес" in v for v in violations))
+        self.assertEqual(rec["rest_days"], recommender.MAX_REST_DAYS)
+        self.assertEqual(self._violations(rec), [])
 
 
 class CoverageAndDeloadValidatorTests(unittest.TestCase):
@@ -557,8 +487,6 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
     def test_dry_group_missing_from_plan_is_flagged(self) -> None:
         from datetime import date as _date
 
-        import coach_state
-
         # Hamstrings (id 15) last trained 12 days ago → dry; the plan skips them.
         workouts = [
             self._fullbody("2026-06-10", sets_each=2),
@@ -573,20 +501,18 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
         raw = self._plan([(8, 5), (9, 5), (18, 4)])
         rec = recommender._validate(raw, self.CATALOG)
         violations = recommender._semantic_violations(
-            rec, raw, self.CATALOG, workouts, _date(2026, 6, 12),
-            coach_state.load_state(None),
+            rec, self.CATALOG, workouts, _date(2026, 6, 12)
         )
         self.assertTrue(any("бицепс бедра" in v for v in violations))
 
         covered = self._plan([(8, 4), (9, 4), (18, 4), (15, 2)])
         rec = recommender._validate(covered, self.CATALOG)
         violations = recommender._semantic_violations(
-            rec, covered, self.CATALOG, workouts, _date(2026, 6, 12),
-            coach_state.load_state(None),
+            rec, self.CATALOG, workouts, _date(2026, 6, 12)
         )
         self.assertEqual(violations, [])
 
-    def test_planned_deload_week_relaxes_corridor_and_weights(self) -> None:
+    def test_planned_deload_week_no_longer_constrains_the_plan(self) -> None:
         from datetime import date as _date, timedelta as _timedelta
 
         import coach_state
@@ -598,97 +524,32 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
             for index in range(15)
         ]
         today = start + _timedelta(days=42)  # block week 7 → planned deload
+        # The flag still reaches the prompt via the context block…
         self.assertTrue(coach_state.cycle_position(state, workouts, today)["deload_week"])
 
-        light = self._plan([(8, 3), (9, 3), (18, 3), (15, 2)])
-        for exercise in light["exercises"]:
-            for workout_set in exercise["sets"]:
-                workout_set["weight"] = 48  # −20%: allowed on the light week
-        rec = recommender._validate(light, self.CATALOG)
-        violations = recommender._semantic_violations(
-            rec, light, self.CATALOG, workouts, today, state
-        )
-        self.assertEqual(violations, [])
-
+        # …but the validator no longer polices deload volume or weights: how
+        # to build the light week is the model's call.
         heavy_volume = self._plan([(8, 5), (9, 5), (18, 4), (15, 2)])  # 16 sets
         rec = recommender._validate(heavy_volume, self.CATALOG)
         violations = recommender._semantic_violations(
-            rec, heavy_volume, self.CATALOG, workouts, today, state
+            rec, self.CATALOG, workouts, today
         )
-        self.assertTrue(any("разгрузочная" in v for v in violations))
+        self.assertEqual(violations, [])
 
 
-class RepRangeValidatorTests(unittest.TestCase):
-    CATALOG = [
-        {"id": 8, "name": "Жим ногами"},
-        {"id": 9, "name": "Тяга верт."},
-        {"id": 16, "name": "Разгибания ног"},
-        {"id": 15, "name": "Сгибания ног"},
-        {"id": 18, "name": "Жим в тренажере"},
-    ]
+class ReturnLadderIsDataOnlyTests(unittest.TestCase):
+    """The comeback ladder used to be a validation bound (first rung + one
+    step). It is data-only now: on a return the single hard ceiling for EVERY
+    movement is the pre-break working weight; the ladder in the prompt guides
+    the sessions after it."""
 
-    def _history(self, when: str = "2026-06-10"):
-        return [{
-            "workout_date": when,
-            "data": {"load_type": "medium", "exercises": [
-                {"exercise_id": eid, "name": f"#{eid}",
-                 "sets": [{"reps": 10, "weight": 60}] * 2}
-                for eid in (8, 9, 18, 15)
-            ]},
-        }]
-
-    def _plan(self, base_reps: int, load_type: str):
-        return {
-            "focus": "f", "load_type": load_type, "rest_days": 1, "rationale": "r",
-            "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "note": "n",
-                 "sets": [{"reps": base_reps, "weight": 60}] * 4},
-                {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
-                 "sets": [{"reps": base_reps, "weight": 60}] * 4},
-                {"exercise_id": 16, "name": "Разгибания ног", "note": "n",
-                 "sets": [{"reps": 15, "weight": 60}] * 4},   # isolation: never checked
-                {"exercise_id": 15, "name": "Сгибания ног", "note": "n",
-                 "sets": [{"reps": 15, "weight": 60}] * 2},
-            ],
-        }
-
-    def _violations(self, raw, workouts=None):
-        from datetime import date as _date
-
-        import coach_state
-
-        rec = recommender._validate(raw, self.CATALOG)
-        return recommender._semantic_violations(
-            rec, raw, self.CATALOG,
-            workouts if workouts is not None else self._history(),
-            _date(2026, 6, 12), coach_state.load_state(None),
-        )
-
-    def test_heavy_session_with_pump_reps_on_base_movement_is_flagged(self) -> None:
-        violations = self._violations(self._plan(base_reps=14, load_type="heavy"))
-        flagged = [v for v in violations if "повторов" in v]
-        self.assertEqual(len(flagged), 8)  # both base movements, every set
-        self.assertIn("6–10", flagged[0])
-
-    def test_matching_reps_and_isolation_pass(self) -> None:
-        self.assertEqual(self._violations(self._plan(base_reps=8, load_type="heavy")), [])
-        self.assertEqual(self._violations(self._plan(base_reps=12, load_type="medium")), [])
-
-    def test_return_from_break_is_exempt(self) -> None:
-        violations = self._violations(
-            self._plan(base_reps=18, load_type="medium"),
-            workouts=self._history("2026-05-01"),   # 42 days → return mode
-        )
-        self.assertFalse(any("повторов" in v for v in violations))
-
-
-class ReturnRampValidatorTests(unittest.TestCase):
     CATALOG = [{"id": 8, "name": "Жим ногами"}, {"id": 9, "name": "Тяга верт."},
                {"id": 18, "name": "Жим в тренажере"}, {"id": 15, "name": "Сгибания ног"}]
 
     def _history(self):
-        # 40-day break; leg-press peak 120, last working weight 80 → ladder
-        # 90 → 100 → 110 → 120, so the first return session tops out at 100.
+        # 40-day break; leg-press peak 120, last working weight 80 → the ladder
+        # (90 → 100 → 110 → 120) exists as prompt data, but the return session
+        # itself is capped at the pre-break 80.
         return [
             {"workout_date": "2026-05-03", "data": {"load_type": "medium", "exercises": [
                 {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 12, "weight": 80}] * 3},
@@ -725,27 +586,25 @@ class ReturnRampValidatorTests(unittest.TestCase):
     def _violations(self, plan):
         from datetime import date as _date
 
-        import coach_state
-
         rec = recommender._validate(plan, self.CATALOG)
         return recommender._semantic_violations(
-            rec, plan, self.CATALOG, self._history(), _date(2026, 6, 12),
-            coach_state.load_state(None),
+            rec, self.CATALOG, self._history(), _date(2026, 6, 12)
         )
 
-    def test_return_weight_is_validated_against_the_ladder_not_the_peak(self) -> None:
-        # 120 sits inside ±15% of the 8-week range — the OLD rule waved it
-        # through; against the ladder (first rung 90 + one step) it must fail.
+    def test_ladder_rungs_above_the_pre_break_weight_are_rejected(self) -> None:
+        violations = self._violations(self._plan(leg_press_weight=90))
+        self.assertTrue(any("не место для прибавки" in v for v in violations))
         violations = self._violations(self._plan(leg_press_weight=120))
-        self.assertTrue(any("ступени" in v for v in violations))
+        self.assertTrue(any("не место для прибавки" in v for v in violations))
 
-    def test_first_rung_passes(self) -> None:
-        self.assertEqual(self._violations(self._plan(leg_press_weight=90)), [])
+    def test_pre_break_weight_and_below_pass(self) -> None:
+        self.assertEqual(self._violations(self._plan(leg_press_weight=80)), [])
+        self.assertEqual(self._violations(self._plan(leg_press_weight=60)), [])
 
 
 class ReturnCeilingTests(unittest.TestCase):
-    """After a break EVERY exercise is capped — including the ones the athlete
-    left at their peak, which have no comeback ladder at all."""
+    """After a break EVERY exercise is capped at its pre-break working weight
+    — including the ones the athlete left at their peak."""
 
     CATALOG = [{"id": 8, "name": "Жим ногами"}, {"id": 9, "name": "Тяга верт."},
                {"id": 18, "name": "Жим в тренажере"}, {"id": 15, "name": "Сгибания ног"}]
@@ -784,11 +643,9 @@ class ReturnCeilingTests(unittest.TestCase):
         }
 
     def _violations(self, plan, today):
-        import coach_state
-
         rec = recommender._validate(plan, self.CATALOG)
         return recommender._semantic_violations(
-            rec, plan, self.CATALOG, self._history(), today, coach_state.load_state(None)
+            rec, self.CATALOG, self._history(), today
         )
 
     def test_progression_after_a_break_is_rejected(self) -> None:
@@ -808,13 +665,10 @@ class ReturnCeilingTests(unittest.TestCase):
     def test_no_ceilings_outside_a_break(self) -> None:
         from datetime import date as _date
 
-        import coach_state
-
         # Trained 3 days ago: normal progression rules, no comeback guardrail.
         rec = recommender._validate(self._plan(leg_press=105), self.CATALOG)
         violations = recommender._semantic_violations(
-            rec, rec, self.CATALOG, self._history(last="2026-06-09"),
-            _date(2026, 6, 12), coach_state.load_state(None),
+            rec, self.CATALOG, self._history(last="2026-06-09"), _date(2026, 6, 12)
         )
         self.assertFalse(any("не место для прибавки" in v for v in violations))
 
@@ -919,7 +773,12 @@ class WeeklyReportTests(unittest.TestCase):
 
 
 class GenerateRepromptTests(unittest.TestCase):
-    CATALOG = [{"id": 8, "name": "Жим ногами"}, {"id": 9, "name": "Тяга верт."}]
+    CATALOG = [
+        {"id": 8, "name": "Жим ногами"},
+        {"id": 9, "name": "Тяга верт."},
+        {"id": 18, "name": "Жим в тренажере"},
+        {"id": 15, "name": "Сгибания ног"},
+    ]
 
     def setUp(self) -> None:
         import os
@@ -929,10 +788,10 @@ class GenerateRepromptTests(unittest.TestCase):
         self._orig = recommender._call_anthropic
         self.addCleanup(lambda: setattr(recommender, "_call_anthropic", self._orig))
 
-    def _history(self):
+    def _history(self, when: str = "2026-06-10"):
         return [
             {
-                "workout_date": "2026-06-10",
+                "workout_date": when,
                 "data": {"load_type": "medium", "exercises": [
                     {"exercise_id": 8, "name": "Жим ногами",
                      "sets": [{"reps": 10, "weight": 100}] * 3},
@@ -946,21 +805,47 @@ class GenerateRepromptTests(unittest.TestCase):
             }
         ]
 
-    def _raw(self, weight: float):
+    def _fullbody_raw(self, leg_press: float = 100.0, with_hamstrings: bool = True):
+        exercises = [
+            {"exercise_id": 8, "note": "n",
+             "sets": [{"reps": 10, "weight": leg_press}] * 4},
+            {"exercise_id": 9, "note": "n",
+             "sets": [{"reps": 12, "weight": 60}] * 4},
+            {"exercise_id": 18, "note": "n",
+             "sets": [{"reps": 12, "weight": 50}] * 3},
+        ]
+        if with_hamstrings:
+            exercises.append(
+                {"exercise_id": 15, "note": "n",
+                 "sets": [{"reps": 12, "weight": 30}] * 2}
+            )
         return {
             "focus": "f", "load_type": "medium", "rest_days": 1, "rationale": "r",
-            "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "note": "n",
-                 "sets": [{"reps": 10, "weight": weight}] * 7},
-                {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
-                 "sets": [{"reps": 12, "weight": 60}] * 7},
-            ],
+            "exercises": exercises,
         }
+
+    def _dry_hamstrings_history(self):
+        # Hamstrings last trained 12 days ago → the coverage rule demands them.
+        workouts = self._history()
+        workouts[0]["data"]["exercises"] = [
+            ex for ex in workouts[0]["data"]["exercises"] if ex["exercise_id"] != 15
+        ]
+        workouts.append({
+            "workout_date": "2026-05-31",
+            "data": {"load_type": "medium", "exercises": [
+                {"exercise_id": 15, "name": "Сгибания ног",
+                 "sets": [{"reps": 12, "weight": 30}] * 2},
+            ]},
+        })
+        return workouts
 
     def test_violating_answer_triggers_one_reprompt_then_succeeds(self) -> None:
         from datetime import date as _date
 
-        answers = [self._raw(140), self._raw(105)]  # +40% → fixed on retry
+        answers = [
+            self._fullbody_raw(with_hamstrings=False),  # dry group missing
+            self._fullbody_raw(with_hamstrings=True),   # fixed on retry
+        ]
         calls: list[list[dict]] = []
 
         def fake_call(system, user, schema, **kwargs):
@@ -969,18 +854,18 @@ class GenerateRepromptTests(unittest.TestCase):
 
         recommender._call_anthropic = fake_call
         rec, usage, _model, trace = recommender.generate_with_trace(
-            self._history(), [], self.CATALOG, today=_date(2026, 6, 12)
+            self._dry_hamstrings_history(), [], self.CATALOG, today=_date(2026, 6, 12)
         )
         self.assertEqual(len(trace), 2)
-        self.assertTrue(trace[0]["violations"])
+        self.assertTrue(any("бицепс бедра" in v for v in trace[0]["violations"]))
         self.assertEqual(trace[1]["violations"], [])
-        self.assertEqual(rec["exercises"][0]["sets"][0]["weight"], 105)
+        self.assertEqual(rec["exercises"][-1]["exercise_id"], 15)
         self.assertEqual(usage, {"input_tokens": 20, "output_tokens": 10})
         # The reprompt continues the same conversation and lists the violations.
         self.assertEqual(len(calls[1]), 3)
-        self.assertIn("нарушает ограничения", calls[1][2]["content"])
+        self.assertIn("жёсткие границы", calls[1][2]["content"])
 
-    def test_session_set_ceiling_is_enforced_without_another_model_call(self) -> None:
+    def test_clean_plan_is_served_as_is_without_corridor_trimming(self) -> None:
         from datetime import date as _date
 
         import coach_state
@@ -990,16 +875,11 @@ class GenerateRepromptTests(unittest.TestCase):
         def fake_call(*args, **kwargs):  # noqa: ANN002, ANN003
             nonlocal calls
             calls += 1
-            raw = self._raw(105)
-            raw["exercises"] = [
-                {"exercise_id": 8, "name": "Жим ногами", "note": "n",
-                 "sets": [{"reps": 10, "weight": 105}] * 7},
-                {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
-                 "sets": [{"reps": 12, "weight": 60}] * 6},
-            ]
-            return raw, {"input_tokens": 10, "output_tokens": 5}
+            return self._fullbody_raw(), {"input_tokens": 10, "output_tokens": 5}
 
         recommender._call_anthropic = fake_call
+        # 13 sets in maintenance (old corridor was 8–12): served untouched —
+        # session size is the model's call now.
         state = dict(coach_state.load_state(None), phase="maintenance")
         rec, _usage, _model, trace = recommender.generate_with_trace(
             self._history(), [], self.CATALOG,
@@ -1007,22 +887,47 @@ class GenerateRepromptTests(unittest.TestCase):
         )
 
         self.assertEqual(calls, 1)
-        self.assertEqual(sum(len(exercise["sets"]) for exercise in rec["exercises"]), 12)
-        self.assertEqual([len(exercise["sets"]) for exercise in rec["exercises"]], [6, 6])
-        self.assertEqual(trace[0]["adjustments"], ["рабочие подходы: 13 → 12"])
+        self.assertEqual(sum(len(exercise["sets"]) for exercise in rec["exercises"]), 13)
+        self.assertEqual(trace[0]["adjustments"], [])
         self.assertEqual(trace[0]["violations"], [])
-        self.assertIn("автоматически ограничен 12", rec["rationale"])
+        self.assertNotIn("Проверка методики", rec["rationale"])
 
-    def test_second_violation_raises_with_details_and_trace(self) -> None:
+    def test_unresolved_coverage_is_served_with_an_honest_note(self) -> None:
         from datetime import date as _date
 
-        recommender._call_anthropic = lambda *a, **k: (self._raw(140), {"input_tokens": 1, "output_tokens": 1})
-        with self.assertRaises(recommender.RecommendationError) as ctx:
-            recommender.generate_with_trace(
-                self._history(), [], self.CATALOG, today=_date(2026, 6, 12)
-            )
-        self.assertIn("дважды", str(ctx.exception))
-        self.assertEqual(len(ctx.exception.trace), 2)
+        # The model ignores the dry hamstrings twice → the plan is still
+        # served, with the unmet bound surfaced in the rationale.
+        recommender._call_anthropic = lambda *a, **k: (
+            self._fullbody_raw(with_hamstrings=False),
+            {"input_tokens": 1, "output_tokens": 1},
+        )
+        rec, usage, _model, trace = recommender.generate_with_trace(
+            self._dry_hamstrings_history(), [], self.CATALOG, today=_date(2026, 6, 12)
+        )
+        self.assertEqual(len(trace), 2)
+        self.assertTrue(trace[1]["violations"])
+        self.assertIn("Проверка методики", rec["rationale"])
+        self.assertIn("бицепс бедра", rec["rationale"])
+        self.assertEqual(usage, {"input_tokens": 2, "output_tokens": 2})
+
+    def test_comeback_overshoot_is_clamped_after_a_failed_reprompt(self) -> None:
+        from datetime import date as _date
+
+        # 21 days off; the model insists on 105 over the pre-break 100 twice →
+        # the server clamps the offending sets and says so in the rationale.
+        recommender._call_anthropic = lambda *a, **k: (
+            self._fullbody_raw(leg_press=105),
+            {"input_tokens": 1, "output_tokens": 1},
+        )
+        rec, _usage, _model, trace = recommender.generate_with_trace(
+            self._history("2026-05-22"), [], self.CATALOG, today=_date(2026, 6, 12)
+        )
+        self.assertEqual(len(trace), 2)
+        self.assertTrue(trace[1]["adjustments"])
+        leg_press = next(e for e in rec["exercises"] if e["exercise_id"] == 8)
+        self.assertTrue(all(s["weight"] == 100 for s in leg_press["sets"]))
+        self.assertIn("Проверка методики", rec["rationale"])
+        self.assertIn("доперерывным", rec["rationale"])
 
 
 class _FakeResponse:

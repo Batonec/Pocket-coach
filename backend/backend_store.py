@@ -17,23 +17,15 @@ def utc_now() -> int:
     return int(time.time())
 
 
-def normalize_load_type(value: object, exercises: list[dict[str, Any]]) -> str:
+def normalize_load_type(value: object) -> str | None:
+    """Keep an explicitly provided load label; otherwise store None ([?] in the
+    coach prompt). The old tonnage fallback (≥3000 kg → heavy) labeled nearly
+    every real session heavy — a fabricated signal is worse than an honest
+    unknown, and the coach model judges session heaviness from weights/reps
+    anyway."""
     if isinstance(value, str) and value in ALLOWED_LOAD_TYPES:
         return value
-
-    total_volume = 0.0
-    for exercise in exercises:
-        for workout_set in exercise["sets"]:
-            weight = float(workout_set["weight"])
-            reps = int(workout_set["reps"])
-            if weight > 0 and reps > 0:
-                total_volume += weight * reps
-
-    if total_volume >= 3000:
-        return "heavy"
-    if total_volume >= 1600:
-        return "medium"
-    return "light"
+    return None
 
 
 def normalize_notes(value: object) -> str | None:
@@ -228,7 +220,7 @@ def normalize_workout_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
         "data": {
             "focus": None,
             "notes": normalize_notes(data.get("notes")),
-            "load_type": normalize_load_type(data.get("load_type"), normalized_exercises),
+            "load_type": normalize_load_type(data.get("load_type")),
             "exercises": normalized_exercises,
         },
     }

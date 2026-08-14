@@ -396,10 +396,12 @@ class MiniAppStoreTest(unittest.TestCase):
 
 
 class NormalizeWorkoutPayloadTest(unittest.TestCase):
-    def test_infers_heavy_load_type_from_volume(self) -> None:
+    def test_missing_load_type_stays_unknown(self) -> None:
+        # The old tonnage fallback (≥3000 kg → heavy) labeled nearly every real
+        # session heavy; an absent label is now stored honestly as None.
         payload, client_id = normalize_workout_payload(
             {
-                "client_id": "load-heavy",
+                "client_id": "load-unknown",
                 "workout_date": "2026-03-28",
                 "plan_id": None,
                 "data": {
@@ -421,8 +423,8 @@ class NormalizeWorkoutPayloadTest(unittest.TestCase):
             }
         )
 
-        self.assertEqual(client_id, "load-heavy")
-        self.assertEqual(payload["data"]["load_type"], "heavy")
+        self.assertEqual(client_id, "load-unknown")
+        self.assertIsNone(payload["data"]["load_type"])
 
     def test_preserves_explicit_allowed_load_type(self) -> None:
         payload, _ = normalize_workout_payload(
@@ -446,54 +448,27 @@ class NormalizeWorkoutPayloadTest(unittest.TestCase):
 
         self.assertEqual(payload["data"]["load_type"], "deload")
 
-    def test_infers_medium_load_type_from_volume(self) -> None:
+    def test_unknown_load_type_value_is_dropped(self) -> None:
         payload, _ = normalize_workout_payload(
             {
-                "client_id": "load-medium",
+                "client_id": "load-junk",
                 "workout_date": "2026-03-28",
                 "plan_id": None,
                 "data": {
                     "notes": None,
-                    "load_type": None,
+                    "load_type": "extreme",
                     "exercises": [
                         {
                             "exercise_id": 1,
                             "name": "Bench Press",
-                            "sets": [
-                                {"reps": 10, "weight": 50, "notes": None},
-                                {"reps": 10, "weight": 50, "notes": None},
-                                {"reps": 10, "weight": 50, "notes": None},
-                                {"reps": 10, "weight": 50, "notes": None},
-                            ],
+                            "sets": [{"reps": 10, "weight": 50, "notes": None}],
                         }
                     ],
                 },
             }
         )
 
-        self.assertEqual(payload["data"]["load_type"], "medium")
-
-    def test_infers_light_load_type_for_zero_or_low_volume(self) -> None:
-        payload, _ = normalize_workout_payload(
-            {
-                "client_id": "load-light",
-                "workout_date": "2026-03-28",
-                "plan_id": None,
-                "data": {
-                    "notes": None,
-                    "load_type": None,
-                    "exercises": [
-                        {
-                            "exercise_id": 1,
-                            "name": "Bench Press",
-                            "sets": [{"reps": 12, "weight": 0, "notes": None}],
-                        }
-                    ],
-                },
-            }
-        )
-
-        self.assertEqual(payload["data"]["load_type"], "light")
+        self.assertIsNone(payload["data"]["load_type"])
 
     def test_falls_back_to_payload_id_when_client_id_is_missing(self) -> None:
         payload, client_id = normalize_workout_payload(
