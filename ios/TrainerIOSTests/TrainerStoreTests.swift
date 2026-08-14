@@ -229,6 +229,33 @@ final class TrainerStoreTests: XCTestCase {
         XCTAssertTrue(store.presentableCoachSignals.isEmpty)
     }
 
+    func testDeletedWorkoutCannotAcceptRecommendationFromOldHistorySnapshot() {
+        var oldRecommendation = readyRecommendation()
+        oldRecommendation.basedOnWorkoutID = 133
+        oldRecommendation.basedOnWorkoutCount = 10
+
+        XCTAssertFalse(TrainerStore.recommendation(
+            oldRecommendation,
+            matchesWorkoutCount: 9,
+            latestWorkoutID: 132
+        ))
+
+        oldRecommendation.basedOnWorkoutID = 132
+        oldRecommendation.basedOnWorkoutCount = 9
+        XCTAssertTrue(TrainerStore.recommendation(
+            oldRecommendation,
+            matchesWorkoutCount: 9,
+            latestWorkoutID: 132
+        ))
+
+        oldRecommendation.stale = true
+        XCTAssertFalse(TrainerStore.recommendation(
+            oldRecommendation,
+            matchesWorkoutCount: 9,
+            latestWorkoutID: 132
+        ))
+    }
+
     func testAutoApplySkipsNonReadyRecommendation() {
         let store = TrainerStore(defaults: .isolatedTestDefaults())
         store.exercises = TestFixtures.catalog

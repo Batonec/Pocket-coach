@@ -113,17 +113,24 @@ def trigger_recommendation_async(user_id: int) -> None:
     """Regenerate the recommendation in the background (fire-and-forget).
     Concurrent triggers collapse into one follow-up run using the newest data.
 
-    Measurement edits often arrive close together (weight, then waist, or a
-    correction of today's value). We never run Claude in parallel for one user,
-    but we also never drop the latest edit while an older generation is active.
+    Workout and measurement edits often arrive while another generation is in
+    flight. We never run Claude in parallel for one user, but we also never drop
+    the latest mutation while an older generation is active.
     """
-    if EXERCISE_CATALOG is None or STORE.get_latest_workout_id(user_id) is None:
+    # No history means there is no valid next-workout recommendation. Still run
+    # the coalescing worker below: an older generation may currently be saving a
+    # payload based on the workout that has just been deleted, and the follow-up
+    # pass must clear that stale row again.
+    has_workouts = STORE.get_latest_workout_id(user_id) is not None
+    if not has_workouts:
+        STORE.clear_recommendation(user_id)
+    if EXERCISE_CATALOG is None:
         return
+    if has_workouts:
+        # Pending is visible synchronously to a client polling immediately after
+        # a mutation response. Keep the previous payload as a display fallback.
+        STORE.set_recommendation_pending(user_id)
 
-    # Pending is visible synchronously to a client polling immediately after a
-    # mutation response. The previous payload stays in SQLite as a display
-    # fallback until the new ready payload replaces it.
-    STORE.set_recommendation_pending(user_id)
     with _recommendation_locks_guard:
         _recommendation_rerun_requested.add(user_id)
         if user_id in _recommendation_workers:
@@ -137,8 +144,11 @@ def trigger_recommendation_async(user_id: int) -> None:
             while True:
                 with _recommendation_locks_guard:
                     _recommendation_rerun_requested.discard(user_id)
-                STORE.set_recommendation_pending(user_id)
-                _generate_and_store_recommendation(user_id)
+                if STORE.get_latest_workout_id(user_id) is None:
+                    STORE.clear_recommendation(user_id)
+                else:
+                    STORE.set_recommendation_pending(user_id)
+                    _generate_and_store_recommendation(user_id)
 
                 # A mutation that landed during generation requests exactly one
                 # more pass. Several rapid edits still collapse into that pass.

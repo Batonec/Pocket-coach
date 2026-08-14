@@ -746,6 +746,14 @@ class MiniAppStore:
             ).fetchone()
         return self._deserialize_recommendation(row) if row is not None else None
 
+    def clear_recommendation(self, user_id: int) -> None:
+        """Drop the mutable next-workout cache while preserving its audit log."""
+        with self._connection() as connection:
+            connection.execute(
+                "DELETE FROM recommendations WHERE user_id = ?",
+                (user_id,),
+            )
+
     def set_recommendation_pending(self, user_id: int) -> None:
         timestamp = utc_now()
         with self._connection() as connection:

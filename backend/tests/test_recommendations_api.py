@@ -146,6 +146,68 @@ class RecommendationsAPITests(unittest.TestCase):
                 time.sleep(0.1)
             self.assertEqual(status, "ready")
 
+    def test_workout_delete_regenerates_from_remaining_history(self) -> None:
+        def history_generate(workouts, body_weights, catalog, **kwargs):  # noqa: ANN001
+            recommendation = dict(FAKE_REC)
+            recommendation["focus"] = f"workouts={len(workouts)}"
+            return recommendation, {"input_tokens": 10, "output_tokens": 5}, "claude-test"
+
+        with self._server(auto_trigger=True, generate=history_generate) as running:
+            client = JsonHttpClient(running.base_url)
+            client.request_json("POST", "/api/workouts", sample_workout_payload(client_id="w1"))
+            second = client.request_json(
+                "POST", "/api/workouts", sample_workout_payload(client_id="w2")
+            ).payload["workout"]
+
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                payload = client.request_json("GET", "/api/recommendations/next").payload
+                if payload.get("status") == "ready" and payload.get("based_on_workout_count") == 2:
+                    break
+                time.sleep(0.05)
+
+            client.request_json("DELETE", f"/api/workouts/{second['id']}")
+
+            result = None
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                payload = client.request_json("GET", "/api/recommendations/next").payload
+                if payload.get("status") == "ready" and payload.get("based_on_workout_count") == 1:
+                    result = payload
+                    break
+                time.sleep(0.05)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result["recommendation"]["focus"], "workouts=1")
+            self.assertFalse(result["stale"])
+
+    def test_deleting_last_workout_clears_cached_recommendation(self) -> None:
+        with self._server(auto_trigger=True) as running:
+            client = JsonHttpClient(running.base_url)
+            workout = client.request_json(
+                "POST", "/api/workouts", sample_workout_payload(client_id="only-workout")
+            ).payload["workout"]
+
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                payload = client.request_json("GET", "/api/recommendations/next").payload
+                if payload.get("status") == "ready":
+                    break
+                time.sleep(0.05)
+
+            client.request_json("DELETE", f"/api/workouts/{workout['id']}")
+
+            status = None
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                status = client.request_json(
+                    "GET", "/api/recommendations/next"
+                ).payload.get("status")
+                if status == "none":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(status, "none")
+
     def test_measurements_regenerate_once_more_with_latest_weight_and_waist(self) -> None:
         def measurement_generate(workouts, body_weights, catalog, **kwargs):  # noqa: ANN001
             # Keep the first measurement generation in flight long enough for
@@ -219,6 +281,9 @@ class RecommendationStoreTests(unittest.TestCase):
         failed = store.get_recommendation(uid)
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(failed["error"], "boom")
+
+        store.clear_recommendation(uid)
+        self.assertIsNone(store.get_recommendation(uid))
 
 
 if __name__ == "__main__":

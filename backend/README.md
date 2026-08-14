@@ -52,6 +52,8 @@ Messages API (structured outputs, чистый stdlib `urllib` — без SDK/ve
   в ответе есть флаг `stale` (есть ли тренировка новее той, по которой считали).
 - `POST /api/recommendations/refresh` — синхронная форс-генерация (10–40 с), per-user lock + анти-дребезг.
 - После создания/изменения/удаления тренировки рекомендация перегенерируется в фоновом потоке.
+  Удаление последней тренировки вместо бессмысленной генерации очищает актуальную строку
+  `recommendations`; история генераций в `recommendation_log` остаётся для аудита.
 - **Авто-свежесть:** systemd-таймер
   ([deploy/trainer-recommend-refresh.timer](./deploy/trainer-recommend-refresh.timer),
   06:30 МСК) запускает [refresh_recommendation.py](./refresh_recommendation.py) —

@@ -451,6 +451,7 @@ final class TrainerStore: ObservableObject {
             }
             ensureSelectedProgressExercise()
             showToast("Тренировка удалена")
+            refreshRecommendationAfterWorkoutDeletion()
         } catch {
             showToast(error.localizedDescription)
         }
@@ -551,6 +552,36 @@ final class TrainerStore: ObservableObject {
     private func refreshRecommendationAfterMeasurement() {
         guard !workouts.isEmpty else { return }
 
+        beginRecommendationPolling(
+            readyMessage: "План обновлён по свежим замерам",
+            pendingMessage: "Замер сохранён, план ещё обновляется",
+            offlineMessage: "Замер сохранён, план обновится после восстановления связи"
+        )
+    }
+
+    /// DELETE /api/workouts queues a fresh generation on the backend. Switch the
+    /// client to the same pending gate immediately and accept only a recommendation
+    /// based on the remaining history, never the cached pre-delete payload.
+    private func refreshRecommendationAfterWorkoutDeletion() {
+        beginRecommendationPolling(
+            readyMessage: "План пересчитан после удаления тренировки",
+            pendingMessage: "Тренировка удалена, план ещё обновляется",
+            offlineMessage: "Тренировка удалена, план обновится после восстановления связи",
+            validateWorkoutSnapshot: true,
+            acceptsNoRecommendation: workouts.isEmpty
+        )
+    }
+
+    private func beginRecommendationPolling(
+        readyMessage: String,
+        pendingMessage: String,
+        offlineMessage: String,
+        validateWorkoutSnapshot: Bool = false,
+        acceptsNoRecommendation: Bool = false
+    ) {
+        let expectedWorkoutCount = workouts.count
+        let expectedLatestWorkoutID = workouts.first?.id
+
         recommendationPollGeneration += 1
         let generation = recommendationPollGeneration
         recommendationPollTask?.cancel()
@@ -594,11 +625,27 @@ final class TrainerStore: ObservableObject {
                     guard self.recommendationPollGeneration == generation else { return }
                     self.recommendation = response
 
-                    if response.status == "ready" {
+                    let matchesWorkoutSnapshot = !validateWorkoutSnapshot
+                        || Self.recommendation(
+                            response,
+                            matchesWorkoutCount: expectedWorkoutCount,
+                            latestWorkoutID: expectedLatestWorkoutID
+                        )
+                    if response.status == "ready" && matchesWorkoutSnapshot {
                         self.autoApplyRecommendationIfReady()
                         self.isRefreshingRecommendation = false
                         self.recommendationPollTask = nil
-                        self.showToast("План обновлён по свежим замерам")
+                        self.showToast(readyMessage)
+                        await self.loadCoachSignals()
+                        return
+                    }
+                    if response.status == "none" && acceptsNoRecommendation {
+                        if !self.draft.hasRealSets {
+                            self.appliedPlan = nil
+                        }
+                        self.isRefreshingRecommendation = false
+                        self.recommendationPollTask = nil
+                        self.showToast("История пуста — план сброшен")
                         await self.loadCoachSignals()
                         return
                     }
@@ -619,11 +666,21 @@ final class TrainerStore: ObservableObject {
             self.recommendationPollTask = nil
             self.showToast(
                 lastError == nil
-                    ? "Замер сохранён, план ещё обновляется"
-                    : "Замер сохранён, план обновится после восстановления связи"
+                    ? pendingMessage
+                    : offlineMessage
             )
             await self.loadCoachSignals()
         }
+    }
+
+    static func recommendation(
+        _ response: RecommendationResponse,
+        matchesWorkoutCount workoutCount: Int,
+        latestWorkoutID: Int?
+    ) -> Bool {
+        response.basedOnWorkoutCount == workoutCount
+            && response.basedOnWorkoutID == latestWorkoutID
+            && response.stale != true
     }
 
     /// Force a new recommendation. Synchronous on the server (10–40s), so it runs
