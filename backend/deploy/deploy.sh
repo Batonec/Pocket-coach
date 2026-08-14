@@ -94,14 +94,31 @@ deploy_bot() {
 }
 
 
+# Keep this module list in sync with .github/workflows/deploy-backend.yml.
+BACKEND_MODULES=(
+  server.py
+  backend_store.py
+  recommender.py
+  coach_state.py
+  coach_features.py
+  refresh_recommendation.py
+  backup_db.py
+)
+
 deploy_backend() {
   log "Deploying backend files to $TARGET_HOST"
   remote "mkdir -p '$REMOTE_BASE/app'"
-  scp "$MINIAPP_DIR/server.py" "${TARGET_HOST}:${REMOTE_BASE}/app/server.py" >/dev/null
-  scp "$MINIAPP_DIR/backend_store.py" "${TARGET_HOST}:${REMOTE_BASE}/app/backend_store.py" >/dev/null
+  local module
+  for module in "${BACKEND_MODULES[@]}"; do
+    scp "$MINIAPP_DIR/$module" "${TARGET_HOST}:${REMOTE_BASE}/app/$module" >/dev/null
+  done
   scp "$SCRIPT_DIR/trainer-miniapp-backend.service" "${TARGET_HOST}:/etc/systemd/system/${BACKEND_SERVICE}" >/dev/null
 
-  remote "chmod 644 '$REMOTE_BASE/app/server.py' '$REMOTE_BASE/app/backend_store.py' '/etc/systemd/system/$BACKEND_SERVICE'"
+  local remote_paths=""
+  for module in "${BACKEND_MODULES[@]}"; do
+    remote_paths+=" '$REMOTE_BASE/app/$module'"
+  done
+  remote "chmod 644 $remote_paths '/etc/systemd/system/$BACKEND_SERVICE'"
   remote "test -f /etc/trainer-miniapp/backend.env"
   remote "systemctl daemon-reload && systemctl enable --now '$BACKEND_SERVICE' && systemctl restart '$BACKEND_SERVICE'"
 

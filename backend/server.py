@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import coach_state
 import recommender
 from backend_store import MiniAppStore
 
@@ -33,6 +34,9 @@ DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(DATA_DIR / "trainer.db")))
 # Athlete profile for the coach prompt: personal/medical context, lives next to
 # the DB on the server only (never in the public repo).
 COACH_PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
+# Mutable coaching state (preparation phase, waist limit, injection day) —
+# same location policy as the profile; switched via the Coach MCP tools.
+COACH_STATE_PATH = coach_state.default_state_path(DB_PATH)
 SESSION_COOKIE_NAME = "trainer_session"
 SESSION_SECRET = os.getenv("MINIAPP_SESSION_SECRET") or "trainer-dev-session-secret"
 SESSION_MAX_AGE_SECONDS = int(os.getenv("MINIAPP_SESSION_MAX_AGE", "2592000"))
@@ -80,6 +84,8 @@ def _generate_and_store_recommendation(user_id: int) -> dict[str, Any] | None:
             body_weights,
             EXERCISE_CATALOG,
             profile=recommender.load_profile(COACH_PROFILE_PATH),
+            state=coach_state.load_state(COACH_STATE_PATH),
+            waists=STORE.list_waists(user_id),
         )
     except recommender.RecommendationError as exc:
         STORE.fail_recommendation(user_id, str(exc))

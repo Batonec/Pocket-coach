@@ -21,6 +21,9 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
+import coach_features
+import coach_state
+
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -42,17 +45,26 @@ MAX_REPS = 100
 MAX_WEIGHT = 1000.0
 MAX_EXERCISES = 10
 MAX_SETS_PER_EXERCISE = 12
-MAX_REST_DAYS = 7  # how far out the coach may schedule the next session
+MAX_REST_DAYS = 7   # structural clamp; the semantic validator narrows to 0–4
+SEMANTIC_MAX_REST_DAYS = 4
+
+# Raw history shown to the model; everything older is covered by the computed
+# per-exercise summaries (the prompt must not grow from the feature work).
+RAW_HISTORY_COUNT = 10
+
+# Allowed deviation of a planned weight from the exercise's 8-week range.
+WEIGHT_TOLERANCE = 0.15
 
 ALLOWED_LOAD_TYPES = ("heavy", "medium", "light")
 
 _EFFORT_MARK = {"easy": "-", "ok": "", "hard": "+"}
 
 # What each catalog machine actually is (from the athlete's own descriptions) —
-# the terse RU names alone don't tell the model which muscle works.
+# the terse RU names alone don't tell the model which muscle works. Id 1 is a
+# catalog duplicate of 18: history rows are re-mapped onto 18 during
+# serialization, so the model never sees it.
 CATALOG_SEMANTICS: dict[int, str] = {
     18: "рычажный жим сидя от груди, горизонтальный — грудь (вся), вторично трицепс и передняя дельта",
-    1: "ТО ЖЕ движение, что и №18 (дубль в каталоге): встречается в старых записях истории — в ПЛАН всегда ставь id 18, id 1 не используй",
     17: "пек-дек «бабочка» — изоляция груди",
     9: "вертикальная тяга с двумя сходящимися ручками (имитация подтягиваний) — широчайшие, вторично бицепс",
     4: "подтягивания в гравитроне — широчайшие/верх спины. ВНИМАНИЕ: поле weight — вес ПРОТИВОВЕСА-помощи, прогресс = УМЕНЬШЕНИЕ веса",
@@ -69,16 +81,10 @@ CATALOG_SEMANTICS: dict[int, str] = {
 # so the model knows they sit at zero structurally, not by athlete's laziness.
 CATALOG_GAPS = "задняя дельта, икры, пресс, разгибатели спины — упражнений в каталоге нет"
 
-# Primary muscle group per exercise — drives the weekly-volume accounting.
-MUSCLE_GROUPS: dict[str, tuple[int, ...]] = {
-    "грудь": (18, 1, 17),
-    "спина": (9, 4, 10),
-    "дельты": (13,),
-    "бицепс": (11,),
-    "трицепс": (12,),
-    "квадрицепс/ягодичные": (8, 16),
-    "бицепс бедра": (15,),
-}
+# Re-exported from coach_features (single source of truth for the mapping).
+MUSCLE_GROUPS = coach_features.MUSCLE_GROUPS
+MIN_PLAUSIBLE_BODY_WEIGHT = coach_features.MIN_PLAUSIBLE_BODY_WEIGHT
+MAX_PLAUSIBLE_BODY_WEIGHT = coach_features.MAX_PLAUSIBLE_BODY_WEIGHT
 
 
 class RecommendationError(Exception):
@@ -145,89 +151,8 @@ def _render_profile(profile: dict[str, Any] | None) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Computed training context (volumes, body-weight trend, plan adherence)
+# Computed training context (plan adherence; the rest lives in coach_features)
 # --------------------------------------------------------------------------- #
-def _workout_date(workout: dict[str, Any]) -> date | None:
-    try:
-        return date.fromisoformat(str(workout.get("workout_date", "")))
-    except ValueError:
-        return None
-
-
-def _sets_per_group(workouts: list[dict[str, Any]], today: date, days: int) -> dict[str, int]:
-    """Work sets per muscle group over the trailing `days` window."""
-    group_of: dict[int, str] = {}
-    for group, ids in MUSCLE_GROUPS.items():
-        for exercise_id in ids:
-            group_of[exercise_id] = group
-
-    counts = {group: 0 for group in MUSCLE_GROUPS}
-    cutoff = days - 1
-    for workout in workouts:
-        when = _workout_date(workout)
-        if when is None or (today - when).days > cutoff or when > today:
-            continue
-        for exercise in (workout.get("data", {}) or {}).get("exercises", []) or []:
-            group = group_of.get(exercise.get("exercise_id"))
-            if group is None:
-                continue
-            counts[group] += len(exercise.get("sets", []) or [])
-    return counts
-
-
-def _volume_report(workouts: list[dict[str, Any]], today: date) -> str:
-    week = _sets_per_group(workouts, today, 7)
-    month = _sets_per_group(workouts, today, 28)
-    lines = []
-    for group in MUSCLE_GROUPS:
-        weekly_avg = month[group] / 4
-        lines.append(f"  {group}: {week[group]} подходов за 7 дней (в среднем {weekly_avg:.1f}/нед за месяц)")
-    return "\n".join(lines)
-
-
-# Plausible adult body-weight bounds: entries outside are logging noise (e.g.
-# an exercise weight saved into the body-weight table) and must never reach
-# the calorie-advice logic.
-MIN_PLAUSIBLE_BODY_WEIGHT = 40.0
-MAX_PLAUSIBLE_BODY_WEIGHT = 150.0
-
-
-def _body_weight_report(body_weights: list[dict[str, Any]], today: date) -> str | None:
-    """Last weigh-ins plus the trend over the recent window (implausible
-    entries dropped, staleness flagged so the model won't advise on garbage)."""
-    points: list[tuple[date, float]] = []
-    dropped = 0
-    for entry in body_weights:  # oldest-first
-        try:
-            when = date.fromisoformat(str(entry.get("entry_date", "")))
-            weight = float(entry.get("weight", 0))
-        except (TypeError, ValueError):
-            continue
-        if not (MIN_PLAUSIBLE_BODY_WEIGHT <= weight <= MAX_PLAUSIBLE_BODY_WEIGHT):
-            dropped += 1
-            continue
-        points.append((when, weight))
-    if not points:
-        return None
-
-    tail = points[-6:]
-    series = ", ".join(f"{when.isoformat()}: {weight:g}кг" for when, weight in tail)
-    last_date, _ = points[-1]
-    age_days = (today - last_date).days
-    line = f"Замеры: {series}. Дней с последнего замера: {age_days}."
-    if dropped:
-        line += f" (отброшено неправдоподобных записей: {dropped})"
-    if age_days > 14:
-        line += " ДАННЫЕ УСТАРЕЛИ — советы по калориям не давай, попроси взвеситься."
-
-    window = [p for p in points if (today - p[0]).days <= 42]
-    if len(window) >= 2 and (window[-1][0] - window[0][0]).days >= 7:
-        span_days = (window[-1][0] - window[0][0]).days
-        per_week = (window[-1][1] - window[0][1]) / span_days * 7
-        line += f" Тренд: {per_week:+.2f} кг/нед за последние {span_days} дн."
-    return line
-
-
 def _plan_adherence_report(workouts: list[dict[str, Any]]) -> str | None:
     """Compare the most recent snapshot-carrying workout against its plan."""
     for workout in workouts:  # newest-first
@@ -279,12 +204,19 @@ def _plan_adherence_report(workouts: list[dict[str, Any]]) -> str | None:
 # --------------------------------------------------------------------------- #
 # Prompt building
 # --------------------------------------------------------------------------- #
-def _serialize_workout(workout: dict[str, Any]) -> str:
+def _serialize_workout(
+    workout: dict[str, Any], names_by_id: dict[int, str] | None = None
+) -> str:
     data = workout.get("data", {}) or {}
     load_type = data.get("load_type") or "?"
     parts: list[str] = []
     for exercise in data.get("exercises", []) or []:
         name = str(exercise.get("name", "")).strip() or "?"
+        canonical = coach_features.canonical_exercise_id(exercise.get("exercise_id"))
+        # Old rows may carry the duplicate id 1 — show them under the canonical
+        # catalog name so the model sees one movement, not two.
+        if names_by_id and canonical is not None and canonical in names_by_id:
+            name = names_by_id[canonical]
         sets_repr: list[str] = []
         for workout_set in exercise.get("sets", []) or []:
             try:
@@ -293,20 +225,31 @@ def _serialize_workout(workout: dict[str, Any]) -> str:
             except (TypeError, ValueError):
                 continue
             mark = _EFFORT_MARK.get(workout_set.get("effort") or "", "")
+            rir = workout_set.get("rir")
+            rir_repr = (
+                f"@{int(rir)}"
+                if isinstance(rir, (int, float)) and not isinstance(rir, bool)
+                else ""
+            )
             weight_repr = f"{weight:g}"
-            sets_repr.append(f"{weight_repr}кг×{reps}{mark}")
+            sets_repr.append(f"{weight_repr}кг×{reps}{mark}{rir_repr}")
         if sets_repr:
             parts.append(f"{name} {', '.join(sets_repr)}")
     body = "; ".join(parts) if parts else "(нет подходов)"
     return f"{workout.get('workout_date', '?')} [{load_type}] {body}"
 
 
-def _serialize_history(workouts: list[dict[str, Any]], limit: int) -> str:
+def _serialize_history(
+    workouts: list[dict[str, Any]],
+    limit: int,
+    catalog: list[dict[str, Any]] | None = None,
+) -> str:
     # list_workouts() returns newest-first; take the most recent `limit`
     # and present oldest -> newest so progression reads naturally.
+    names_by_id = {item["id"]: item["name"] for item in catalog} if catalog else None
     recent = list(workouts[:limit])
     recent.reverse()
-    return "\n".join(_serialize_workout(w) for w in recent)
+    return "\n".join(_serialize_workout(w, names_by_id) for w in recent)
 
 
 def _days_since_last(workouts: list[dict[str, Any]], today: date) -> int | None:
@@ -322,18 +265,42 @@ def _days_since_last(workouts: list[dict[str, Any]], today: date) -> int | None:
     return None
 
 
-def _serialize_body_weights(body_weights: list[dict[str, Any]]) -> str | None:
-    if not body_weights:
-        return None
-    # list_body_weights() is oldest-first; show the last few.
-    tail = body_weights[-5:]
-    points = []
-    for entry in tail:
-        try:
-            points.append(f"{entry.get('entry_date', '?')}: {float(entry.get('weight', 0)):g}кг")
-        except (TypeError, ValueError):
-            continue
-    return ", ".join(points) if points else None
+def _format_range(bounds: Any, unit: str = "") -> str:
+    if isinstance(bounds, (tuple, list)) and len(bounds) == 2:
+        return f"{bounds[0]:g}–{bounds[1]:g}{unit}"
+    return f"{bounds}{unit}"
+
+
+def _render_phase_policy() -> str:
+    cut = coach_state.PHASE_DEFAULTS["cut_recomp"]
+    bulk = coach_state.PHASE_DEFAULTS["lean_bulk"]
+    maintenance = coach_state.PHASE_DEFAULTS["maintenance"]
+    return (
+        "Подготовка ведётся ФАЗАМИ. Текущая фаза, её неделя блока и целевые ориентиры "
+        "приходят в блоке КОНТЕКСТ каждого запроса — они главнее общих цифр ниже. Фазу "
+        "переключает ТОЛЬКО атлет (руками); если данные показывают, что цель фазы "
+        "достигнута, предложи смену фазы в rationale — но план строй по текущей.\n"
+        f"- cut_recomp («{cut['title']}»): калории {_format_range(cut['calories'])} ккал, "
+        f"темп {cut['rate_text']}, {cut['frequency_text']}, сессия "
+        f"{_format_range(cut['session_sets'])} рабочих подходов, недельный объём — ramp "
+        f"{_format_range(cut['ramp_start'])} → {_format_range(cut['ramp_cap'])} сетов на "
+        "крупную группу (+1–2 сета в неделю, в первую очередь на отстающие), интенсивность "
+        "рабочая (1–2 RIR), прогрессия двойная. У новичка силовые растут и в дефиците — "
+        "плато по весам в этой фазе НЕ проблема и не повод для паники; deload-триггеры "
+        f"мягче. Белок {_format_range(cut['protein_g'])} г.\n"
+        f"- lean_bulk: калории {_format_range(bulk['calories'])} ккал, темп {bulk['rate_text']}, "
+        f"{bulk['frequency_text']}, сессия {_format_range(bulk['session_sets'])} подходов, "
+        f"объём — ramp {_format_range(bulk['ramp_start'])} → {_format_range(bulk['ramp_cap'])} "
+        "сетов на крупную группу, прогрессия двойная — ожидаются регулярные ПР. Контроль "
+        f"набора по талии; потолок — талия у лимита либо ~{bulk['ceiling_weight_kg']:g} кг. "
+        f"Белок {_format_range(bulk['protein_g'])} г.\n"
+        f"- maintenance («{maintenance['title']}»): {maintenance['frequency_text']} — одна "
+        f"fullbody heavy сессия {_format_range(maintenance['session_sets'])} подходов, "
+        f"{_format_range(maintenance['sets_per_group'])} сета на группу в неделю, объём НЕ "
+        "растёт и претензий к объёму в rationale быть не должно. Веса НЕ снижать — "
+        "интенсивность и есть сигнал удержания; прогрессия не требуется. Калории "
+        f"{_format_range(maintenance['calories'])} ккал, белок ~{maintenance['protein_g'][0]:g}+ г."
+    )
 
 
 def _build_system_prompt(
@@ -343,6 +310,7 @@ def _build_system_prompt(
     catalog_lines = "\n".join(
         f"  {item['id']} — {item['name']}: {CATALOG_SEMANTICS.get(item['id'], 'тренажёр')}"
         for item in catalog
+        if item["id"] not in coach_features.EXERCISE_ALIASES
     )
     return (
         "Ты — персональный силовой тренер этого атлета и полностью заменяешь живого "
@@ -362,18 +330,17 @@ def _build_system_prompt(
         "rationale («советую добавить X, потому что Y»), но не в каждой карточке — "
         "примерно раз в пару недель; атлет сам решит и добавит. В exercises[] "
         "несуществующие упражнения не включай никогда.\n\n"
+        "=== ФАЗЫ ПОДГОТОВКИ ===\n"
+        f"{_render_phase_policy()}\n\n"
         "=== ТРЕНЕРСКАЯ ПОЛИТИКА ===\n"
-        "- Ритм: базово 3 full body в неделю с днём отдыха между (допустимо 2–4 по "
-        "усталости, стрессу и давности последней тренировки).\n"
-        "- Недельный объём (прямые подходы): крупные группы (грудь, спина, "
-        "квадрицепс+ягодичные) 10–16; средняя дельта 6–12; бицепс/трицепс напрямую "
-        "4–8 — жимы добирают трицепсу и передней дельте, тяги — бицепсу примерно "
-        "половину стимула, поэтому больше прямой работы рукам не нужно; бицепс бедра "
-        "5–10 — ставь сгибания ног почти в каждую сессию, пока группа хронически "
-        "недобирает. Наращивай объёмы плавно от нижних границ.\n"
-        "- Сессия: 14–20 рабочих подходов, ориентир ~60 минут (при 18+ подходах "
-        "предупреди, что выйдет ближе к 75–90 мин, или сократи отдых на изоляции до "
-        "60–90 сек). Разминочные подходы в план НЕ включай — атлет делает их сам.\n"
+        "- Ритм и недельный объём диктует текущая фаза (см. КОНТЕКСТ запроса). Малые "
+        "группы держи ниже своих потолков: средняя дельта 6–12, бицепс/трицепс напрямую "
+        "4–8 (жимы добирают трицепсу и передней дельте, тяги — бицепсу примерно половину "
+        "стимула — эффективные сеты уже посчитаны в данных), бицепс бедра 5–10 — ставь "
+        "сгибания ног почти в каждую сессию, пока группа хронически недобирает.\n"
+        "- Сессия: ориентир ~60 минут (при 18+ подходах предупреди, что выйдет ближе к "
+        "75–90 мин, или сократи отдых на изоляции до 60–90 сек). Разминочные подходы в "
+        "план НЕ включай — атлет делает их сам.\n"
         "- Волны интенсивности ДЛЯ БАЗОВЫХ движений (жимы, тяги, жим ногами): heavy "
         "6–10 повторов, medium 10–14, light 12–18. Изоляция (дельты, бицепс, трицепс, "
         "бабочка, разгибания/сгибания ног) остаётся в 10–15+ повторах даже в "
@@ -382,34 +349,56 @@ def _build_system_prompt(
         "автоматикой/атлетом и могут быть неточны — оценивай реальную тяжесть сессии "
         "сам по весам и повторам относительно истории.\n"
         "- Усилие: рабочие подходы с запасом 1–2 повтора; на изоляции в последнем "
-        "подходе допустимо 0–1; жимы (ногами, от груди) до отказа не доводить.\n"
+        "подходе допустимо 0–1; жимы (ногами, от груди) до отказа не доводить. Если у "
+        "подхода в истории есть @N — это записанный RIR (повторы в запасе, 0–4) "
+        "ПОСЛЕДНЕГО подхода: он ТОЧНЕЕ значков +/− — приоритет ему.\n"
         "- Прогрессия: шаг веса бери из истории КОНКРЕТНОГО тренажёра (каким шагом "
         "атлет реально менял вес). +1 повтор или +1 шаг веса, если в прошлый раз "
-        "подходы шли с отметкой «-» (легко) или без отметки; при «+» (тяжело) — "
-        "закрепи вес. Одиночные аномальные подходы (резко выпадающий вес среди "
-        "стабильной серии) считай шумом записи — прогрессию от них не строй.\n"
+        "подходы шли с отметкой «-» (легко), без отметки или с RIR ≥2; при «+» "
+        "(тяжело) или RIR 0–1 — закрепи вес. Одиночные аномальные подходы (резко "
+        "выпадающий вес среди стабильной серии) считай шумом записи — прогрессию от "
+        "них не строй. Пики и даты ПР по каждому тренажёру уже посчитаны в данных — "
+        "считай их фактами, не выводи заново из сырой истории.\n"
         "- Возврат после перерыва: если с последней тренировки прошло ≥14 дней — "
         "первая сессия medium/light на ~85–90% последних рабочих весов, 10–14 "
-        "подходов, без отказа (правило 14–20 подходов не действует); возврат к "
-        "прежним весам за 2–3 сессии. Длинный перерыв сам по себе — разгрузка: "
+        "подходов, без отказа (коридор подходов фазы не действует); возврат к "
+        "прежним весам за 2–3 сессии. Если в данных есть готовые СТУПЕНИ разгона до "
+        "пика — веди атлета по ним. Длинный перерыв сам по себе — разгрузка: "
         "счётчик deload обнуляется, правило «после heavy не heavy» через перерыв "
         "не применяется. После перерыва в rationale вместо сводки нулевых объёмов "
         "опиши план разгона на 2–3 сессии.\n"
         "- Разгрузка (deload): при падении повторов на тех же весах две сессии подряд "
         "или ~6 недель непрерывных тренировок без разгрузки — предложи лёгкую неделю "
-        "(−30–40% объёма) и прямо скажи об этом в rationale.\n"
+        "(−30–40% объёма) и прямо скажи об этом в rationale. Если в данных стоит флаг "
+        "ЗАСТОЯ по упражнению (предусловия выполнены, ПР нет ≥4 недель) — предложи "
+        "deload −10% с разгоном или вариацию именно по нему. Если предусловия НЕ "
+        "выполнены — плато объясняй посещаемостью/питанием, слова «потолок» избегай.\n"
         "- Регулярность: если перерывы >10 дней повторяются, мягко предложи в "
-        "rationale привязать тренировки к конкретным дням недели — без нотаций.\n"
-        "- Питание: следи за трендом веса тела по скользящему среднему 2–3 недель. "
-        "Целевой темп +0.4–0.5 кг/мес, потолок набора ~84 кг при сохранении сухости. "
-        "Стартовый ориентир ~2350–2450 ккал; вес стоит дольше 2 недель — посоветуй "
-        "+100–150 ккал; растёт быстрее ~0.2 кг/нед — посоветуй −100–150 ккал. Белок "
-        "(~140 г) достаточен — не трогай. Советы по калориям давай ТОЛЬКО по свежим "
-        "(≤14 дней) и правдоподобным замерам; иначе попроси взвеситься и калории не "
-        "обсуждай.\n"
-        "- Медицинская граница: вопросы ГЗТ, дозировок, анализов и давления — зона "
-        "лечащего врача. Никаких советов и интерпретаций по ним не давай; гормональный "
-        "фон используй только как контекст восстановления.\n\n"
+        "rationale привязать тренировки к конкретным дням недели — без нотаций.\n\n"
+        "=== ПЛАНИРОВЩИК: ГОРМОНАЛЬНЫЙ НЕДЕЛЬНЫЙ ЦИКЛ ===\n"
+        "День цикла и фон (высокий/средний/минимальный) приходят в КОНТЕКСТЕ запроса. "
+        "Приоритеты при выборе дня и тяжести (строго по порядку):\n"
+        "1) восстановление — давность и тяжесть прошлой сессии всегда важнее цикла;\n"
+        "2) при прочих равных heavy-сессии ставь в окно пика, light/изоляцию — в окно "
+        "спада;\n"
+        "3) ритм фазы (частота из КОНТЕКСТА).\n"
+        "Для maintenance единственную недельную heavy-сессию по возможности ставь в "
+        "окно пика. Медицинская граница: вопросы ГЗТ, дозировок, анализов и давления — "
+        "зона лечащего врача. Никаких советов и интерпретаций по ним не давай; "
+        "гормональный фон используй только как контекст восстановления и планирования.\n\n"
+        "=== ПИТАНИЕ ===\n"
+        "Решение по калориям НЕ выводи сам из сырых замеров: сервер уже сравнил тренды "
+        "веса и талии с целями фазы и положил готовую ветку в блок «Матрица питания» — "
+        "переведи её в короткий совет своими словами. Правила матрицы (для понимания): "
+        "cut_recomp — вес в целевом темпе и талия вниз → не трогать; вес стоит ≥2 недель "
+        "→ −100–150 ккал; вес стоит, но талия идёт вниз → рекомп-бонус, калории не "
+        "трогать. lean_bulk — вес растёт в темпе, талия стабильна → не трогать; талия "
+        "+1 см от базовой два замера подряд → −100–150 ккал или пауза набора; талия у "
+        "лимита → жёсткий сигнал, предложи мини-кат/смену фазы. maintenance — выход из "
+        "коридора ±1 кг → мягкая коррекция ±100–150 ккал. Советы по калориям давай "
+        "ТОЛЬКО по свежим (≤14 дней) замерам — иначе попроси взвеситься/замерить талию "
+        "и калории не обсуждай. Белок — по ориентиру фазы; если по факту меньше, мягко "
+        "напомни добрать.\n\n"
         "=== RATIONALE (тренерский комментарий в карточке) ===\n"
         "Пиши на «ты», как живой тренер, структурно и по делу. ФОРМАТ: rationale "
         "должен легко читаться — НЕ сплошным абзацем. Каждый пункт с новой строки "
@@ -436,38 +425,107 @@ def _build_user_prompt(
     body_weights: list[dict[str, Any]],
     today: date,
     history_limit: int,
+    catalog: list[dict[str, Any]] | None = None,
+    state: dict[str, Any] | None = None,
+    waists: list[dict[str, Any]] | None = None,
 ) -> str:
-    days = _days_since_last(workouts, today)
-    days_line = (
-        f"Дней с последней тренировки: {days}."
-        if days is not None
-        else "Дата последней тренировки неизвестна."
-    )
-    chunks = [
-        f"Сегодня: {today.isoformat()} ({_RU_WEEKDAYS[today.weekday()]}).",
-        days_line,
-        "Рабочие подходы по группам (по основной мышце упражнения):\n"
-        + _volume_report(workouts, today),
-    ]
+    state = state if state is not None else coach_state.load_state(None)
+    waists = waists or []
+    params = coach_state.phase_params(state)
+    phase = params["phase"]
 
-    body_line = _body_weight_report(body_weights, today)
-    if body_line:
-        chunks.append(f"Вес тела. {body_line}")
+    days = _days_since_last(workouts, today)
+    returning = coach_state.is_return_from_break(workouts, today)
+    week = coach_state.block_week(state, workouts, today)
+    cycle = coach_state.cycle_info(state, today)
+    week_target = coach_state.weekly_volume_target(state, week)
+
+    # --- explicit context block, always the first thing the model reads ------
+    context_lines = [
+        f"Сегодня: {today.isoformat()} ({_RU_WEEKDAYS[today.weekday()]}). "
+        f"День гормонального цикла: {cycle['day']} из 7 — фон {cycle['level']} "
+        f"(пик {cycle['peak_days']}, спад {cycle['trough_days']}).",
+        f"Фаза: {phase} («{params['title']}»), неделя блока {week}. Ориентиры фазы: "
+        f"{_format_range(params['calories'])} ккал, {params['rate_text']}, белок "
+        f"{_format_range(params['protein_g'])} г, сессия "
+        f"{_format_range(params['session_sets'])} рабочих подходов.",
+    ]
+    if days is None:
+        context_lines.append("Дата последней тренировки неизвестна.")
+    elif returning:
+        context_lines.append(
+            f"Дней с последней тренировки: {days} — ВОЗВРАТ ПОСЛЕ ПЕРЕРЫВА (≥14 дн): "
+            "сессия medium/light, 10–14 подходов, ~85–90% рабочих весов; ступени "
+            "разгона ниже."
+        )
+    else:
+        context_lines.append(f"Дней с последней тренировки: {days}.")
+    chunks = ["=== КОНТЕКСТ ===\n" + "\n".join(context_lines)]
+
+    volume = coach_features.weekly_volume(workouts, today)
+    maintenance_sets = params.get("sets_per_group") if phase == "maintenance" else None
+    chunks.append(
+        "Объём за последние 7 дней (прямые/эффективные подходы; в эффективных жимы "
+        "уже добирают трицепсу и дельтам, тяги — бицепсу):\n"
+        + coach_features.render_weekly_volume(volume, week_target, maintenance_sets)
+    )
+
+    measurement_lines = coach_features.render_measurements(body_weights, waists, today)
+    matrix = coach_features.nutrition_matrix(state, params, body_weights, waists, today)
+    nutrition_chunk = list(measurement_lines)
+    if matrix["lines"]:
+        nutrition_chunk.append(
+            "Матрица питания (вычислено сервером): " + "; ".join(matrix["lines"]) + "."
+        )
+    if matrix["goal"]:
+        nutrition_chunk.append("ЦЕЛЬ ФАЗЫ: " + matrix["goal"] + ".")
+    if nutrition_chunk:
+        chunks.append("\n".join(nutrition_chunk))
+
+    summaries = coach_features.exercise_summaries(workouts, catalog or [], today)
+    if summaries:
+        chunks.append(
+            "Сводка по тренажёрам за ВСЮ историю (пики, e1RM по Эпли и даты ПР "
+            "посчитаны сервером — это факты, не пересчитывай):\n"
+            + coach_features.render_exercise_summaries(summaries)
+        )
+
+    stall = coach_features.stall_report(
+        workouts,
+        summaries,
+        matrix.get("trend_per_week"),
+        phase,
+        params.get("rate_kg_per_week"),
+        today,
+    )
+    stall_line = coach_features.render_stall_report(stall)
+    if stall_line:
+        chunks.append(stall_line)
+
+    ramp_lines = coach_features.comeback_ramp(workouts, catalog or [], today)
+    if ramp_lines:
+        chunks.append(
+            "Ступени разгона к пиковым весам (сервер уже разложил возврат по "
+            "сессиям):\n" + "\n".join(ramp_lines)
+        )
 
     adherence = _plan_adherence_report(workouts)
     if adherence:
         chunks.append(adherence)
 
+    raw_count = min(history_limit, RAW_HISTORY_COUNT)
     chunks.append(
-        "История тренировок (от старых к новым; формат "
+        f"Последние {raw_count} тренировок сырыми (от старых к новым; формат "
         "'дата [нагрузка] упражнение вес×повторы, ...'). Значок после подхода — "
         "субъективная тяжесть: '-' = легко, '+' = тяжело (это НЕ дополнительные "
-        "повторы), без значка = нормально:"
+        "повторы), без значка = нормально; '@N' = записанный RIR последнего "
+        "подхода (точнее значков). Более старые тренировки уже учтены в сводке "
+        "выше:"
     )
-    chunks.append(_serialize_history(workouts, history_limit))
+    chunks.append(_serialize_history(workouts, raw_count, catalog))
     chunks.append(
         "Составь план следующей тренировки и тренерский комментарий (когда идти, "
-        "статус недельных объёмов, питание по тренду веса)."
+        "статус недельных объёмов, питание по матрице выше)."
     )
     return "\n\n".join(chunks)
 
@@ -478,7 +536,11 @@ _RU_WEEKDAYS = (
 
 
 def _build_schema(catalog: list[dict[str, Any]]) -> dict[str, Any]:
-    exercise_ids = [item["id"] for item in catalog]
+    # The duplicate id (1 → 18) never enters the enum: old history is re-mapped
+    # onto the canonical id, and the plan may only reference canonical ones.
+    exercise_ids = [
+        item["id"] for item in catalog if item["id"] not in coach_features.EXERCISE_ALIASES
+    ]
     return {
         "type": "object",
         "properties": {
@@ -491,10 +553,10 @@ def _build_schema(catalog: list[dict[str, Any]]) -> dict[str, Any]:
                 "type": "integer",
                 "description": (
                     "Через сколько дней от сегодня проводить эту тренировку: "
-                    "0 = сегодня, 1 = завтра, 2 = послезавтра и т.д. Учитывай "
-                    "давность последней тренировки, нагрузку прошлой сессии, "
-                    "усталость/сон/стресс, ритм ~3 раза в неделю и гормональный "
-                    "цикл (тяжёлые сессии — ближе к началу недельного цикла)"
+                    "0 = сегодня, 1 = завтра, 2 = послезавтра, максимум 4. "
+                    "Учитывай давность последней тренировки, нагрузку прошлой "
+                    "сессии, усталость/сон/стресс, ритм фазы и гормональный "
+                    "цикл (тяжёлые сессии — в окно пика)"
                 ),
             },
             "rationale": {
@@ -586,7 +648,7 @@ def _fetch_anthropic(
 
 def _call_anthropic(
     system: str,
-    user: str,
+    user: str | list[dict[str, Any]],
     schema: dict[str, Any],
     *,
     model: str,
@@ -597,12 +659,15 @@ def _call_anthropic(
     backoff: float = DEFAULT_RETRY_BACKOFF,
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    # `user` is either the user prompt (normal call) or a full message list —
+    # the semantic-validator reprompt continues the same conversation.
+    messages = [{"role": "user", "content": user}] if isinstance(user, str) else user
     body = json.dumps(
         {
             "model": model,
             "max_tokens": max_tokens,
             "system": system,
-            "messages": [{"role": "user", "content": user}],
+            "messages": messages,
             "output_config": {"format": {"type": "json_schema", "schema": schema}},
         }
     ).encode("utf-8")
@@ -653,7 +718,9 @@ def _call_anthropic(
 # Validation
 # --------------------------------------------------------------------------- #
 def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, Any]:
-    valid_ids = {item["id"] for item in catalog}
+    valid_ids = {
+        item["id"] for item in catalog if item["id"] not in coach_features.EXERCISE_ALIASES
+    }
     names_by_id = {item["id"]: item["name"] for item in catalog}
 
     load_type = raw.get("load_type")
@@ -674,6 +741,9 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
             exercise_id = int(exercise.get("exercise_id"))
         except (TypeError, ValueError):
             continue
+        # The schema enum already excludes the duplicate ids; re-map defensively
+        # in case an aliased id sneaks in anyway.
+        exercise_id = coach_features.EXERCISE_ALIASES.get(exercise_id, exercise_id)
         if exercise_id not in valid_ids:
             continue
 
@@ -722,14 +792,228 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
 
 
 # --------------------------------------------------------------------------- #
+# Semantic validation (on top of the JSON schema)
+# --------------------------------------------------------------------------- #
+def _mentions_deload(recommendation: dict[str, Any]) -> bool:
+    text = f"{recommendation.get('focus', '')} {recommendation.get('rationale', '')}".lower()
+    return "deload" in text or "разгруз" in text
+
+
+def _semantic_violations(
+    recommendation: dict[str, Any],
+    raw: dict[str, Any],
+    catalog: list[dict[str, Any]],
+    workouts: list[dict[str, Any]],
+    today: date,
+    state: dict[str, Any],
+) -> list[str]:
+    """Methodology checks the JSON schema cannot express. Each violation is a
+    human-readable line — the list goes verbatim into the reprompt."""
+    violations: list[str] = []
+    names_by_id = {item["id"]: item["name"] for item in catalog}
+    params = coach_state.phase_params(state)
+    returning = coach_state.is_return_from_break(workouts, today)
+    easing = returning or _mentions_deload(recommendation)
+
+    # 1) name must literally match the catalog for its exercise_id.
+    for exercise in raw.get("exercises", []) or []:
+        if not isinstance(exercise, dict):
+            continue
+        try:
+            exercise_id = int(exercise.get("exercise_id"))
+        except (TypeError, ValueError):
+            continue
+        exercise_id = coach_features.EXERCISE_ALIASES.get(exercise_id, exercise_id)
+        expected = names_by_id.get(exercise_id)
+        actual = str(exercise.get("name", "")).strip()
+        if expected is not None and actual != expected:
+            violations.append(
+                f"name упражнения id={exercise_id} должно быть дословно «{expected}», "
+                f"а не «{actual}»"
+            )
+
+    # 2) planned weights within ±15% of the exercise's 8-week working range.
+    #    Return-from-break / deload sessions may go lower (for the gravitron —
+    #    higher counterweight, i.e. more assistance) without a flag.
+    for exercise in recommendation.get("exercises", []) or []:
+        exercise_id = exercise["exercise_id"]
+        bounds = coach_features.recent_weight_range(workouts, exercise_id, today)
+        if bounds is None:
+            continue
+        low, high = bounds
+        floor = low * (1 - WEIGHT_TOLERANCE)
+        ceiling = high * (1 + WEIGHT_TOLERANCE)
+        inverted = exercise_id == coach_features.GRAVITRON_ID
+        for workout_set in exercise["sets"]:
+            weight = workout_set["weight"]
+            if inverted:
+                if weight < floor:
+                    violations.append(
+                        f"{exercise['name']}: противовес {weight:g} кг меньше "
+                        f"{floor:g} (диапазон 8 недель {low:g}–{high:g}; меньше "
+                        "противовес = тяжелее, так резко не прыгаем)"
+                    )
+                elif weight > ceiling and not easing:
+                    violations.append(
+                        f"{exercise['name']}: противовес {weight:g} кг больше "
+                        f"{ceiling:g} (диапазон 8 недель {low:g}–{high:g})"
+                    )
+            else:
+                if weight > ceiling:
+                    violations.append(
+                        f"{exercise['name']}: вес {weight:g} кг выше {ceiling:g} "
+                        f"(диапазон 8 недель {low:g}–{high:g} ±15%)"
+                    )
+                elif weight < floor and not easing:
+                    violations.append(
+                        f"{exercise['name']}: вес {weight:g} кг ниже {floor:g} "
+                        f"(диапазон 8 недель {low:g}–{high:g} ±15%; это не "
+                        "возврат/deload-сессия)"
+                    )
+
+    # 3) total session sets inside the phase corridor.
+    total_sets = sum(len(exercise["sets"]) for exercise in recommendation["exercises"])
+    if returning:
+        corridor, corridor_label = (10, 14), "возврат после перерыва"
+    else:
+        corridor, corridor_label = params["session_sets"], f"фаза {params['phase']}"
+    if not corridor[0] <= total_sets <= corridor[1]:
+        violations.append(
+            f"в сессии {total_sets} рабочих подходов, а коридор ({corridor_label}) — "
+            f"{corridor[0]}–{corridor[1]}"
+        )
+
+    # 4) rest_days 0–4.
+    rest_days = recommendation.get("rest_days", 0)
+    if not 0 <= rest_days <= SEMANTIC_MAX_REST_DAYS:
+        violations.append(
+            f"rest_days={rest_days}, допустимо 0–{SEMANTIC_MAX_REST_DAYS}"
+        )
+
+    # 5) no heavy right after a heavy session (a long break resets this).
+    if not returning and recommendation.get("load_type") == "heavy" and workouts:
+        last_load = ((workouts[0].get("data", {}) or {}).get("load_type"))
+        if last_load == "heavy":
+            violations.append(
+                "прошлая сессия была heavy — подряд две heavy не ставим (кроме "
+                "возврата после перерыва)"
+            )
+
+    return violations
+
+
+# --------------------------------------------------------------------------- #
 # Public entry point
 # --------------------------------------------------------------------------- #
+def _sum_usage(*usages: dict[str, Any]) -> dict[str, Any]:
+    total: dict[str, Any] = {}
+    for usage in usages:
+        for key in ("input_tokens", "output_tokens"):
+            value = usage.get(key)
+            if isinstance(value, int):
+                total[key] = total.get(key, 0) + value
+    return total
+
+
+def generate_with_trace(
+    workouts: list[dict[str, Any]],
+    body_weights: list[dict[str, Any]],
+    catalog: list[dict[str, Any]],
+    *,
+    profile: dict[str, Any] | None = None,
+    state: dict[str, Any] | None = None,
+    waists: list[dict[str, Any]] | None = None,
+    today: date | None = None,
+    model: str = DEFAULT_MODEL,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    history_limit: int = DEFAULT_HISTORY_LIMIT,
+    timeout: float = DEFAULT_TIMEOUT,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+) -> tuple[dict[str, Any], dict[str, Any], str, list[dict[str, Any]]]:
+    """Like :func:`generate`, but also returns the attempt trace
+    ``[{raw, violations, usage}, ...]`` for the MCP debugging tools. On a
+    final semantic failure the raised :class:`RecommendationError` carries the
+    trace in ``exc.trace``."""
+    if not workouts:
+        raise RecommendationError("Нет истории тренировок для рекомендации")
+
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        raise RecommendationError("ANTHROPIC_API_KEY не настроен на сервере")
+
+    today = today or date.today()
+    state = state if state is not None else coach_state.load_state(None)
+    system = _build_system_prompt(catalog, profile)
+    user = _build_user_prompt(
+        workouts, body_weights, today, history_limit,
+        catalog=catalog, state=state, waists=waists,
+    )
+    schema = _build_schema(catalog)
+
+    call = lambda messages: _call_anthropic(  # noqa: E731
+        system,
+        messages,
+        schema,
+        model=model,
+        max_tokens=max_tokens,
+        api_key=api_key,
+        timeout=timeout,
+        max_retries=max_retries,
+    )
+
+    trace: list[dict[str, Any]] = []
+    parsed, usage = call(user)
+    recommendation = _validate(parsed, catalog)
+    violations = _semantic_violations(
+        recommendation, parsed, catalog, workouts, today, state
+    )
+    trace.append({"raw": parsed, "violations": violations, "usage": usage})
+
+    if violations:
+        # One corrective round-trip in the same conversation: name the exact
+        # violations and ask for a fixed plan. A second miss is a hard error.
+        reprompt = (
+            "Твой план нарушает ограничения методики:\n- "
+            + "\n- ".join(violations)
+            + "\nИсправь ТОЛЬКО эти нарушения, сохрани остальную логику и верни "
+            "полный план заново в той же JSON-схеме."
+        )
+        messages = [
+            {"role": "user", "content": user},
+            {"role": "assistant", "content": json.dumps(parsed, ensure_ascii=False)},
+            {"role": "user", "content": reprompt},
+        ]
+        parsed, usage_retry = call(messages)
+        recommendation = _validate(parsed, catalog)
+        violations = _semantic_violations(
+            recommendation, parsed, catalog, workouts, today, state
+        )
+        trace.append({"raw": parsed, "violations": violations, "usage": usage_retry})
+        usage = _sum_usage(usage, usage_retry)
+        if violations:
+            error = RecommendationError(
+                "Модель дважды нарушила ограничения методики: " + "; ".join(violations)
+            )
+            error.trace = trace
+            raise error
+
+    # Resolve the model's relative rest_days into an absolute date at generation
+    # time (auto-freshness regenerates daily, so it stays current). The card
+    # shows a fixed target instead of doing date math on the client.
+    recommendation["next_workout_date"] = (
+        today + timedelta(days=recommendation["rest_days"])
+    ).isoformat()
+    return recommendation, usage, model, trace
+
+
 def generate(
     workouts: list[dict[str, Any]],
     body_weights: list[dict[str, Any]],
     catalog: list[dict[str, Any]],
     *,
     profile: dict[str, Any] | None = None,
+    state: dict[str, Any] | None = None,
+    waists: list[dict[str, Any]] | None = None,
     today: date | None = None,
     model: str = DEFAULT_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -740,35 +1024,19 @@ def generate(
     """Generate a validated next-workout recommendation.
 
     Returns ``(recommendation, usage, model)``. Raises :class:`RecommendationError`
-    on any failure (no history, missing key, API error, unusable output).
-    """
-    if not workouts:
-        raise RecommendationError("Нет истории тренировок для рекомендации")
-
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        raise RecommendationError("ANTHROPIC_API_KEY не настроен на сервере")
-
-    today = today or date.today()
-    system = _build_system_prompt(catalog, profile)
-    user = _build_user_prompt(workouts, body_weights, today, history_limit)
-    schema = _build_schema(catalog)
-
-    parsed, usage = _call_anthropic(
-        system,
-        user,
-        schema,
+    on any failure (no history, missing key, API error, unusable output)."""
+    recommendation, usage, model_used, _trace = generate_with_trace(
+        workouts,
+        body_weights,
+        catalog,
+        profile=profile,
+        state=state,
+        waists=waists,
+        today=today,
         model=model,
         max_tokens=max_tokens,
-        api_key=api_key,
+        history_limit=history_limit,
         timeout=timeout,
         max_retries=max_retries,
     )
-    recommendation = _validate(parsed, catalog)
-    # Resolve the model's relative rest_days into an absolute date at generation
-    # time (auto-freshness regenerates daily, so it stays current). The card
-    # shows a fixed target instead of doing date math on the client.
-    recommendation["next_workout_date"] = (
-        today + timedelta(days=recommendation["rest_days"])
-    ).isoformat()
-    return recommendation, usage, model
+    return recommendation, usage, model_used

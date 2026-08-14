@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "_comment": "Шаблон состояния подготовки для коуч-движка. Реальный файл живёт в <data-dir>/coach_state.json рядом с trainer.db (на VPS: /opt/trainer-miniapp/data/coach_state.json) или по пути из COACH_STATE_PATH. Меняется инструментами Coach MCP (coach_set_phase / coach_update_state); автопереключений фаз нет. phase: cut_recomp | lean_bulk | maintenance. phase_params — переопределения дефолтов per-фаза (см. coach_state.PHASE_DEFAULTS). injection_day — день недели инъекции (пн..вс / mon..sun / 0-6, Monday=0); используется ТОЛЬКО для планирования нагрузки вокруг недельного цикла восстановления.",
+  "phase": "cut_recomp",
+  "phase_started": "2026-08-14",
+  "phase_params": {},
+  "waist_limit_cm": null,
+  "waist_base_cm": null,
+  "injection_day": "sat"
+}

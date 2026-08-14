@@ -51,6 +51,7 @@ if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
 import backend_store  # noqa: E402
+import coach_state  # noqa: E402
 import recommender  # noqa: E402
 
 from mcp.server.fastmcp import FastMCP  # noqa: E402
@@ -72,6 +73,9 @@ _PROFILE_PATH = Path(
     or os.getenv("COACH_PROFILE_PATH")
     or str(_DB_PATH.parent / "coach_profile.json")
 )
+# Mutable coaching state (phase, waist limit, injection day) — next to the DB,
+# same as the profile; COACH_STATE_PATH overrides.
+_STATE_PATH = coach_state.default_state_path(_DB_PATH)
 _DEFAULT_USER_ID = int(
     os.getenv("COACH_MCP_USER_ID")
     or os.getenv("MINIAPP_TELEGRAM_RECOVERY_USER_ID")
@@ -81,25 +85,32 @@ _DEFAULT_USER_ID = int(
 STORE = backend_store.MiniAppStore(_DB_PATH)
 
 _INSTRUCTIONS = """\
-Тренер-ассистент по силовым тренировкам пользователя (доступ только на чтение).
+Тренер-ассистент по силовым тренировкам пользователя.
 
-У тебя есть инструменты к истории тренировок, замерам веса тела, каталогу
-упражнений и к движку рекомендаций «следующая тренировка».
+У тебя есть инструменты к истории тренировок, замерам веса тела и талии,
+каталогу упражнений, состоянию подготовки (фаза/цикл) и к движку рекомендаций
+«следующая тренировка».
 
 Когда пользователь спрашивает «что мне потренировать дальше / разбери мой
 прогресс / почему такая рекомендация»:
-1) посмотри историю (coach_list_workouts) и при необходимости каталог
-   (coach_get_catalog) и динамику веса (coach_list_body_weights);
+1) посмотри состояние (coach_get_state), историю (coach_list_workouts) и при
+   необходимости каталог (coach_get_catalog), вес (coach_list_body_weights) и
+   талию (coach_list_waists);
 2) для отладки рекомендаций используй coach_preview_prompt (увидеть точный
-   промпт без траты токенов), coach_debug_recommendation (сырой ответ модели
-   ДО валидации + валидированный результат + токены) и coach_get_stored_recommendation
-   (что сейчас лежит в кэше приложения);
+   промпт без траты токенов), coach_debug_recommendation (попытки модели с
+   нарушениями валидатора и репромптом + токены) и
+   coach_get_stored_recommendation (что сейчас лежит в кэше приложения);
 3) coach_generate_recommendation генерирует новую рекомендацию; по умолчанию
    НЕ записывает её в базу приложения (store=false) — поставь store=true, только
    если пользователь хочет обновить рекомендацию в самом приложении.
 
-Это аналитика и сценарии, не медицинский совет. Веса — в килограммах, отвечай
-по-русски."""
+Записывающие инструменты: coach_set_phase (смена фазы подготовки — только по
+явной просьбе пользователя), coach_update_state (лимит/база талии, день
+инъекции), coach_add_waist / coach_delete_waist (замеры талии, см).
+
+Это аналитика и сценарии, не медицинский совет: никаких рекомендаций по
+дозировкам/схеме ГЗТ/анализам. Веса — в килограммах, талия — в сантиметрах,
+отвечай по-русски."""
 
 mcp = FastMCP("Coach MCP", instructions=_INSTRUCTIONS)
 
@@ -161,7 +172,7 @@ def coach_list_workouts(limit: int = 20, user_id: int | None = None) -> CallTool
     try:
         uid = _uid(user_id)
         workouts = STORE.list_workouts(uid)
-        compact = recommender._serialize_history(workouts, limit)
+        compact = recommender._serialize_history(workouts, limit, _catalog())
         return _result(
             {
                 "ok": True,
@@ -219,6 +230,168 @@ def coach_get_catalog() -> CallToolResult:
         return _result(_err(f"Каталог недоступен: {exc}"))
 
 
+# --- tools: coaching state (phase machine, cycle config, waist limits) --------
+@mcp.tool()
+def coach_get_state(user_id: int | None = None) -> CallToolResult:
+    """Текущее состояние подготовки: фаза + её параметры, неделя блока, целевой объём недели, день гормонального цикла, лимит/база талии."""
+    try:
+        uid = _uid(user_id)
+        state = coach_state.load_state(_STATE_PATH)
+        workouts = STORE.list_workouts(uid)
+        today = date.today()
+        params = coach_state.phase_params(state)
+        week = coach_state.block_week(state, workouts, today)
+        return _result(
+            {
+                "ok": True,
+                "summary": (
+                    f"Фаза: {params['phase']} («{params['title']}»), неделя блока {week}."
+                ),
+                "user_id": uid,
+                "state": state,
+                "phase_params": {k: v for k, v in params.items() if k != "phase"},
+                "block_week": week,
+                "weekly_volume_target": coach_state.weekly_volume_target(state, week),
+                "return_from_break": coach_state.is_return_from_break(workouts, today),
+                "cycle_today": coach_state.cycle_info(state, today),
+                "state_path": str(_STATE_PATH),
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+@mcp.tool()
+def coach_set_phase(phase: str, params: dict[str, Any] | None = None) -> CallToolResult:
+    """Переключить фазу подготовки РУКАМИ (cut_recomp / lean_bulk / maintenance). Дата старта фазы = сегодня; params — переопределения дефолтов фазы (например {"target_weight_kg": 75}). Автопереключений нет: вызывай только по явной просьбе пользователя."""
+    try:
+        state = coach_state.set_phase(_STATE_PATH, str(phase).strip(), params)
+        merged = coach_state.phase_params(state)
+        return _result(
+            {
+                "ok": True,
+                "summary": (
+                    f"Фаза переключена: {merged['phase']} («{merged['title']}») "
+                    f"с {state['phase_started']}."
+                ),
+                "state": state,
+                "phase_params": {k: v for k, v in merged.items() if k != "phase"},
+            }
+        )
+    except ValueError as exc:
+        return _result(_err(str(exc)))
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+@mcp.tool()
+def coach_update_state(
+    waist_limit_cm: float | None = None,
+    waist_base_cm: float | None = None,
+    injection_day: str | None = None,
+) -> CallToolResult:
+    """Обновить глобальные параметры состояния: жёсткий лимит талии (см), базовую талию фазы (см), день инъекции (пн..вс / mon..sun). Не переданные поля не трогаются."""
+    try:
+        state = coach_state.load_state(_STATE_PATH)
+        changed: list[str] = []
+        for key, value in (("waist_limit_cm", waist_limit_cm), ("waist_base_cm", waist_base_cm)):
+            if value is None:
+                continue
+            number = float(value)
+            if not 40 <= number <= 200:
+                return _result(_err(f"{key}={number:g} вне разумного диапазона 40–200 см."))
+            state[key] = number
+            changed.append(f"{key}={number:g}")
+        if injection_day is not None:
+            state["injection_day"] = coach_state.parse_weekday(injection_day)
+            changed.append(f"injection_day={state['injection_day']}")
+        if not changed:
+            return _result(_err("Не передано ни одного параметра для обновления."))
+        coach_state.save_state(_STATE_PATH, state)
+        return _result(
+            {
+                "ok": True,
+                "summary": "Обновлено: " + ", ".join(changed) + ".",
+                "state": state,
+            }
+        )
+    except ValueError as exc:
+        return _result(_err(str(exc)))
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+# --- tools: waist measurements ------------------------------------------------
+@mcp.tool()
+def coach_add_waist(
+    waist_cm: float, entry_date: str | None = None, notes: str | None = None,
+    user_id: int | None = None,
+) -> CallToolResult:
+    """Записать замер талии в см (утром натощак, по пупку). entry_date по умолчанию — сегодня; повторный замер за ту же дату перезаписывается."""
+    try:
+        uid = _uid(user_id)
+        payload = {
+            "entry_date": entry_date or date.today().isoformat(),
+            "waist": waist_cm,
+            "notes": notes,
+        }
+        entry, created = STORE.save_waist(uid, payload)
+        return _result(
+            {
+                "ok": True,
+                "summary": (
+                    f"Талия {entry['waist']:g} см за {entry['entry_date']} "
+                    + ("записана." if created else "обновлена.")
+                ),
+                "user_id": uid,
+                "entry": entry,
+                "created": created,
+            }
+        )
+    except ValueError as exc:
+        return _result(_err(f"Неверные данные: {exc}"))
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+@mcp.tool()
+def coach_list_waists(user_id: int | None = None) -> CallToolResult:
+    """История замеров талии (старые сверху)."""
+    try:
+        uid = _uid(user_id)
+        entries = STORE.list_waists(uid)
+        return _result(
+            {
+                "ok": True,
+                "summary": f"Замеров талии: {len(entries)}.",
+                "user_id": uid,
+                "entries": entries,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+@mcp.tool()
+def coach_delete_waist(entry_id: int, user_id: int | None = None) -> CallToolResult:
+    """Удалить замер талии по id (например, опечатку)."""
+    try:
+        uid = _uid(user_id)
+        deleted = STORE.delete_waist(uid, int(entry_id))
+        if deleted is None:
+            return _result(_err(f"Замер #{entry_id} не найден."))
+        return _result(
+            {
+                "ok": True,
+                "summary": f"Удалён замер {deleted['waist']:g} см за {deleted['entry_date']}.",
+                "user_id": uid,
+                "deleted": deleted,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
 # --- tools: recommendation debugging -----------------------------------------
 @mcp.tool()
 def coach_get_stored_recommendation(user_id: int | None = None) -> CallToolResult:
@@ -246,9 +419,15 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
         catalog = _catalog()
         workouts = STORE.list_workouts(uid)
         body_weights = STORE.list_body_weights(uid)
+        waists = STORE.list_waists(uid)
         profile = recommender.load_profile(_PROFILE_PATH)
+        state = coach_state.load_state(_STATE_PATH)
+        today = date.today()
         system = recommender._build_system_prompt(catalog, profile)
-        user = recommender._build_user_prompt(workouts, body_weights, date.today(), limit)
+        user = recommender._build_user_prompt(
+            workouts, body_weights, today, limit,
+            catalog=catalog, state=state, waists=waists,
+        )
         schema = recommender._build_schema(catalog)
         return _result(
             {
@@ -257,7 +436,10 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
                 "profile_loaded": profile is not None,
                 "user_id": uid,
                 "model": recommender.DEFAULT_MODEL,
-                "history_used": min(limit, len(workouts)),
+                "phase": coach_state.phase_params(state)["phase"],
+                "block_week": coach_state.block_week(state, workouts, today),
+                "cycle": coach_state.cycle_info(state, today),
+                "history_raw": min(limit, recommender.RAW_HISTORY_COUNT, len(workouts)),
                 "system_prompt": system,
                 "user_prompt": user,
                 "json_schema": schema,
@@ -269,7 +451,7 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
 
 @mcp.tool()
 def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> CallToolResult:
-    """Глубокая отладка: вызвать модель и вернуть СЫРОЙ ответ (до валидации) + валидированный результат + промпт + токены/стоимость.
+    """Глубокая отладка: полный прогон генерации с семантическим валидатором — попытки модели (сырой ответ + нарушения + репромпт), итог и токены/стоимость.
 
     Ничего не записывает в базу приложения."""
     try:
@@ -282,39 +464,50 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
         if not workouts:
             return _result(_err("Нет истории тренировок для генерации."))
         body_weights = STORE.list_body_weights(uid)
+        waists = STORE.list_waists(uid)
         profile = recommender.load_profile(_PROFILE_PATH)
-        system = recommender._build_system_prompt(catalog, profile)
-        user = recommender._build_user_prompt(workouts, body_weights, date.today(), limit)
-        schema = recommender._build_schema(catalog)
+        state = coach_state.load_state(_STATE_PATH)
+        today = date.today()
         model = recommender.DEFAULT_MODEL
-
-        raw, usage = recommender._call_anthropic(
-            system,
-            user,
-            schema,
-            model=model,
-            max_tokens=recommender.DEFAULT_MAX_TOKENS,
-            api_key=api_key,
-            timeout=recommender.DEFAULT_TIMEOUT,
+        user = recommender._build_user_prompt(
+            workouts, body_weights, today, limit,
+            catalog=catalog, state=state, waists=waists,
         )
-        # Validate separately so the caller can compare raw vs cleaned output.
-        validation_error = None
+
         validated = None
+        error = None
+        trace: list[dict[str, Any]] = []
+        usage: dict[str, Any] = {}
         try:
-            validated = recommender._validate(raw, catalog)
+            validated, usage, model, trace = recommender.generate_with_trace(
+                workouts,
+                body_weights,
+                catalog,
+                profile=profile,
+                state=state,
+                waists=waists,
+                today=today,
+                history_limit=limit,
+            )
         except recommender.RecommendationError as exc:
-            validation_error = str(exc)
+            error = str(exc)
+            trace = getattr(exc, "trace", trace)
+            usage = recommender._sum_usage(*(a.get("usage", {}) for a in trace))
 
         return _result(
             {
-                "ok": True,
-                "summary": "Готово: сырой и валидированный ответ модели.",
+                "ok": error is None,
+                "summary": (
+                    f"Готово за {len(trace)} попытк{'у' if len(trace) == 1 else 'и'} "
+                    "(сырые ответы и нарушения — в attempts)."
+                    if error is None
+                    else f"Генерация не прошла валидатор: {error}"
+                ),
                 "user_id": uid,
                 "model": model,
-                "history_used": min(limit, len(workouts)),
-                "raw_model_output": raw,
+                "attempts": trace,
                 "validated": validated,
-                "validation_error": validation_error,
+                "error": error,
                 "usage": usage,
                 "cost": _estimate_cost(model, usage),
                 "user_prompt": user,
@@ -341,6 +534,8 @@ def coach_generate_recommendation(
             body_weights,
             catalog,
             profile=recommender.load_profile(_PROFILE_PATH),
+            state=coach_state.load_state(_STATE_PATH),
+            waists=STORE.list_waists(uid),
             history_limit=limit,
         )
         stored = None

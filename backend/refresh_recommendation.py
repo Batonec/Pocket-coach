@@ -24,6 +24,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import backend_store  # noqa: E402
+import coach_state  # noqa: E402
 import recommender  # noqa: E402
 
 
@@ -31,6 +32,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
 STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "static")))
 PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
+STATE_PATH = coach_state.default_state_path(DB_PATH)
 USER_ID = int(os.getenv("MINIAPP_TELEGRAM_RECOVERY_USER_ID", "3") or "3")
 MAX_AGE_HOURS = float(os.getenv("REFRESH_MAX_AGE_HOURS", "24"))
 # A 'pending' row older than this is a generation that died mid-flight
@@ -86,6 +88,8 @@ def run(store: backend_store.MiniAppStore, user_id: int, force: bool = False) ->
             body_weights,
             catalog,
             profile=recommender.load_profile(PROFILE_PATH),
+            state=coach_state.load_state(STATE_PATH),
+            waists=store.list_waists(user_id),
         )
     except recommender.RecommendationError as exc:
         store.fail_recommendation(user_id, str(exc))

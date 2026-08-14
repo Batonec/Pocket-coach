@@ -1,28 +1,56 @@
 # Coach MCP
 
-Read-only MCP server over the Trainer mini-app data, plus tools to **debug the
-next-workout recommendations**. It reads the same SQLite database the backend
-uses (`backend`) and reuses `recommender.py`, so what you see here is
-exactly what the app's backend generates.
+MCP server over the Trainer mini-app data, plus tools to **debug the
+next-workout recommendations** and manage the **coaching state** (preparation
+phase, waist measurements, injection-cycle config). It reads the same SQLite
+database the backend uses (`backend`) and reuses `recommender.py` /
+`coach_state.py` / `coach_features.py`, so what you see here is exactly what
+the app's backend generates.
 
 Use it to chat with Claude as a "coach" about your training, and to inspect the
-recommendation pipeline (the exact prompt, the raw model output before
-validation, token usage and cost).
+recommendation pipeline (the exact prompt, the model's attempts with semantic-
+validator violations and the auto-reprompt, token usage and cost).
 
 ## Tools
+
+### Data (read-only)
 
 | Tool | What it does |
 |------|--------------|
 | `coach_list_workouts(limit=20)` | Workout history (newest first) + the compact serialization the model sees |
 | `coach_get_workout(workout_id)` | One workout, full payload |
 | `coach_list_body_weights()` | Body-weight history |
+| `coach_list_waists()` | Waist-measurement history (cm) |
 | `coach_get_catalog()` | The exercise catalog (only these exercises exist) |
+| `coach_get_state()` | Coaching state: phase + params, block week, weekly volume target, return-from-break flag, hormone-cycle day |
+
+### Coaching state (writing)
+
+| Tool | What it does |
+|------|--------------|
+| `coach_set_phase(phase, params?)` | Switch the preparation phase by hand (`cut_recomp` / `lean_bulk` / `maintenance`); stamps today as the phase start. No automatic switching ever — when a phase goal is reached, the prompt only asks the model to *suggest* the switch |
+| `coach_update_state(waist_limit_cm?, waist_base_cm?, injection_day?)` | Global knobs: hard waist limit, phase-base waist, injection weekday |
+| `coach_add_waist(waist_cm, entry_date?)` | Record a waist measurement (upserts per date) |
+| `coach_delete_waist(entry_id)` | Remove a mistyped measurement |
+
+### Recommendation engine
+
+| Tool | What it does |
+|------|--------------|
 | `coach_get_stored_recommendation()` | The recommendation currently cached for the app (status/based_on/payload/tokens/stale) |
-| `coach_preview_prompt(limit=20)` | The exact system+user prompt and JSON schema — **no API call** (free) |
-| `coach_debug_recommendation(limit=20)` | Calls the model and returns the **raw output (pre-validation)** + validated result + prompt + tokens/cost. Does not write to the DB |
+| `coach_preview_prompt(limit=20)` | The exact system+user prompt and JSON schema — **no API call** (free). Includes phase, block week and cycle info |
+| `coach_debug_recommendation(limit=20)` | Full generation run with the semantic validator: every attempt (raw output + violations + reprompt), final result, tokens/cost. Does not write to the DB |
 | `coach_generate_recommendation(limit=20, store=false)` | Generate a validated recommendation; `store=true` overwrites the app's cached recommendation |
 
 All tools accept an optional `user_id` (defaults to the configured user).
+
+## State files (next to the DB)
+
+- `coach_profile.json` — athlete prose profile (personal/medical context; never
+  in the repo, template: `backend/coach_profile.example.json`);
+- `coach_state.json` — structured coaching state: phase, phase start, per-phase
+  overrides, waist limit/base, injection day (template:
+  `backend/coach_state.example.json`; override path with `COACH_STATE_PATH`).
 
 ## Environment
 

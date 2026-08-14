@@ -55,6 +55,22 @@ def normalize_set_effort(value: object) -> str | None:
     return text
 
 
+def normalize_set_rir(value: object) -> int | None:
+    """Optional reps-in-reserve (0–4), usually recorded on the last set of an
+    exercise. More precise than the effort marks; the coach prompt prefers it."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, bool):
+        raise ValueError("Set rir must be an integer between 0 and 4")
+    try:
+        rir = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Set rir must be an integer between 0 and 4") from exc
+    if not 0 <= rir <= 4:
+        raise ValueError("Set rir must be an integer between 0 and 4")
+    return rir
+
+
 MAX_RECOMMENDATION_SNAPSHOT_BYTES = 8192
 
 
@@ -182,6 +198,7 @@ def normalize_workout_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
                     "reps": reps,
                     "weight": weight,
                     "effort": normalize_set_effort(raw_set.get("effort")),
+                    "rir": normalize_set_rir(raw_set.get("rir")),
                     "notes": normalize_notes(raw_set.get("notes")),
                 }
             )
@@ -257,6 +274,36 @@ def normalize_body_weight_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Loose write-time bounds for a waist measurement (cm); the coach logic applies
+# its own stricter plausibility filter at read time, mirroring body weight.
+MIN_WAIST_CM = 40.0
+MAX_WAIST_CM = 250.0
+
+
+def normalize_waist_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    entry_date = str(payload.get("entry_date", "")).strip()
+    try:
+        date.fromisoformat(entry_date)
+    except ValueError:
+        raise ValueError("entry_date must be in YYYY-MM-DD format")
+
+    try:
+        waist = float(payload.get("waist", 0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("waist must be numeric") from exc
+
+    if not (MIN_WAIST_CM <= waist <= MAX_WAIST_CM):
+        raise ValueError(
+            f"waist must be between {MIN_WAIST_CM:g} and {MAX_WAIST_CM:g} cm"
+        )
+
+    return {
+        "entry_date": entry_date,
+        "waist": waist,
+        "notes": normalize_notes(payload.get("notes")),
+    }
+
+
 class MiniAppStore:
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -325,6 +372,22 @@ class MiniAppStore:
 
                 CREATE INDEX IF NOT EXISTS idx_body_weights_user_date
                 ON body_weights(user_id, entry_date ASC, id ASC);
+
+                -- Weekly waist measurements (cm): the second body-composition
+                -- metric next to weight; feeds the coach nutrition matrix.
+                CREATE TABLE IF NOT EXISTS waists (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    entry_date TEXT NOT NULL,
+                    waist REAL NOT NULL,
+                    notes TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    UNIQUE(user_id, entry_date)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_waists_user_date
+                ON waists(user_id, entry_date ASC, id ASC);
 
                 CREATE TABLE IF NOT EXISTS recommendations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -937,6 +1000,102 @@ class MiniAppStore:
 
         return self._deserialize_body_weight(row)
 
+    # --- waist measurements (weekly, cm) ---------------------------------- #
+    def list_waists(self, user_id: int) -> list[dict[str, Any]]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, user_id, entry_date, waist, notes, created_at, updated_at
+                FROM waists
+                WHERE user_id = ?
+                ORDER BY entry_date ASC, id ASC
+                """,
+                (user_id,),
+            ).fetchall()
+        return [self._deserialize_waist(row) for row in rows]
+
+    def save_waist(self, user_id: int, payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        """Upsert by (user, entry_date) — one measurement per day, like weight."""
+        normalized_payload = normalize_waist_payload(payload)
+        timestamp = utc_now()
+
+        with self._connection() as connection:
+            existing = connection.execute(
+                """
+                SELECT id FROM waists
+                WHERE user_id = ? AND entry_date = ?
+                """,
+                (user_id, normalized_payload["entry_date"]),
+            ).fetchone()
+
+            if existing is None:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO waists (
+                        user_id, entry_date, waist, notes, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        normalized_payload["entry_date"],
+                        normalized_payload["waist"],
+                        normalized_payload["notes"],
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                row_id, created = cursor.lastrowid, True
+            else:
+                connection.execute(
+                    """
+                    UPDATE waists
+                    SET waist = ?, notes = ?, updated_at = ?
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    (
+                        normalized_payload["waist"],
+                        normalized_payload["notes"],
+                        timestamp,
+                        existing["id"],
+                        user_id,
+                    ),
+                )
+                row_id, created = existing["id"], False
+
+            row = connection.execute(
+                """
+                SELECT id, user_id, entry_date, waist, notes, created_at, updated_at
+                FROM waists
+                WHERE id = ?
+                """,
+                (row_id,),
+            ).fetchone()
+
+        if row is None:
+            raise RuntimeError("Failed to persist waist entry")
+        return self._deserialize_waist(row), created
+
+    def delete_waist(self, user_id: int, entry_id: int) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT id, user_id, entry_date, waist, notes, created_at, updated_at
+                FROM waists
+                WHERE id = ? AND user_id = ?
+                """,
+                (entry_id, user_id),
+            ).fetchone()
+            if row is None:
+                return None
+
+            connection.execute(
+                "DELETE FROM waists WHERE id = ? AND user_id = ?",
+                (entry_id, user_id),
+            )
+
+        return self._deserialize_waist(row)
+
     def _get_workout_row(
         self,
         connection: sqlite3.Connection,
@@ -985,6 +1144,16 @@ class MiniAppStore:
             "id": row["id"],
             "entry_date": row["entry_date"],
             "weight": float(row["weight"]),
+            "notes": row["notes"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _deserialize_waist(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "entry_date": row["entry_date"],
+            "waist": float(row["waist"]),
             "notes": row["notes"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
