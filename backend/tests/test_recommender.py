@@ -296,6 +296,14 @@ class RestDaysTests(unittest.TestCase):
         )
         self.assertEqual(rec["rest_days"], 2)
         self.assertEqual(rec["next_workout_date"], "2026-06-14")
+        # Phase/cycle context ships with the payload for the iOS client.
+        context = rec["coach_context"]
+        self.assertEqual(context["phase"], "cut_recomp")
+        self.assertEqual(context["block_week"], 2)  # anchored on the 06-05 workout
+        self.assertFalse(context["deload_week"])
+        self.assertEqual(context["weekly_target"], [7, 10])
+        self.assertEqual(context["group_targets"]["грудь"], [7, 10])
+        self.assertEqual(context["group_targets"]["бицепс"], [4, 8])
 
 
 class SerializationTests(unittest.TestCase):

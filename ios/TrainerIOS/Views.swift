@@ -975,12 +975,50 @@ struct CoachCard: View {
     }
 }
 
+// Compact preparation-phase chip built from the recommendation's server-side
+// coach context: «ДЕФИЦИТ · Н2», «НАБОР · Н5» or a warn-tinted «РАЗГРУЗКА».
+struct CoachPhaseChip: View {
+    var label: String
+    var tint: Color
+
+    var body: some View {
+        Text(label)
+            .font(.jbm(9.5, weight: .bold)).tracking(0.5)
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(tint.opacity(0.12), in: Capsule())
+            .overlay(Capsule().stroke(tint.opacity(0.22), lineWidth: 0.5))
+            .lineLimit(1)
+            .fixedSize()
+    }
+
+    static func make(_ context: CoachContext?) -> CoachPhaseChip? {
+        guard let context else { return nil }
+        if context.deloadWeek == true {
+            return CoachPhaseChip(label: "РАЗГРУЗКА", tint: DesignPalette.warn)
+        }
+        guard let phase = context.phase else { return nil }
+        let name: String
+        switch phase {
+        case "cut_recomp": name = "ДЕФИЦИТ"
+        case "lean_bulk": name = "НАБОР"
+        case "maintenance": name = "ПОДДЕРЖАНИЕ"
+        default: name = phase.uppercased()
+        }
+        if let week = context.blockWeek {
+            return CoachPhaseChip(label: "\(name) · Н\(week)", tint: DesignPalette.ink3)
+        }
+        return CoachPhaseChip(label: name, tint: DesignPalette.ink3)
+    }
+}
+
 // The "почему так" sheet behind the "?" in the plan header — focus + load + the
 // full rationale text that used to live (collapsed) inside the expanded card.
 private struct CoachRationaleSheet: View {
     var focus: String?
     var loadType: String?
     var rationale: String
+    var coachContext: CoachContext?
 
     var body: some View {
         ZStack {
@@ -1002,17 +1040,22 @@ private struct CoachRationaleSheet: View {
                             .foregroundStyle(DesignPalette.ink)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    if let loadType {
-                        let chip = historyLoadChip(loadType)
-                        HStack(spacing: 6) {
-                            Circle().fill(chip.color).frame(width: 6, height: 6)
-                            Text("\(chip.label) нагрузка".uppercased())
-                                .font(.jbm(10, weight: .bold)).tracking(0.6)
-                                .foregroundStyle(chip.color)
+                    HStack(spacing: 8) {
+                        if let loadType {
+                            let chip = historyLoadChip(loadType)
+                            HStack(spacing: 6) {
+                                Circle().fill(chip.color).frame(width: 6, height: 6)
+                                Text("\(chip.label) нагрузка".uppercased())
+                                    .font(.jbm(10, weight: .bold)).tracking(0.6)
+                                    .foregroundStyle(chip.color)
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(chip.color.opacity(0.13), in: Capsule())
+                            .overlay(Capsule().stroke(chip.color.opacity(0.24), lineWidth: 0.5))
                         }
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(chip.color.opacity(0.13), in: Capsule())
-                        .overlay(Capsule().stroke(chip.color.opacity(0.24), lineWidth: 0.5))
+                        if let phaseChip = CoachPhaseChip.make(coachContext) {
+                            phaseChip
+                        }
                     }
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, para in
@@ -1148,7 +1191,8 @@ private struct TodayScreen: View {
             CoachRationaleSheet(
                 focus: store.recommendation?.recommendation?.focus,
                 loadType: store.recommendation?.recommendation?.loadType,
-                rationale: store.recommendation?.recommendation?.rationale ?? ""
+                rationale: store.recommendation?.recommendation?.rationale ?? "",
+                coachContext: store.recommendation?.recommendation?.coachContext
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -2282,6 +2326,9 @@ private struct HistoryNextWorkoutCard: View {
                 Text("След. тренировка")
                     .tLabel()
                 Spacer(minLength: 6)
+                if let phaseChip = CoachPhaseChip.make(payload.coachContext) {
+                    phaseChip
+                }
                 loadBadge(payload.loadType)
             }
             VStack(alignment: .leading, spacing: 0) {
@@ -2579,6 +2626,7 @@ private struct HistoryExerciseRow: View {
 private struct ProgressTabScreen: View {
     @EnvironmentObject private var store: TrainerStore
     @Environment(\.dismiss) private var dismiss
+    @State private var showWeeklyReport = false
 
     var body: some View {
         ZStack {
@@ -2587,6 +2635,12 @@ private struct ProgressTabScreen: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .swipeBackOverlay { dismiss() }
+        .sheet(isPresented: $showWeeklyReport) {
+            WeeklyReportSheet()
+                .environmentObject(store)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     private var content: some View {
@@ -2606,6 +2660,7 @@ private struct ProgressTabScreen: View {
 
                     volumeSection
                     disciplineSection
+                    weeklyReportSection
 
                     sectionHeader
 
@@ -2690,9 +2745,12 @@ private struct ProgressTabScreen: View {
     // MARK: weekly volume
 
     private var volumeSection: some View {
-        let rows = TrainerLogic.weeklyVolumeByGroup(store.workouts)
+        // Targets come from the coach's current block week when available
+        // (ramp/deload-aware); the static policy ranges are the fallback.
+        let context = store.recommendation?.recommendation?.coachContext
+        let rows = TrainerLogic.weeklyVolumeByGroup(store.workouts, targets: context?.groupTargets)
         return VStack(alignment: .leading, spacing: 8) {
-            miniHeader("ОБЪЁМ ПО ГРУППАМ", "7 дней")
+            miniHeader("ОБЪЁМ ПО ГРУППАМ", volumeTrailing(context))
             VStack(spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
                     if idx > 0 {
@@ -2707,6 +2765,13 @@ private struct ProgressTabScreen: View {
         }
     }
 
+    private func volumeTrailing(_ context: CoachContext?) -> String {
+        guard let context else { return "7 дней" }
+        if context.deloadWeek == true { return "разгрузка · 7 дней" }
+        if let week = context.blockWeek { return "неделя \(week) · 7 дней" }
+        return "7 дней"
+    }
+
     // MARK: discipline (plan vs fact)
 
     private var disciplineSection: some View {
@@ -2715,6 +2780,123 @@ private struct ProgressTabScreen: View {
             miniHeader("ДИСЦИПЛИНА", store.selectedRange.label)
             DisciplineCard(summary: summary)
         }
+    }
+
+    // MARK: weekly coach report (cached server-side by the Sunday timer)
+
+    private var weeklyReportSection: some View {
+        Button {
+            showWeeklyReport = true
+        } label: {
+            HStack(spacing: 11) {
+                ZStack {
+                    Circle().fill(DesignPalette.accent.opacity(0.12)).frame(width: 36, height: 36)
+                        .overlay(Circle().stroke(DesignPalette.accent.opacity(0.20), lineWidth: 0.5))
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(DesignPalette.accent)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Отчёт недели")
+                        .font(.jbm(13.5, weight: .bold))
+                        .foregroundStyle(DesignPalette.ink)
+                    Text("итоги · ПР · вес и питание · фокус")
+                        .font(.jbm(10.5))
+                        .foregroundStyle(DesignPalette.ink3)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.jbm(11, weight: .heavy))
+                    .foregroundStyle(DesignPalette.ink4)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .glassCard(radius: 20)
+        }
+        .buttonStyle(.pressable(scale: 0.98))
+    }
+}
+
+// Sheet with the coach's weekly retrospective, rendered from cached Markdown.
+// The report is generated by the Sunday-evening server timer, so opening this
+// costs nothing; before the first Sunday it shows a friendly empty state.
+private struct WeeklyReportSheet: View {
+    @EnvironmentObject private var store: TrainerStore
+    @State private var entry: WeeklyReportEntry?
+    @State private var isLoading = true
+
+    var body: some View {
+        ZStack {
+            WarmWallpaper()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 15))
+                            .foregroundStyle(DesignPalette.accent)
+                        Text("Отчёт недели")
+                            .font(.jbm(11, weight: .bold)).tracking(0.6)
+                            .textCase(.uppercase).foregroundStyle(DesignPalette.ink2)
+                        Spacer()
+                        if let entry {
+                            Text("по \(entry.periodEnd)")
+                                .font(.jbm(10.5, weight: .semibold))
+                                .foregroundStyle(DesignPalette.ink4)
+                        }
+                    }
+                    if isLoading {
+                        HStack(spacing: 11) {
+                            ProgressView().tint(DesignPalette.accent)
+                            Text("Загружаю отчёт…")
+                                .font(.jbm(12.5)).foregroundStyle(DesignPalette.ink3)
+                        }
+                        .padding(.top, 8)
+                    } else if let entry {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(Array(paragraphs(entry.report).enumerated()), id: \.offset) { _, para in
+                                Text(markdown(para))
+                                    .font(.jbm(13))
+                                    .foregroundStyle(DesignPalette.ink2)
+                                    .lineSpacing(4)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(.top, 2)
+                    } else {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Отчёта пока нет")
+                                .font(.jbm(15, weight: .bold)).tracking(-0.3)
+                                .foregroundStyle(DesignPalette.ink)
+                            Text("Тренер собирает итоги недели сам — каждое воскресенье вечером. Загляни после.")
+                                .font(.jbm(12)).foregroundStyle(DesignPalette.ink3)
+                                .lineSpacing(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.top, 8)
+                    }
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .task {
+            entry = await store.fetchWeeklyReport()
+            isLoading = false
+        }
+    }
+
+    private func paragraphs(_ text: String) -> [String] {
+        text
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func markdown(_ line: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: line,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(line)
     }
 }
 

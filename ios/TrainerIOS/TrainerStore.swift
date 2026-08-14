@@ -300,6 +300,12 @@ final class TrainerStore: ObservableObject {
         }
     }
 
+    /// The cached coach weekly report (token-free endpoint: the Sunday timer
+    /// generates it server-side). Nil when nothing is cached yet.
+    func fetchWeeklyReport() async -> WeeklyReportEntry? {
+        (try? await APIClient(baseURLString: apiBaseURLString).fetchWeeklyReport())?.report
+    }
+
     // MARK: - Coach recommendation
 
     /// Instant cached read. Runs after boot reaches `.loaded`, outside the 3s

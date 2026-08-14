@@ -117,6 +117,10 @@ final class APIClient {
         try await get("/api/recommendations/next")
     }
 
+    func fetchWeeklyReport() async throws -> WeeklyReportResponse {
+        try await get("/api/reports/weekly")
+    }
+
     /// Force-regenerate. Synchronous on the server (10–40s); construct this client
     /// with `APIClient.longRunningSession` so the call isn't cut at 3s.
     func refreshRecommendation() async throws -> RecommendationResponse {

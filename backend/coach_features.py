@@ -63,6 +63,33 @@ EFFECTIVE_SETS: dict[int, dict[str, float]] = {
 
 BIG_GROUPS = ("грудь", "спина", "квадрицепс/ягодичные")
 
+# Weekly direct-set landmarks for the small groups (the coaching policy from
+# the system prompt); big groups follow the block-week ramp instead.
+SMALL_GROUP_TARGETS: dict[str, tuple[int, int]] = {
+    "дельты": (6, 12),
+    "бицепс": (4, 8),
+    "трицепс": (4, 8),
+    "бицепс бедра": (5, 10),
+}
+
+
+def group_volume_targets(
+    week_target: tuple[int, int] | None,
+    maintenance_sets: tuple[int, int] | None = None,
+) -> dict[str, tuple[int, int]]:
+    """Per-group weekly set targets for the client's volume screen: big groups
+    follow the current block-week corridor (ramp/deload), small groups keep
+    their policy ranges, maintenance flattens everything to 2–3."""
+    targets: dict[str, tuple[int, int]] = {}
+    for group in MUSCLE_GROUPS:
+        if maintenance_sets:
+            targets[group] = tuple(maintenance_sets)
+        elif group in BIG_GROUPS:
+            targets[group] = tuple(week_target) if week_target else (10, 16)
+        else:
+            targets[group] = SMALL_GROUP_TARGETS[group]
+    return targets
+
 # Plausible adult body-weight bounds: entries outside are logging noise (e.g.
 # an exercise weight saved into the body-weight table) and must never reach
 # the calorie-advice logic.

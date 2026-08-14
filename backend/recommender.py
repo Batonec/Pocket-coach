@@ -1136,7 +1136,39 @@ def generate_with_trace(
     recommendation["next_workout_date"] = (
         today + timedelta(days=recommendation["rest_days"])
     ).isoformat()
+    recommendation["coach_context"] = _coach_context(state, workouts, today)
     return recommendation, usage, model, trace
+
+
+def _coach_context(
+    state: dict[str, Any], workouts: list[dict[str, Any]], today: date
+) -> dict[str, Any]:
+    """Phase/cycle context attached to the recommendation payload so the iOS
+    client can render the phase badge and the CURRENT week's volume targets
+    instead of hardcoding the policy ranges."""
+    params = coach_state.phase_params(state)
+    position = coach_state.cycle_position(state, workouts, today)
+    maintenance_sets = (
+        params.get("sets_per_group") if params["phase"] == "maintenance" else None
+    )
+    if position["deload_week"]:
+        week_target = params.get("ramp_start")
+    else:
+        week_target = coach_state.weekly_volume_target(state, position["cycle_week"])
+    return {
+        "phase": params["phase"],
+        "phase_title": params["title"],
+        "block_week": position["block_week"],
+        "deload_week": position["deload_week"],
+        "return_from_break": coach_state.is_return_from_break(workouts, today),
+        "weekly_target": list(week_target) if week_target else None,
+        "group_targets": {
+            group: list(target)
+            for group, target in coach_features.group_volume_targets(
+                week_target, maintenance_sets
+            ).items()
+        },
+    }
 
 
 def generate(

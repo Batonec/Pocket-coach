@@ -26,6 +26,7 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 - `GET /api/workouts` · `POST /api/workouts` · `PUT /api/workouts/{id}` · `DELETE /api/workouts/{id}`
 - `GET /api/body-weights` · `POST /api/body-weights` · `DELETE /api/body-weights/{id}`
 - `GET /api/recommendations/next` · `POST /api/recommendations/refresh`
+- `GET /api/reports/weekly` — кэшированный недельный отчёт тренера (без генерации; отчёт пишет воскресный таймер или Coach MCP)
 
 Каталог упражнений отдаётся как статика по `GET /data/exercises.json` (его читает и iOS-клиент,
 и `recommender.py`).

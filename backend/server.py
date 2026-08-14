@@ -292,6 +292,27 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/api/reports/weekly":
+            user, headers = self._resolve_current_user(allow_debug_fallback=True)
+            if user is None:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {
+                        "ok": False,
+                        "reason": "No active session. iOS client must resolve a session first.",
+                    },
+                )
+                return
+
+            # Cache-only by design: the Sunday timer (weekly_report.py) or the
+            # Coach MCP tool generate reports; this endpoint never spends tokens.
+            self._send_json(
+                HTTPStatus.OK,
+                {"ok": True, "report": STORE.get_latest_coach_report(int(user["id"]))},
+                extra_headers=headers,
+            )
+            return
+
         static_path = self._resolve_static_path(path)
         if static_path is not None:
             self._send_file(static_path)

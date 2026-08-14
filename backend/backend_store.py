@@ -1145,6 +1145,21 @@ class MiniAppStore:
             raise RuntimeError("Failed to persist coach report")
         return stored
 
+    def get_latest_coach_report(self, user_id: int, days: int = 7) -> dict[str, Any] | None:
+        """The most recent cached weekly report (served by /api/reports/weekly)."""
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT period_end, days, report, model, input_tokens, output_tokens, created_at
+                FROM coach_reports
+                WHERE user_id = ? AND days = ?
+                ORDER BY period_end DESC
+                LIMIT 1
+                """,
+                (user_id, int(days)),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def get_coach_report(
         self, user_id: int, period_end: str, days: int
     ) -> dict[str, Any] | None:

@@ -725,22 +725,31 @@ enum TrainerLogic {
     }
 
     // Muscle-group map + weekly set landmarks — mirrors the backend coaching
-    // policy (recommender.MUSCLE_GROUPS) so the Progress screen shows the same
-    // accounting the coach reasons over. Counting is by the exercise's primary
-    // muscle (same as the prompt's volume report).
-    static let muscleGroupLandmarks: [(name: String, ids: [Int], min: Int, max: Int)] = [
-        ("Грудь", [18, 1, 17], 10, 16),
-        ("Спина", [9, 4, 10], 10, 16),
-        ("Квадрицепс/ягод.", [8, 16], 10, 16),
-        ("Дельты", [13], 6, 12),
-        ("Бицепс", [11], 4, 8),
-        ("Трицепс", [12], 4, 8),
-        ("Бицепс бедра", [15], 5, 10),
+    // policy (coach_features.MUSCLE_GROUPS) so the Progress screen shows the
+    // same accounting the coach reasons over. Counting is by the exercise's
+    // primary muscle (same as the prompt's volume report). `key` is the
+    // backend group name used by coach_context.group_targets; min/max are the
+    // static fallbacks when no server targets are available yet.
+    static let muscleGroupLandmarks: [(name: String, key: String, ids: [Int], min: Int, max: Int)] = [
+        ("Грудь", "грудь", [18, 1, 17], 10, 16),
+        ("Спина", "спина", [9, 4, 10], 10, 16),
+        ("Квадрицепс/ягод.", "квадрицепс/ягодичные", [8, 16], 10, 16),
+        ("Дельты", "дельты", [13], 6, 12),
+        ("Бицепс", "бицепс", [11], 4, 8),
+        ("Трицепс", "трицепс", [12], 4, 8),
+        ("Бицепс бедра", "бицепс бедра", [15], 5, 10),
     ]
 
     /// Work sets per muscle group over the last `days` (default 7) — the weekly
-    /// volume the coach tracks, with target landmarks for each group.
-    static func weeklyVolumeByGroup(_ workouts: [Workout], today: Date = Date(), days: Int = 7) -> [MuscleGroupVolume] {
+    /// volume the coach tracks. `targets` (from the recommendation's
+    /// coach_context) overrides the static landmarks with the CURRENT block
+    /// week's corridor, so the screen agrees with what the coach is ramping.
+    static func weeklyVolumeByGroup(
+        _ workouts: [Workout],
+        targets: [String: [Int]]? = nil,
+        today: Date = Date(),
+        days: Int = 7
+    ) -> [MuscleGroupVolume] {
         let cal = Calendar.current
         let end = cal.startOfDay(for: today)
         guard let start = cal.date(byAdding: .day, value: -(days - 1), to: end) else { return [] }
@@ -755,7 +764,12 @@ enum TrainerLogic {
         }
         return muscleGroupLandmarks.map { group in
             let count = group.ids.reduce(0) { $0 + (setsByID[$1] ?? 0) }
-            return MuscleGroupVolume(name: group.name, count: count, minTarget: group.min, maxTarget: group.max)
+            var minTarget = group.min, maxTarget = group.max
+            if let target = targets?[group.key], target.count == 2, target[0] <= target[1] {
+                minTarget = target[0]
+                maxTarget = target[1]
+            }
+            return MuscleGroupVolume(name: group.name, count: count, minTarget: minTarget, maxTarget: maxTarget)
         }
     }
 

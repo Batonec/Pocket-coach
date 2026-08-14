@@ -371,6 +371,24 @@ class PhaseSummaryTests(unittest.TestCase):
         self.assertEqual(summary["pr_dates"], ["2026-08-10"])
 
 
+class GroupTargetTests(unittest.TestCase):
+    def test_big_groups_follow_the_week_corridor(self) -> None:
+        targets = coach_features.group_volume_targets((6, 8))
+        self.assertEqual(targets["грудь"], (6, 8))
+        self.assertEqual(targets["спина"], (6, 8))
+        self.assertEqual(targets["квадрицепс/ягодичные"], (6, 8))
+        self.assertEqual(targets["дельты"], (6, 12))     # small groups stay fixed
+        self.assertEqual(targets["бицепс бедра"], (5, 10))
+        self.assertEqual(set(targets), set(coach_features.MUSCLE_GROUPS))
+
+    def test_maintenance_flattens_everything(self) -> None:
+        targets = coach_features.group_volume_targets(None, maintenance_sets=(2, 3))
+        self.assertTrue(all(target == (2, 3) for target in targets.values()))
+
+    def test_missing_corridor_falls_back_to_policy_cap(self) -> None:
+        self.assertEqual(coach_features.group_volume_targets(None)["грудь"], (10, 16))
+
+
 class WeightRangeTests(unittest.TestCase):
     def test_eight_week_range_merges_the_duplicate_id(self) -> None:
         workouts = [

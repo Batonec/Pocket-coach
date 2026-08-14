@@ -393,3 +393,34 @@ class ServerApiTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WeeklyReportEndpointTest(unittest.TestCase):
+    def test_weekly_report_serves_cache_only(self) -> None:
+        with running_miniapp_server(allow_debug_user=True) as app:
+            client = JsonHttpClient(app.base_url)
+            client.request_json("POST", "/api/session/resolve", {})
+
+            empty = client.request_json("GET", "/api/reports/weekly")
+            self.assertEqual(empty.status, 200)
+            self.assertTrue(empty.payload["ok"])
+            self.assertIsNone(empty.payload["report"])
+
+            user = app.module.STORE.ensure_debug_user("browser-default")
+            app.module.STORE.save_coach_report(
+                user["id"], "2026-08-09", 7, "**Итоги** старая", "m", 1, 2
+            )
+            app.module.STORE.save_coach_report(
+                user["id"], "2026-08-16", 7, "**Итоги** свежая", "m", 1, 2
+            )
+
+            cached = client.request_json("GET", "/api/reports/weekly")
+            self.assertEqual(cached.status, 200)
+            self.assertEqual(cached.payload["report"]["report"], "**Итоги** свежая")
+            self.assertEqual(cached.payload["report"]["period_end"], "2026-08-16")
+
+    def test_weekly_report_requires_session(self) -> None:
+        with running_miniapp_server(allow_debug_user=False) as app:
+            client = JsonHttpClient(app.base_url)
+            response = client.request_json("GET", "/api/reports/weekly")
+            self.assertEqual(response.status, 401)
