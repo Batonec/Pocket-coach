@@ -658,6 +658,14 @@ final class TrainerStore: ObservableObject {
             && appliedPlan.exercises == sanitizedPlanExercises(payload)
     }
 
+    /// A not-yet-started workout must not begin from targets that are being
+    /// regenerated. Progress/history may keep rendering the previous payload,
+    /// but Today hides its actionable plan until the fresh one is ready.
+    var isTodayPlanWaitingForRefresh: Bool {
+        guard draft.editingWorkoutID == nil, !draft.hasRealSets else { return false }
+        return isRefreshingRecommendation || recommendation?.status == "pending"
+    }
+
     func addPlannedSet(exerciseID: Int) {
         guard let exercise = exerciseDefinition(id: exerciseID) else { return }
         addSet(nextPlannedSet(exerciseID: exerciseID), to: exercise)

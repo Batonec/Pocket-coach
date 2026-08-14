@@ -132,6 +132,28 @@ final class TrainerStoreTests: XCTestCase {
         XCTAssertTrue(store.draft.hasRealSets)
     }
 
+    func testTodayHidesRefreshingPlanOnlyUntilWorkoutStarts() {
+        let store = TrainerStore(defaults: .isolatedTestDefaults())
+        store.exercises = TestFixtures.catalog
+        store.recommendation = readyRecommendation()
+        store.applyRecommendationAsPlan()
+
+        store.isRefreshingRecommendation = true
+        XCTAssertTrue(store.isTodayPlanWaitingForRefresh)
+
+        store.addPlannedSet(exerciseID: 8)
+        XCTAssertFalse(store.isTodayPlanWaitingForRefresh)
+    }
+
+    func testTodayHidesServerPendingPlanWithoutLocalSpinner() {
+        let store = TrainerStore(defaults: .isolatedTestDefaults())
+        var pending = readyRecommendation()
+        pending.status = "pending"
+        store.recommendation = pending
+
+        XCTAssertTrue(store.isTodayPlanWaitingForRefresh)
+    }
+
     func testAutoApplySkipsNonReadyRecommendation() {
         let store = TrainerStore(defaults: .isolatedTestDefaults())
         store.exercises = TestFixtures.catalog

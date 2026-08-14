@@ -848,7 +848,7 @@ struct CoachCard: View {
         let status = rec.status ?? "none"
         let busy = store.isRefreshingRecommendation
         if busy || status == "pending" {
-            pendingCard
+            pendingCard(hasPreviousPlan: rec.recommendation != nil)
         } else if status == "failed" {
             failedCard(rec)
         } else if rec.recommendation != nil {
@@ -857,16 +857,20 @@ struct CoachCard: View {
             noneCard
         }
     }
-    // MARK: pending (no prior payload)
+    // MARK: pending
 
-    private var pendingCard: some View {
+    private func pendingCard(hasPreviousPlan: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             header(basedOn: nil)
             HStack(spacing: 11) {
                 ProgressView().tint(DesignPalette.accent)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("ИИ составляет план…").font(.jbm(13.5, weight: .bold)).foregroundStyle(DesignPalette.ink)
-                    Text("обычно 15–20 секунд").font(.jbm(10.5)).foregroundStyle(DesignPalette.ink3)
+                    Text(hasPreviousPlan ? "Обновляю план…" : "ИИ составляет план…")
+                        .font(.jbm(13.5, weight: .bold))
+                        .foregroundStyle(DesignPalette.ink)
+                    Text(hasPreviousPlan ? "старый план временно скрыт" : "обычно 15–20 секунд")
+                        .font(.jbm(10.5))
+                        .foregroundStyle(DesignPalette.ink3)
                 }
             }
             .padding(.top, 16)
@@ -1122,48 +1126,50 @@ private struct TodayScreen: View {
                     CoachCard()
                 }
 
-                if store.draft.editingWorkoutID != nil {
-                    sectionHeader("Редактируем", right: sessionSummary)
-                } else if store.draft.hasRealSets {
-                    sectionHeader("Упражнения", right: sessionSummary)
-                } else if store.appliedPlan != nil {
-                    coachPlanHeader
-                } else {
-                    sectionHeader("План тренировки", right: nil)
-                }
+                if !store.isTodayPlanWaitingForRefresh {
+                    if store.draft.editingWorkoutID != nil {
+                        sectionHeader("Редактируем", right: sessionSummary)
+                    } else if store.draft.hasRealSets {
+                        sectionHeader("Упражнения", right: sessionSummary)
+                    } else if store.appliedPlan != nil {
+                        coachPlanHeader
+                    } else {
+                        sectionHeader("План тренировки", right: nil)
+                    }
 
-                LazyVStack(spacing: 10) {
-                    ForEach(store.displayCards()) { card in
-                        TodayExerciseCard(
-                            card: card,
-                            planningContext: store.planningContext(for: card.exerciseID),
-                            coachNote: store.coachNote(for: card.exerciseID),
-                            onAdd: {
-                                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                                    store.addPlannedSet(exerciseID: card.exerciseID)
-                                }
-                            },
-                            onManual: { openEditor(exerciseID: card.exerciseID, setIndex: nil) },
-                            onEditLast: {
-                                if !card.sets.isEmpty {
-                                    openEditor(exerciseID: card.exerciseID, setIndex: card.sets.count - 1)
-                                }
-                            },
-                            onLongPress: { pendingActionExercise = card }
+                    LazyVStack(spacing: 10) {
+                        ForEach(store.displayCards()) { card in
+                            TodayExerciseCard(
+                                card: card,
+                                planningContext: store.planningContext(for: card.exerciseID),
+                                coachNote: store.coachNote(for: card.exerciseID),
+                                onAdd: {
+                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                        store.addPlannedSet(exerciseID: card.exerciseID)
+                                    }
+                                },
+                                onManual: { openEditor(exerciseID: card.exerciseID, setIndex: nil) },
+                                onEditLast: {
+                                    if !card.sets.isEmpty {
+                                        openEditor(exerciseID: card.exerciseID, setIndex: card.sets.count - 1)
+                                    }
+                                },
+                                onLongPress: { pendingActionExercise = card }
+                            )
+                        }
+                    }
+
+                    AddExerciseButton(isExpanded: $showRareCatalog)
+
+                    if showRareCatalog {
+                        RareCatalogList(
+                            exercises: store.rareExercises(),
+                            onSelect: { exercise in
+                                openEditor(exerciseID: exercise.id, setIndex: nil)
+                                withAnimation { showRareCatalog = false }
+                            }
                         )
                     }
-                }
-
-                AddExerciseButton(isExpanded: $showRareCatalog)
-
-                if showRareCatalog {
-                    RareCatalogList(
-                        exercises: store.rareExercises(),
-                        onSelect: { exercise in
-                            openEditor(exerciseID: exercise.id, setIndex: nil)
-                            withAnimation { showRareCatalog = false }
-                        }
-                    )
                 }
 
             }
@@ -1301,7 +1307,8 @@ private struct TodayScreen: View {
                 .buttonStyle(.pressable(scale: 0.97))
                 .disabled(store.isSavingWorkout)
             }
-        } else if let first = store.displayCards().first {
+        } else if !store.isTodayPlanWaitingForRefresh,
+                  let first = store.displayCards().first {
             Button {
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
                     store.addPlannedSet(exerciseID: first.exerciseID)
