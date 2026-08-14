@@ -123,6 +123,48 @@ class RecommendationsAPITests(unittest.TestCase):
                 time.sleep(0.1)
             self.assertEqual(status, "ready")
 
+    def test_measurements_regenerate_once_more_with_latest_weight_and_waist(self) -> None:
+        def measurement_generate(workouts, body_weights, catalog, **kwargs):  # noqa: ANN001
+            # Keep the first measurement generation in flight long enough for
+            # the waist mutation to request a coalesced follow-up pass.
+            time.sleep(0.15)
+            recommendation = dict(FAKE_REC)
+            recommendation["focus"] = (
+                f"weights={len(body_weights)},waists={len(kwargs.get('waists') or [])}"
+            )
+            return recommendation, {"input_tokens": 10, "output_tokens": 5}, "claude-test"
+
+        with self._server(auto_trigger=True, generate=measurement_generate) as running:
+            client = JsonHttpClient(running.base_url)
+            client.request_json("POST", "/api/workouts", sample_workout_payload(client_id="w1"))
+
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                payload = client.request_json("GET", "/api/recommendations/next").payload
+                if payload.get("status") == "ready":
+                    break
+                time.sleep(0.05)
+
+            client.request_json(
+                "POST", "/api/body-weights",
+                {"entry_date": "2026-08-14", "weight": 79.0},
+            )
+            client.request_json(
+                "POST", "/api/waists",
+                {"entry_date": "2026-08-14", "waist": 84.0},
+            )
+
+            focus = None
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                payload = client.request_json("GET", "/api/recommendations/next").payload
+                if payload.get("status") == "ready":
+                    focus = payload["recommendation"]["focus"]
+                    if focus == "weights=1,waists=1":
+                        break
+                time.sleep(0.05)
+            self.assertEqual(focus, "weights=1,waists=1")
+
 
 class RecommendationStoreTests(unittest.TestCase):
     def _store(self) -> tuple[backend_store.MiniAppStore, int]:

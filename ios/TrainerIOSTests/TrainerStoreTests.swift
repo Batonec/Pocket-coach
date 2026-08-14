@@ -95,6 +95,43 @@ final class TrainerStoreTests: XCTestCase {
         XCTAssertNil(store.appliedPlan)
     }
 
+    func testAutoApplyReplacesAppliedPlanBeforeWorkoutStarts() {
+        let store = TrainerStore(defaults: .isolatedTestDefaults())
+        store.exercises = TestFixtures.catalog
+        store.recommendation = readyRecommendation()
+        store.applyRecommendationAsPlan()
+
+        var refreshed = readyRecommendation()
+        refreshed.recommendation?.focus = "Новый план по свежим замерам"
+        refreshed.recommendation?.exercises[0].sets[0].reps = 8
+        store.recommendation = refreshed
+
+        store.autoApplyRecommendationIfReady()
+
+        XCTAssertEqual(store.appliedPlan?.focus, "Новый план по свежим замерам")
+        XCTAssertEqual(store.appliedPlan?.exercises[0].sets[0].reps, 8)
+        XCTAssertFalse(store.draft.hasRealSets)
+    }
+
+    func testAutoApplyDoesNotReplacePlanAfterWorkoutHasStarted() {
+        let store = TrainerStore(defaults: .isolatedTestDefaults())
+        store.exercises = TestFixtures.catalog
+        store.recommendation = readyRecommendation()
+        store.applyRecommendationAsPlan()
+        store.addPlannedSet(exerciseID: 8)
+
+        var refreshed = readyRecommendation()
+        refreshed.recommendation?.focus = "Новый план по свежим замерам"
+        refreshed.recommendation?.exercises[0].sets[0].reps = 8
+        store.recommendation = refreshed
+
+        store.autoApplyRecommendationIfReady()
+
+        XCTAssertEqual(store.appliedPlan?.focus, "Верх+низ")
+        XCTAssertEqual(store.appliedPlan?.exercises[0].sets[0].reps, 12)
+        XCTAssertTrue(store.draft.hasRealSets)
+    }
+
     func testAutoApplySkipsNonReadyRecommendation() {
         let store = TrainerStore(defaults: .isolatedTestDefaults())
         store.exercises = TestFixtures.catalog

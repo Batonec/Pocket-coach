@@ -57,6 +57,8 @@ REFRESH_MIN_INTERVAL = float(os.getenv("RECOMMENDATION_REFRESH_MIN_INTERVAL", "1
 
 _recommendation_locks: dict[int, threading.Lock] = {}
 _recommendation_locks_guard = threading.Lock()
+_recommendation_workers: set[int] = set()
+_recommendation_rerun_requested: set[int] = set()
 _last_refresh_started: dict[int, float] = {}
 
 
@@ -109,19 +111,49 @@ def _generate_and_store_recommendation(user_id: int) -> dict[str, Any] | None:
 
 def trigger_recommendation_async(user_id: int) -> None:
     """Regenerate the recommendation in the background (fire-and-forget).
-    No-op if a generation for this user is already running."""
-    if EXERCISE_CATALOG is None:
+    Concurrent triggers collapse into one follow-up run using the newest data.
+
+    Measurement edits often arrive close together (weight, then waist, or a
+    correction of today's value). We never run Claude in parallel for one user,
+    but we also never drop the latest edit while an older generation is active.
+    """
+    if EXERCISE_CATALOG is None or STORE.get_latest_workout_id(user_id) is None:
         return
+
+    # Pending is visible synchronously to a client polling immediately after a
+    # mutation response. The previous payload stays in SQLite as a display
+    # fallback until the new ready payload replaces it.
+    STORE.set_recommendation_pending(user_id)
+    with _recommendation_locks_guard:
+        _recommendation_rerun_requested.add(user_id)
+        if user_id in _recommendation_workers:
+            return
+        _recommendation_workers.add(user_id)
 
     def _run() -> None:
         lock = _user_recommendation_lock(user_id)
-        if not lock.acquire(blocking=False):
-            return  # a generation is already in flight for this user
+        lock.acquire()  # a manual refresh may currently own the same lock
         try:
-            STORE.set_recommendation_pending(user_id)
-            _generate_and_store_recommendation(user_id)
-        finally:
-            lock.release()
+            while True:
+                with _recommendation_locks_guard:
+                    _recommendation_rerun_requested.discard(user_id)
+                STORE.set_recommendation_pending(user_id)
+                _generate_and_store_recommendation(user_id)
+
+                # A mutation that landed during generation requests exactly one
+                # more pass. Several rapid edits still collapse into that pass.
+                with _recommendation_locks_guard:
+                    if user_id in _recommendation_rerun_requested:
+                        continue
+                    _recommendation_workers.discard(user_id)
+                    lock.release()
+                    return
+        except Exception as exc:  # noqa: BLE001
+            print(f"[miniapp] recommendation worker error for user {user_id}: {exc}")
+            with _recommendation_locks_guard:
+                _recommendation_workers.discard(user_id)
+                _recommendation_rerun_requested.discard(user_id)
+                lock.release()
 
     threading.Thread(target=_run, name=f"recommend-{user_id}", daemon=True).start()
 
@@ -507,6 +539,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
                 return
 
+            trigger_recommendation_async(int(user["id"]))
             self._send_json(
                 HTTPStatus.CREATED if created else HTTPStatus.OK,
                 {"ok": True, "created": created, "user": user, "entry": entry},
@@ -536,6 +569,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
                 return
 
+            trigger_recommendation_async(int(user["id"]))
             self._send_json(
                 HTTPStatus.CREATED if created else HTTPStatus.OK,
                 {"ok": True, "created": created, "user": user, "entry": entry},
@@ -742,6 +776,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Waist entry not found"})
                 return
 
+            trigger_recommendation_async(int(user["id"]))
             self._send_json(
                 HTTPStatus.OK,
                 {"ok": True, "user": user, "entry": entry, "deleted": True},
@@ -767,6 +802,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Body weight entry not found"})
                 return
 
+            trigger_recommendation_async(int(user["id"]))
             self._send_json(
                 HTTPStatus.OK,
                 {"ok": True, "user": user, "entry": entry, "deleted": True},

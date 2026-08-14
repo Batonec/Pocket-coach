@@ -59,6 +59,8 @@ final class TrainerStore: ObservableObject {
 
     private let defaults: UserDefaults
     private var toastTask: Task<Void, Never>?
+    private var recommendationPollTask: Task<Void, Never>?
+    private var recommendationPollGeneration = 0
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -125,6 +127,10 @@ final class TrainerStore: ObservableObject {
     }
 
     func signOut() async {
+        recommendationPollTask?.cancel()
+        recommendationPollTask = nil
+        recommendationPollGeneration += 1
+        isRefreshingRecommendation = false
         do {
             _ = try await APIClient(baseURLString: apiBaseURLString).logout()
         } catch {
@@ -215,6 +221,7 @@ final class TrainerStore: ObservableObject {
             showToast(response.created == true ? "Вес тела сохранён" : "Вес тела обновлён")
             hideCoachSignals(withIDs: ["measurements_due", "measurements_overdue"])
             refreshCoachSignals()
+            refreshRecommendationAfterMeasurement()
         } catch {
             showToast(error.localizedDescription)
         }
@@ -229,6 +236,7 @@ final class TrainerStore: ObservableObject {
             syncBodyWeightComposer()
             showToast("Запись веса удалена")
             refreshCoachSignals()
+            refreshRecommendationAfterMeasurement()
         } catch {
             showToast(error.localizedDescription)
         }
@@ -280,6 +288,7 @@ final class TrainerStore: ObservableObject {
                 "measurements_due", "measurements_overdue", "waist_limit",
             ])
             refreshCoachSignals()
+            refreshRecommendationAfterMeasurement()
         } catch {
             showToast(error.localizedDescription)
         }
@@ -294,6 +303,7 @@ final class TrainerStore: ObservableObject {
             syncWaistComposer()
             showToast("Замер талии удалён")
             refreshCoachSignals()
+            refreshRecommendationAfterMeasurement()
         } catch {
             showToast(error.localizedDescription)
         }
@@ -454,6 +464,83 @@ final class TrainerStore: ObservableObject {
         }
     }
 
+    /// A weight/waist mutation starts server-side generation in the background.
+    /// Keep the existing payload visible while polling the cheap cached endpoint,
+    /// then apply the refreshed targets only if today's workout has not started.
+    private func refreshRecommendationAfterMeasurement() {
+        guard !workouts.isEmpty else { return }
+
+        recommendationPollGeneration += 1
+        let generation = recommendationPollGeneration
+        recommendationPollTask?.cancel()
+        isRefreshingRecommendation = true
+
+        let current = recommendation
+        recommendation = RecommendationResponse(
+            ok: current?.ok ?? true,
+            status: "pending",
+            stale: true,
+            basedOnWorkoutID: current?.basedOnWorkoutID,
+            basedOnWorkoutCount: current?.basedOnWorkoutCount,
+            model: current?.model,
+            updatedAt: current?.updatedAt,
+            error: nil,
+            recommendation: current?.recommendation
+        )
+
+        recommendationPollTask = Task { [weak self] in
+            guard let self else { return }
+            var lastError: Error?
+
+            // Give the mutation handler time to expose server-side pending,
+            // then poll the cached row; no LLM call is made by these GETs.
+            for attempt in 0..<25 {
+                do {
+                    try await Task.sleep(
+                        nanoseconds: attempt == 0 ? 600_000_000 : 2_000_000_000
+                    )
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled,
+                      self.recommendationPollGeneration == generation else { return }
+
+                do {
+                    let response = try await APIClient(
+                        baseURLString: self.apiBaseURLString
+                    ).fetchRecommendation()
+                    guard self.recommendationPollGeneration == generation else { return }
+                    self.recommendation = response
+
+                    if response.status == "ready" {
+                        self.autoApplyRecommendationIfReady()
+                        self.isRefreshingRecommendation = false
+                        self.recommendationPollTask = nil
+                        self.showToast("План обновлён по свежим замерам")
+                        return
+                    }
+                    if response.status == "failed" {
+                        self.isRefreshingRecommendation = false
+                        self.recommendationPollTask = nil
+                        self.showToast(response.error ?? "Не удалось обновить план")
+                        return
+                    }
+                } catch {
+                    lastError = error
+                }
+            }
+
+            guard self.recommendationPollGeneration == generation else { return }
+            self.isRefreshingRecommendation = false
+            self.recommendationPollTask = nil
+            self.showToast(
+                lastError == nil
+                    ? "Замер сохранён, план ещё обновляется"
+                    : "Замер сохранён, план обновится после восстановления связи"
+            )
+        }
+    }
+
     /// Force a new recommendation. Synchronous on the server (10–40s), so it runs
     /// on the long-running session and shows the pending overlay meanwhile.
     func refreshRecommendation() async {
@@ -493,6 +580,7 @@ final class TrainerStore: ObservableObject {
         guard recommendation?.status == "ready",
               recommendation?.recommendation != nil,
               draft.editingWorkoutID == nil,
+              !draft.hasRealSets,
               !isRecommendationApplied else { return }
         applyRecommendationAsPlan()
     }

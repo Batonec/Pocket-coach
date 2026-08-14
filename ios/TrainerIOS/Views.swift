@@ -3074,8 +3074,7 @@ private struct ProgressTabScreen: View {
                 rows: rows,
                 adherence: adherence,
                 context: context,
-                hasPlan: store.recommendation?.status == "ready"
-                    && store.recommendation?.recommendation != nil,
+                hasPlan: store.recommendation?.recommendation != nil,
                 basedOnWorkoutCount: store.recommendation?.basedOnWorkoutCount,
                 loadType: store.recommendation?.recommendation?.loadType
             )
