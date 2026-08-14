@@ -2934,6 +2934,10 @@ private struct ProgressTabScreen: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showWeeklyReport = false
     @State private var latestWeeklyReport: WeeklyReportEntry?
+    @State private var weeklyReportForSheet: WeeklyReportEntry?
+    @State private var isFetchingWeeklyReport = false
+    @State private var isOpeningWeeklyReport = false
+    @State private var didFinishWeeklyReportRequest = false
 
     var body: some View {
         ZStack {
@@ -2943,15 +2947,19 @@ private struct ProgressTabScreen: View {
         .toolbar(.hidden, for: .navigationBar)
         .swipeBackOverlay { dismiss() }
         .sheet(isPresented: $showWeeklyReport) {
-            WeeklyReportSheet()
+            WeeklyReportSheet(
+                prefetchedEntry: weeklyReportForSheet,
+                fetchesOnAppear: false
+            )
                 .environmentObject(store)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .task {
-            // Fetching the cached report does not mark it as read. It only lets
-            // the entry card name the exact period before the user opens it.
-            latestWeeklyReport = await store.fetchWeeklyReport()
+            // This prefetch only names the exact period. If the user taps while
+            // it is still running, the same request drives the card spinner and
+            // presents the sheet on completion — no duplicate fetch.
+            await loadWeeklyReport()
         }
     }
 
@@ -3122,15 +3130,23 @@ private struct ProgressTabScreen: View {
 
     private var weeklyReportSection: some View {
         Button {
-            showWeeklyReport = true
+            openWeeklyReport()
         } label: {
             HStack(spacing: 11) {
                 ZStack {
                     Circle().fill(DesignPalette.accent.opacity(0.12)).frame(width: 36, height: 36)
                         .overlay(Circle().stroke(DesignPalette.accent.opacity(0.20), lineWidth: 0.5))
-                    Image(systemName: "doc.text")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(DesignPalette.accent)
+                    if isOpeningWeeklyReport {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(DesignPalette.accent)
+                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                    } else {
+                        Image(systemName: "doc.text")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(DesignPalette.accent)
+                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                    }
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Отчёт прошлой недели")
@@ -3147,24 +3163,73 @@ private struct ProgressTabScreen: View {
                 Image(systemName: "chevron.right")
                     .font(.jbm(11, weight: .heavy))
                     .foregroundStyle(DesignPalette.ink4)
+                    .opacity(isOpeningWeeklyReport ? 0.35 : 1)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
             .glassCard(radius: 20)
         }
         .buttonStyle(.pressable(scale: 0.98))
+        .animation(.easeInOut(duration: 0.16), value: isOpeningWeeklyReport)
+        .accessibilityLabel(
+            isOpeningWeeklyReport
+                ? "Загружаю отчёт прошлой недели"
+                : "Открыть отчёт прошлой недели"
+        )
     }
 
     private var weeklyReportPeriodLabel: String {
+        if isOpeningWeeklyReport { return "загружаю отчёт…" }
         guard let report = latestWeeklyReport else { return "пока не сформирован" }
         return DateTools.periodLabel(endingAt: report.periodEnd, days: report.days ?? 7)
+    }
+
+    private func openWeeklyReport() {
+        guard !isOpeningWeeklyReport else { return }
+        if didFinishWeeklyReportRequest {
+            weeklyReportForSheet = latestWeeklyReport
+            showWeeklyReport = true
+            return
+        }
+
+        // Synchronous state change gives the tap immediate visual feedback.
+        // loadWeeklyReport() either starts the request or joins the prefetch
+        // already in flight; that request presents the sheet when it finishes.
+        isOpeningWeeklyReport = true
+        Task { await loadWeeklyReport() }
+    }
+
+    @MainActor
+    private func loadWeeklyReport() async {
+        guard !didFinishWeeklyReportRequest, !isFetchingWeeklyReport else { return }
+        isFetchingWeeklyReport = true
+        do {
+            let report = try await store.requestWeeklyReport()
+            latestWeeklyReport = report
+            weeklyReportForSheet = report
+            didFinishWeeklyReportRequest = true
+            isFetchingWeeklyReport = false
+            if isOpeningWeeklyReport {
+                isOpeningWeeklyReport = false
+                showWeeklyReport = true
+            }
+        } catch is CancellationError {
+            isFetchingWeeklyReport = false
+            isOpeningWeeklyReport = false
+        } catch {
+            isFetchingWeeklyReport = false
+            if isOpeningWeeklyReport {
+                isOpeningWeeklyReport = false
+                store.showToast("Не удалось загрузить отчёт. Попробуй ещё раз.")
+            }
+        }
     }
 }
 
 /// High-contrast rolling-seven-day summary from the Claude Design Week screen.
-/// It is intentionally static: the exact volume rows immediately below are its
-/// detail, while the separately labelled report button opens the closed-week
-/// LLM retrospective.
+/// It is intentionally static: the exact volume rows later on this screen are
+/// its detail, while the separately labelled report button opens the
+/// closed-week LLM retrospective.
 private struct WeekCoachSummaryCard: View {
     var rows: [MuscleGroupVolume]
     var adherence: AdherenceSummary
@@ -3284,7 +3349,17 @@ private struct WeekCoachSummaryCard: View {
 private struct WeeklyReportSheet: View {
     @EnvironmentObject private var store: TrainerStore
     @State private var entry: WeeklyReportEntry?
-    @State private var isLoading = true
+    @State private var isLoading: Bool
+    private let fetchesOnAppear: Bool
+
+    init(
+        prefetchedEntry: WeeklyReportEntry? = nil,
+        fetchesOnAppear: Bool = true
+    ) {
+        _entry = State(initialValue: prefetchedEntry)
+        _isLoading = State(initialValue: fetchesOnAppear)
+        self.fetchesOnAppear = fetchesOnAppear
+    }
 
     var body: some View {
         ZStack {
@@ -3341,8 +3416,10 @@ private struct WeeklyReportSheet: View {
             }
         }
         .task {
-            entry = await store.fetchWeeklyReport()
-            isLoading = false
+            if fetchesOnAppear {
+                entry = await store.fetchWeeklyReport()
+                isLoading = false
+            }
             if entry != nil {
                 // Reading is a fact, not a snooze: the server-side receipt
                 // kills the weekly_report_ready signal for every client.

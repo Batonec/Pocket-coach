@@ -431,7 +431,14 @@ final class TrainerStore: ObservableObject {
     /// The cached coach weekly report (token-free endpoint: the Sunday timer
     /// generates it server-side). Nil when nothing is cached yet.
     func fetchWeeklyReport() async -> WeeklyReportEntry? {
-        (try? await APIClient(baseURLString: apiBaseURLString).fetchWeeklyReport())?.report
+        try? await requestWeeklyReport()
+    }
+
+    /// Same cached read with an observable failure for interactive UI. The
+    /// progress screen uses this so it can stop its spinner and avoid opening
+    /// a misleading empty sheet when the network request itself failed.
+    func requestWeeklyReport() async throws -> WeeklyReportEntry? {
+        return try await APIClient(baseURLString: apiBaseURLString).fetchWeeklyReport().report
     }
 
     // MARK: - Coach recommendation
