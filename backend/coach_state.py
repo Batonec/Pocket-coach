@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +38,8 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
         "ramp_start": (6, 8),
         "ramp_cap": (10, 14),
         "protein_g": (155, 165),
+        # Planned deload cadence: N accumulation weeks, then one light week.
+        "deload_every_weeks": 6,
         # Reaching this (by the 7-day moving average) suggests moving to lean_bulk.
         "target_weight_kg": 75.5,
     },
@@ -50,6 +52,7 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
         "ramp_start": (6, 8),
         "ramp_cap": (10, 16),
         "protein_g": (155, 165),
+        "deload_every_weeks": 6,
         # Reaching either ceiling suggests a mini-cut / phase change.
         "ceiling_weight_kg": 84.0,
     },
@@ -166,7 +169,7 @@ def save_state(path: Path | str, state: dict[str, Any]) -> None:
 _OVERRIDABLE_PARAM_KEYS = {
     "calories", "rate_text", "rate_kg_per_week", "frequency_text",
     "session_sets", "ramp_start", "ramp_cap", "sets_per_group", "protein_g",
-    "target_weight_kg", "ceiling_weight_kg", "title",
+    "target_weight_kg", "ceiling_weight_kg", "deload_every_weeks", "title",
 }
 
 
@@ -250,14 +253,12 @@ def is_return_from_break(workouts: list[dict[str, Any]], today: date) -> bool:
     return (today - dates[-1]).days >= BREAK_DAYS
 
 
-def block_week(state: dict[str, Any], workouts: list[dict[str, Any]], today: date) -> int:
-    """1-based training-block week. The block anchor is the later of the phase
-    start and the first workout after the most recent >=14-day gap (a long
-    break resets the ramp, consistent with the return-from-break rule). While
-    currently ON a break, the coming session opens a new block → week 1."""
-    if is_return_from_break(workouts, today):
-        return 1
-
+def _block_anchor(
+    state: dict[str, Any], workouts: list[dict[str, Any]], today: date
+) -> date | None:
+    """The block anchor is the later of the phase start and the first workout
+    after the most recent >=14-day gap (a long break resets the ramp,
+    consistent with the return-from-break rule)."""
     anchor: date | None = None
     started = state.get("phase_started")
     if isinstance(started, str):
@@ -274,8 +275,69 @@ def block_week(state: dict[str, Any], workouts: list[dict[str, Any]], today: dat
                 ramp_anchor = current
         anchor = max(anchor, ramp_anchor) if anchor else ramp_anchor
     if anchor is None or anchor > today:
+        return None
+    return anchor
+
+
+def block_week(state: dict[str, Any], workouts: list[dict[str, Any]], today: date) -> int:
+    """1-based training-block week. While currently ON a break, the coming
+    session opens a new block → week 1."""
+    if is_return_from_break(workouts, today):
+        return 1
+    anchor = _block_anchor(state, workouts, today)
+    if anchor is None:
         return 1
     return (today - anchor).days // 7 + 1
+
+
+# Fatigue actually has to be accumulated for a planned deload to make sense:
+# on average >=2 sessions per accumulation week, else the light weeks already
+# happened by themselves and the flag is withheld.
+DELOAD_MIN_SESSIONS_PER_WEEK = 2
+
+
+def cycle_position(
+    state: dict[str, Any], workouts: list[dict[str, Any]], today: date
+) -> dict[str, Any]:
+    """Where the current block week sits inside the accumulate→deload cycle.
+
+    Building phases run `deload_every_weeks` accumulation weeks and then one
+    planned light week (−30–40% volume); after it the ramp restarts, so the
+    cycle length is N+1 and `cycle_week` is the block week modulo that. The
+    deload flag fires only when the athlete actually trained the block in."""
+    week = block_week(state, workouts, today)
+    params = phase_params(state)
+    every = params.get("deload_every_weeks")
+    if not every or not params.get("ramp_start"):
+        return {
+            "block_week": week,
+            "cycle_week": week,
+            "deload_week": False,
+            "sessions_in_cycle": None,
+        }
+
+    cycle_length = int(every) + 1
+    cycle_week = (week - 1) % cycle_length + 1
+    anchor = _block_anchor(state, workouts, today)
+    sessions_in_cycle = 0
+    if anchor is not None:
+        cycle_start = anchor + timedelta(days=(week - cycle_week) * 7)
+        sessions_in_cycle = sum(
+            1
+            for when in _workout_dates(workouts)
+            if cycle_start <= when <= today
+        )
+    deload = (
+        cycle_week == cycle_length
+        and not is_return_from_break(workouts, today)
+        and sessions_in_cycle >= DELOAD_MIN_SESSIONS_PER_WEEK * int(every)
+    )
+    return {
+        "block_week": week,
+        "cycle_week": cycle_week,
+        "deload_week": deload,
+        "sessions_in_cycle": sessions_in_cycle,
+    }
 
 
 def weekly_volume_target(state: dict[str, Any], week: int) -> tuple[int, int] | None:

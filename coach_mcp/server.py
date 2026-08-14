@@ -102,7 +102,10 @@ _INSTRUCTIONS = """\
    coach_get_stored_recommendation (что сейчас лежит в кэше приложения);
 3) coach_generate_recommendation генерирует новую рекомендацию; по умолчанию
    НЕ записывает её в базу приложения (store=false) — поставь store=true, только
-   если пользователь хочет обновить рекомендацию в самом приложении.
+   если пользователь хочет обновить рекомендацию в самом приложении;
+4) coach_weekly_report — недельный отчёт тренера (итоги, ПР, вес/талия,
+   дисциплина, фокус следующей недели); зови по просьбе «как прошла неделя /
+   недельный отчёт».
 
 Записывающие инструменты: coach_set_phase (смена фазы подготовки — только по
 явной просьбе пользователя), coach_update_state (лимит/база талии, день
@@ -240,18 +243,28 @@ def coach_get_state(user_id: int | None = None) -> CallToolResult:
         workouts = STORE.list_workouts(uid)
         today = date.today()
         params = coach_state.phase_params(state)
-        week = coach_state.block_week(state, workouts, today)
+        position = coach_state.cycle_position(state, workouts, today)
+        week_target = (
+            params.get("ramp_start")
+            if position["deload_week"]
+            else coach_state.weekly_volume_target(state, position["cycle_week"])
+        )
         return _result(
             {
                 "ok": True,
                 "summary": (
-                    f"Фаза: {params['phase']} («{params['title']}»), неделя блока {week}."
+                    f"Фаза: {params['phase']} («{params['title']}»), неделя блока "
+                    f"{position['block_week']}"
+                    + (" — плановая разгрузка." if position["deload_week"] else ".")
                 ),
                 "user_id": uid,
                 "state": state,
                 "phase_params": {k: v for k, v in params.items() if k != "phase"},
-                "block_week": week,
-                "weekly_volume_target": coach_state.weekly_volume_target(state, week),
+                "block_week": position["block_week"],
+                "cycle_week": position["cycle_week"],
+                "deload_week": position["deload_week"],
+                "sessions_in_cycle": position["sessions_in_cycle"],
+                "weekly_volume_target": week_target,
                 "return_from_break": coach_state.is_return_from_break(workouts, today),
                 "cycle_today": coach_state.cycle_info(state, today),
                 "state_path": str(_STATE_PATH),
@@ -437,7 +450,7 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
                 "user_id": uid,
                 "model": recommender.DEFAULT_MODEL,
                 "phase": coach_state.phase_params(state)["phase"],
-                "block_week": coach_state.block_week(state, workouts, today),
+                "cycle_position": coach_state.cycle_position(state, workouts, today),
                 "cycle": coach_state.cycle_info(state, today),
                 "history_raw": min(limit, recommender.RAW_HISTORY_COUNT, len(workouts)),
                 "system_prompt": system,
@@ -517,6 +530,39 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
         return _result(_err(str(exc)))
     except Exception as exc:  # noqa: BLE001
         return _result(_err(f"Ошибка отладки: {exc}"))
+
+
+@mcp.tool()
+def coach_weekly_report(days: int = 7, user_id: int | None = None) -> CallToolResult:
+    """Недельный отчёт тренера (Markdown): итоги недели, прогресс/ПР, вес и талия, дисциплина, фокус следующей недели. Один вызов модели; в базу ничего не пишет."""
+    try:
+        uid = _uid(user_id)
+        api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            return _result(_err("ANTHROPIC_API_KEY не задан в окружении."))
+        report, usage, model = recommender.generate_weekly_report(
+            STORE.list_workouts(uid),
+            STORE.list_body_weights(uid),
+            STORE.list_waists(uid),
+            _catalog(),
+            state=coach_state.load_state(_STATE_PATH),
+            days=days,
+        )
+        return _result(
+            {
+                "ok": True,
+                "summary": report,
+                "user_id": uid,
+                "model": model,
+                "report": report,
+                "usage": usage,
+                "cost": _estimate_cost(model, usage),
+            }
+        )
+    except recommender.RecommendationError as exc:
+        return _result(_err(str(exc)))
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка отчёта: {exc}"))
 
 
 @mcp.tool()

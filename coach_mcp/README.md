@@ -41,6 +41,7 @@ validator violations and the auto-reprompt, token usage and cost).
 | `coach_preview_prompt(limit=20)` | The exact system+user prompt and JSON schema — **no API call** (free). Includes phase, block week and cycle info |
 | `coach_debug_recommendation(limit=20)` | Full generation run with the semantic validator: every attempt (raw output + violations + reprompt), final result, tokens/cost. Does not write to the DB |
 | `coach_generate_recommendation(limit=20, store=false)` | Generate a validated recommendation; `store=true` overwrites the app's cached recommendation |
+| `coach_weekly_report(days=7)` | Coach-style weekly retrospective (Markdown): week totals vs targets, PRs, weight/waist trends, discipline, next-week focus. One model call, writes nothing |
 
 All tools accept an optional `user_id` (defaults to the configured user).
 

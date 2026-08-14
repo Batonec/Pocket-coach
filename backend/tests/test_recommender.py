@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import unittest
 import urllib.error
 
@@ -277,8 +278,18 @@ class RestDaysTests(unittest.TestCase):
         )
         recommender._call_anthropic = lambda *a, **k: (raw, {"input_tokens": 1, "output_tokens": 1})
 
+        # Recent history touches every coverage group, so the plan above is clean.
+        history = [{
+            "workout_date": "2026-06-05",
+            "data": {"exercises": [
+                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 10, "weight": 100}] * 2},
+                {"exercise_id": 9, "name": "Тяга верт.", "sets": [{"reps": 12, "weight": 60}] * 2},
+                {"exercise_id": 18, "name": "Жим в тренажере", "sets": [{"reps": 12, "weight": 50}] * 2},
+                {"exercise_id": 15, "name": "Сгибания ног", "sets": [{"reps": 12, "weight": 30}] * 2},
+            ]},
+        }]
         rec, _usage, _model = recommender.generate(
-            [{"workout_date": "2026-06-01", "data": {"exercises": []}}],
+            history,
             [],
             CATALOG,
             today=date(2026, 6, 12),
@@ -334,6 +345,8 @@ class SemanticValidatorTests(unittest.TestCase):
     ]
 
     def _history(self, when: str = "2026-06-10", load_type: str = "medium"):
+        # Covers every coverage-rule group (chest/back/quads/hamstrings) so the
+        # tests below exercise exactly the rule they are about.
         return [
             {
                 "workout_date": when,
@@ -344,6 +357,10 @@ class SemanticValidatorTests(unittest.TestCase):
                          "sets": [{"reps": 10, "weight": 100}] * 3},
                         {"exercise_id": 9, "name": "Тяга верт.",
                          "sets": [{"reps": 12, "weight": 60}] * 3},
+                        {"exercise_id": 18, "name": "Жим в тренажере",
+                         "sets": [{"reps": 12, "weight": 50}] * 2},
+                        {"exercise_id": 15, "name": "Сгибания ног",
+                         "sets": [{"reps": 12, "weight": 30}] * 2},
                     ],
                 },
             }
@@ -392,13 +409,34 @@ class SemanticValidatorTests(unittest.TestCase):
         self.assertTrue(all("выше" in v for v in violations))
 
     def test_low_weight_allowed_on_return_from_break(self) -> None:
-        rec = recommender._validate(self._rec(weight=80, sets=12), self.CATALOG)  # −20%
-        # 40 days since the last session → return-from-break, low side waived,
-        # and the session corridor becomes 10–14.
+        # 40 days since the last session → return-from-break: low side waived,
+        # corridor 10–14, and the fullbody plan covers every dry group.
         from datetime import date as _date
 
-        violations = self._violations(
-            rec, workouts=self._history("2026-05-03"), today=_date(2026, 6, 12)
+        import coach_state
+
+        raw = {
+            "focus": "возврат", "load_type": "medium", "rest_days": 0,
+            "rationale": "r",
+            "exercises": [
+                {"exercise_id": 8, "name": "Жим ногами", "note": "n",
+                 "sets": [{"reps": 12, "weight": 80}] * 4},      # −20%
+                {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
+                 "sets": [{"reps": 12, "weight": 50}] * 4},      # −17%
+                {"exercise_id": 18, "name": "Жим в тренажере", "note": "n",
+                 "sets": [{"reps": 12, "weight": 45}] * 2},
+                {"exercise_id": 15, "name": "Сгибания ног", "note": "n",
+                 "sets": [{"reps": 12, "weight": 25}] * 2},
+            ],
+        }
+        catalog = self.CATALOG + [
+            {"id": 18, "name": "Жим в тренажере"},
+            {"id": 15, "name": "Сгибания ног"},
+        ]
+        rec = recommender._validate(raw, catalog)
+        violations = recommender._semantic_violations(
+            rec, raw, catalog, self._history("2026-05-03"), _date(2026, 6, 12),
+            coach_state.load_state(None),
         )
         self.assertEqual(violations, [])
 
@@ -462,6 +500,185 @@ class SemanticValidatorTests(unittest.TestCase):
         self.assertTrue(any("противовес" in v for v in violations))
 
 
+class CoverageAndDeloadValidatorTests(unittest.TestCase):
+    CATALOG = [
+        {"id": 8, "name": "Жим ногами"},
+        {"id": 9, "name": "Тяга верт."},
+        {"id": 18, "name": "Жим в тренажере"},
+        {"id": 15, "name": "Сгибания ног"},
+    ]
+
+    def _fullbody(self, when: str, sets_each: int = 2):
+        return {
+            "workout_date": when,
+            "data": {"load_type": "medium", "exercises": [
+                {"exercise_id": eid, "name": f"#{eid}",
+                 "sets": [{"reps": 10, "weight": 60}] * sets_each}
+                for eid in (8, 9, 18, 15)
+            ]},
+        }
+
+    def _plan(self, ids_sets: list[tuple[int, int]], rationale: str = "r"):
+        names = {item["id"]: item["name"] for item in self.CATALOG}
+        return {
+            "focus": "f", "load_type": "medium", "rest_days": 1,
+            "rationale": rationale,
+            "exercises": [
+                {"exercise_id": eid, "name": names[eid], "note": "n",
+                 "sets": [{"reps": 10, "weight": 60}] * count}
+                for eid, count in ids_sets
+            ],
+        }
+
+    def test_dry_group_missing_from_plan_is_flagged(self) -> None:
+        from datetime import date as _date
+
+        import coach_state
+
+        # Hamstrings (id 15) last trained 12 days ago → dry; the plan skips them.
+        workouts = [
+            self._fullbody("2026-06-10", sets_each=2),
+            {"workout_date": "2026-05-31", "data": {"load_type": "medium", "exercises": [
+                {"exercise_id": 15, "name": "Сгибания ног",
+                 "sets": [{"reps": 10, "weight": 60}] * 2},
+            ]}},
+        ]
+        workouts[0]["data"]["exercises"] = [
+            ex for ex in workouts[0]["data"]["exercises"] if ex["exercise_id"] != 15
+        ]
+        raw = self._plan([(8, 5), (9, 5), (18, 4)])
+        rec = recommender._validate(raw, self.CATALOG)
+        violations = recommender._semantic_violations(
+            rec, raw, self.CATALOG, workouts, _date(2026, 6, 12),
+            coach_state.load_state(None),
+        )
+        self.assertTrue(any("бицепс бедра" in v for v in violations))
+
+        covered = self._plan([(8, 4), (9, 4), (18, 4), (15, 2)])
+        rec = recommender._validate(covered, self.CATALOG)
+        violations = recommender._semantic_violations(
+            rec, covered, self.CATALOG, workouts, _date(2026, 6, 12),
+            coach_state.load_state(None),
+        )
+        self.assertEqual(violations, [])
+
+    def test_planned_deload_week_relaxes_corridor_and_weights(self) -> None:
+        from datetime import date as _date, timedelta as _timedelta
+
+        import coach_state
+
+        start = _date(2026, 5, 1)
+        state = dict(coach_state.DEFAULT_STATE, phase_started=start.isoformat())
+        workouts = [
+            self._fullbody((start + _timedelta(days=index * 3)).isoformat())
+            for index in range(15)
+        ]
+        today = start + _timedelta(days=42)  # block week 7 → planned deload
+        self.assertTrue(coach_state.cycle_position(state, workouts, today)["deload_week"])
+
+        light = self._plan([(8, 3), (9, 3), (18, 3), (15, 2)])
+        for exercise in light["exercises"]:
+            for workout_set in exercise["sets"]:
+                workout_set["weight"] = 48  # −20%: allowed on the light week
+        rec = recommender._validate(light, self.CATALOG)
+        violations = recommender._semantic_violations(
+            rec, light, self.CATALOG, workouts, today, state
+        )
+        self.assertEqual(violations, [])
+
+        heavy_volume = self._plan([(8, 5), (9, 5), (18, 4), (15, 2)])  # 16 sets
+        rec = recommender._validate(heavy_volume, self.CATALOG)
+        violations = recommender._semantic_violations(
+            rec, heavy_volume, self.CATALOG, workouts, today, state
+        )
+        self.assertTrue(any("разгрузочная" in v for v in violations))
+
+
+class RequestModelCachingTests(unittest.TestCase):
+    def test_body_carries_cache_control_and_optional_schema(self) -> None:
+        captured: dict = {}
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "content": [{"type": "text", "text": "привет"}],
+                    "usage": {"input_tokens": 1, "output_tokens": 2},
+                }).encode("utf-8")
+
+        def fake_urlopen(request, timeout=None):
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _Resp()
+
+        orig = recommender.urllib.request.urlopen
+        self.addCleanup(lambda: setattr(recommender.urllib.request, "urlopen", orig))
+        recommender.urllib.request.urlopen = fake_urlopen
+
+        text, usage = recommender._request_model(
+            "system text", "user text", schema=None,
+            model="m", max_tokens=10, api_key="k", timeout=1,
+        )
+        self.assertEqual(text, "привет")
+        body = captured["body"]
+        self.assertEqual(body["system"][0]["cache_control"], {"type": "ephemeral"})
+        first_content = body["messages"][0]["content"]
+        self.assertEqual(first_content[0]["cache_control"], {"type": "ephemeral"})
+        self.assertNotIn("output_config", body)
+
+        recommender._request_model(
+            "system text", "user text", schema={"type": "object"},
+            model="m", max_tokens=10, api_key="k", timeout=1,
+        )
+        self.assertIn("output_config", captured["body"])
+
+
+class WeeklyReportTests(unittest.TestCase):
+    def test_report_prompt_assembles_and_returns_text(self) -> None:
+        import os
+        from datetime import date as _date
+
+        os.environ["ANTHROPIC_API_KEY"] = "test-key"
+        self.addCleanup(lambda: os.environ.pop("ANTHROPIC_API_KEY", None))
+        seen: dict = {}
+
+        def fake_request(system, user, **kwargs):
+            seen["system"], seen["user"] = system, user
+            return "**Итоги недели** — всё по плану.", {"input_tokens": 3, "output_tokens": 4}
+
+        orig = recommender._request_model
+        self.addCleanup(lambda: setattr(recommender, "_request_model", orig))
+        recommender._request_model = fake_request
+
+        workouts = [{
+            "workout_date": "2026-06-10",
+            "data": {"load_type": "medium", "exercises": [
+                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 10, "weight": 100}] * 3},
+            ]},
+        }]
+        report, usage, model = recommender.generate_weekly_report(
+            workouts, [], [], CATALOG, today=_date(2026, 6, 12)
+        )
+        self.assertIn("Итоги недели", report)
+        self.assertEqual(usage["output_tokens"], 4)
+        self.assertIs(seen["system"], recommender.REPORT_SYSTEM_PROMPT)
+        self.assertIn("Период отчёта", seen["user"])
+        self.assertIn("Тренировки за период (1)", seen["user"])
+        self.assertIn("Объём за 7 дней", seen["user"])
+        self.assertIn("Новых ПР за период нет.", seen["user"])
+
+    def test_report_requires_api_key(self) -> None:
+        import os
+
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        with self.assertRaises(recommender.RecommendationError):
+            recommender.generate_weekly_report([], [], [], CATALOG)
+
+
 class GenerateRepromptTests(unittest.TestCase):
     CATALOG = [{"id": 8, "name": "Жим ногами"}, {"id": 9, "name": "Тяга верт."}]
 
@@ -482,6 +699,10 @@ class GenerateRepromptTests(unittest.TestCase):
                      "sets": [{"reps": 10, "weight": 100}] * 3},
                     {"exercise_id": 9, "name": "Тяга верт.",
                      "sets": [{"reps": 12, "weight": 60}] * 3},
+                    {"exercise_id": 18, "name": "Жим в тренажере",
+                     "sets": [{"reps": 12, "weight": 50}] * 2},
+                    {"exercise_id": 15, "name": "Сгибания ног",
+                     "sets": [{"reps": 12, "weight": 30}] * 2},
                 ]},
             }
         ]

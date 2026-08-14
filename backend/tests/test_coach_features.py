@@ -279,6 +279,54 @@ class MeasurementRenderTests(unittest.TestCase):
         self.assertIn("Талия: 2026-08-10: 84см", text)
 
 
+class AdherenceStatsTests(unittest.TestCase):
+    def _planned_workout(self, when: str, fact_first: int = 3, include_second: bool = False):
+        workout = _workout("PLACEHOLDER", [])
+        workout["workout_date"] = when
+        workout["data"]["recommendation"] = {
+            "schema": 1,
+            "exercises": [
+                {"exercise_id": 18, "name": "Жим в тренажере",
+                 "sets": [{"reps": 10, "weight": 50}] * 3},
+                {"exercise_id": 15, "name": "Сгибания ног",
+                 "sets": [{"reps": 12, "weight": 30}] * 2},
+            ],
+        }
+        exercises = []
+        if fact_first:
+            # Recorded under the duplicate id 1 — must match plan id 18 via alias.
+            exercises.append({"exercise_id": 1, "name": "Жим гор.",
+                              "sets": [{"reps": 10, "weight": 50}] * fact_first})
+        if include_second:
+            exercises.append({"exercise_id": 15, "name": "Сгибания ног",
+                              "sets": [{"reps": 12, "weight": 30}] * 2})
+        workout["data"]["exercises"] = exercises
+        return workout
+
+    def test_aggregates_pct_and_skips_with_alias_matching(self) -> None:
+        workouts = [
+            self._planned_workout((TODAY - timedelta(days=2)).isoformat()),
+            self._planned_workout((TODAY - timedelta(days=9)).isoformat(),
+                                  fact_first=4, include_second=True),
+            self._planned_workout((TODAY - timedelta(days=60)).isoformat()),  # вне окна
+        ]
+        stats = coach_features.adherence_stats(workouts, TODAY)
+        self.assertEqual(stats["sessions"], 2)
+        self.assertEqual(stats["planned_sets"], 10)
+        # 3 + min(4, 3) + 2 = 8; extra sets never inflate past the plan.
+        self.assertEqual(stats["done_sets"], 8)
+        self.assertEqual(stats["pct"], 80)
+        self.assertEqual(stats["skipped"], [("Сгибания ног", 1)])
+
+        line = coach_features.render_adherence_stats(stats)
+        self.assertIn("8 из 10", line)
+        self.assertIn("Сгибания ног ×1", line)
+
+    def test_none_without_snapshots(self) -> None:
+        workouts = [_workout(TODAY.isoformat(), [(18, [(50, 10)] * 3)])]
+        self.assertIsNone(coach_features.adherence_stats(workouts, TODAY))
+
+
 class WeightRangeTests(unittest.TestCase):
     def test_eight_week_range_merges_the_duplicate_id(self) -> None:
         workouts = [

@@ -655,6 +655,81 @@ def render_measurements(
 
 
 # --------------------------------------------------------------------------- #
+# Plan-adherence history (30-day discipline aggregate)
+# --------------------------------------------------------------------------- #
+def adherence_stats(
+    workouts: list[dict[str, Any]], today: date, days: int = 30
+) -> dict[str, Any] | None:
+    """Aggregate fact-vs-plan over the trailing window: % of planned sets done
+    (done sets are capped by the plan so extras never inflate past 100%), how
+    many sessions followed a plan, and which exercises get skipped outright.
+    The coach uses it to make plans realistic, not to lecture."""
+    planned_total = 0
+    done_total = 0
+    sessions = 0
+    skipped: Counter[str] = Counter()
+
+    for workout in workouts:
+        when = _workout_date(workout)
+        if when is None or when > today or (today - when).days >= days:
+            continue
+        data = workout.get("data", {}) or {}
+        snapshot = data.get("recommendation")
+        if not isinstance(snapshot, dict):
+            continue
+        planned = {}
+        for exercise in snapshot.get("exercises", []) or []:
+            if not isinstance(exercise, dict):
+                continue
+            canonical = canonical_exercise_id(exercise.get("exercise_id"))
+            if canonical is not None:
+                planned[canonical] = exercise
+        if not planned:
+            continue
+        sessions += 1
+        actual: dict[int, int] = {}
+        for exercise in data.get("exercises", []) or []:
+            canonical = canonical_exercise_id(exercise.get("exercise_id"))
+            if canonical is not None:
+                actual[canonical] = actual.get(canonical, 0) + len(
+                    exercise.get("sets", []) or []
+                )
+        for canonical, plan_exercise in planned.items():
+            plan_sets = len(plan_exercise.get("sets", []) or [])
+            planned_total += plan_sets
+            fact_sets = actual.get(canonical)
+            if not fact_sets:
+                skipped[str(plan_exercise.get("name") or canonical)] += 1
+                continue
+            done_total += min(fact_sets, plan_sets)
+
+    if not sessions or not planned_total:
+        return None
+    return {
+        "days": days,
+        "sessions": sessions,
+        "planned_sets": planned_total,
+        "done_sets": done_total,
+        "pct": round(done_total / planned_total * 100),
+        "skipped": skipped.most_common(4),
+    }
+
+
+def render_adherence_stats(stats: dict[str, Any] | None) -> str | None:
+    if not stats:
+        return None
+    line = (
+        f"Дисциплина за {stats['days']} дней: {stats['sessions']} трен. по плану, "
+        f"{stats['done_sets']} из {stats['planned_sets']} плановых подходов "
+        f"({stats['pct']}%)."
+    )
+    if stats["skipped"]:
+        skipped = ", ".join(f"{name} ×{count}" for name, count in stats["skipped"])
+        line += f" Полностью пропускались: {skipped}."
+    return line
+
+
+# --------------------------------------------------------------------------- #
 # Semantic-validator support (P5)
 # --------------------------------------------------------------------------- #
 def recent_weight_range(

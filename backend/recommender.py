@@ -367,12 +367,22 @@ def _build_system_prompt(
         "счётчик deload обнуляется, правило «после heavy не heavy» через перерыв "
         "не применяется. После перерыва в rationale вместо сводки нулевых объёмов "
         "опиши план разгона на 2–3 сессии.\n"
-        "- Разгрузка (deload): при падении повторов на тех же весах две сессии подряд "
-        "или ~6 недель непрерывных тренировок без разгрузки — предложи лёгкую неделю "
-        "(−30–40% объёма) и прямо скажи об этом в rationale. Если в данных стоит флаг "
-        "ЗАСТОЯ по упражнению (предусловия выполнены, ПР нет ≥4 недель) — предложи "
-        "deload −10% с разгоном или вариацию именно по нему. Если предусловия НЕ "
-        "выполнены — плато объясняй посещаемостью/питанием, слова «потолок» избегай.\n"
+        "- Разгрузка (deload): плановая разгрузочная неделя приходит ФЛАГОМ в "
+        "КОНТЕКСТЕ (каждые ~6 недель реально накопленной работы): объём −30–40%, "
+        "веса рабочие, без отказа, со следующей недели ramp заново — построй сессию "
+        "по этому флагу и прямо скажи в rationale, что это разгрузка. Реактивно: при "
+        "падении повторов на тех же весах две сессии подряд предложи лёгкую неделю "
+        "сам. Если в данных стоит флаг ЗАСТОЯ по упражнению (предусловия выполнены, "
+        "ПР нет ≥4 недель) — предложи deload −10% с разгоном или вариацию именно по "
+        "нему. Если предусловия НЕ выполнены — плато объясняй посещаемостью/питанием, "
+        "слова «потолок» избегай.\n"
+        "- Покрытие групп: крупная группа (грудь, спина, квадрицепс/ягодичные) или "
+        "бицепс бедра, у которых больше 10 дней ноль эффективных сетов, должна "
+        "получить хотя бы 1–2 подхода в плане — не оставляй её сохнуть ещё сессию.\n"
+        "- Дисциплина: сводка «факт vs план» за 30 дней приходит в данных. Если "
+        "какое-то упражнение стабильно пропускается — ставь его РАНЬШЕ в сессии и/или "
+        "делай план реалистичного размера; адаптируйся к реальному поведению, а не "
+        "читай нотации.\n"
         "- Регулярность: если перерывы >10 дней повторяются, мягко предложи в "
         "rationale привязать тренировки к конкретным дням недели — без нотаций.\n\n"
         "=== ПЛАНИРОВЩИК: ГОРМОНАЛЬНЫЙ НЕДЕЛЬНЫЙ ЦИКЛ ===\n"
@@ -436,16 +446,28 @@ def _build_user_prompt(
 
     days = _days_since_last(workouts, today)
     returning = coach_state.is_return_from_break(workouts, today)
-    week = coach_state.block_week(state, workouts, today)
+    position = coach_state.cycle_position(state, workouts, today)
+    week = position["block_week"]
     cycle = coach_state.cycle_info(state, today)
-    week_target = coach_state.weekly_volume_target(state, week)
+    if position["deload_week"]:
+        # The planned light week caps the target back at the ramp start.
+        week_target = params.get("ramp_start")
+    else:
+        week_target = coach_state.weekly_volume_target(state, position["cycle_week"])
 
     # --- explicit context block, always the first thing the model reads ------
+    week_label = f"неделя блока {week}"
+    if position["deload_week"]:
+        week_label += (
+            " — ПЛАНОВАЯ РАЗГРУЗОЧНАЯ НЕДЕЛЯ (каждые "
+            f"{params.get('deload_every_weeks')} недель накопления): объём −30–40%, "
+            "веса рабочие, без отказа; со следующей недели ramp начинается заново"
+        )
     context_lines = [
         f"Сегодня: {today.isoformat()} ({_RU_WEEKDAYS[today.weekday()]}). "
         f"День гормонального цикла: {cycle['day']} из 7 — фон {cycle['level']} "
         f"(пик {cycle['peak_days']}, спад {cycle['trough_days']}).",
-        f"Фаза: {phase} («{params['title']}»), неделя блока {week}. Ориентиры фазы: "
+        f"Фаза: {phase} («{params['title']}»), {week_label}. Ориентиры фазы: "
         f"{_format_range(params['calories'])} ккал, {params['rate_text']}, белок "
         f"{_format_range(params['protein_g'])} г, сессия "
         f"{_format_range(params['session_sets'])} рабочих подходов.",
@@ -509,9 +531,17 @@ def _build_user_prompt(
             "сессиям):\n" + "\n".join(ramp_lines)
         )
 
+    discipline_lines: list[str] = []
+    discipline = coach_features.render_adherence_stats(
+        coach_features.adherence_stats(workouts, today)
+    )
+    if discipline:
+        discipline_lines.append(discipline)
     adherence = _plan_adherence_report(workouts)
     if adherence:
-        chunks.append(adherence)
+        discipline_lines.append(adherence)
+    if discipline_lines:
+        chunks.append("\n".join(discipline_lines))
 
     raw_count = min(history_limit, RAW_HISTORY_COUNT)
     chunks.append(
@@ -646,11 +676,31 @@ def _fetch_anthropic(
         attempt += 1
 
 
-def _call_anthropic(
+def _cacheable_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Mark the first user message as a prompt-cache boundary. Together with
+    the cached system block this makes the validator reprompt (same system +
+    same first message) and burst regenerations much cheaper."""
+    out = [dict(message) for message in messages]
+    first = out[0]
+    if first.get("role") == "user" and isinstance(first.get("content"), str):
+        out[0] = {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": first["content"],
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        }
+    return out
+
+
+def _request_model(
     system: str,
     user: str | list[dict[str, Any]],
-    schema: dict[str, Any],
     *,
+    schema: dict[str, Any] | None = None,
     model: str,
     max_tokens: int,
     api_key: str,
@@ -658,19 +708,25 @@ def _call_anthropic(
     max_retries: int = DEFAULT_MAX_RETRIES,
     backoff: float = DEFAULT_RETRY_BACKOFF,
     sleep: Callable[[float], None] = time.sleep,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    # `user` is either the user prompt (normal call) or a full message list —
-    # the semantic-validator reprompt continues the same conversation.
+) -> tuple[str, dict[str, Any]]:
+    """One model call; returns the raw text of the reply plus usage. With a
+    schema the output is constrained to it; without — plain text (the weekly
+    report). `user` is either the user prompt or a full message list (the
+    semantic-validator reprompt continues the same conversation)."""
     messages = [{"role": "user", "content": user}] if isinstance(user, str) else user
-    body = json.dumps(
-        {
-            "model": model,
-            "max_tokens": max_tokens,
-            "system": system,
-            "messages": messages,
-            "output_config": {"format": {"type": "json_schema", "schema": schema}},
-        }
-    ).encode("utf-8")
+    payload: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        # The system prompt (catalog + profile + policy) is stable between
+        # calls — cache it so retries/reprompts/bursts pay ~10% for it.
+        "system": [
+            {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+        ],
+        "messages": _cacheable_messages(messages),
+    }
+    if schema is not None:
+        payload["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
+    body = json.dumps(payload).encode("utf-8")
 
     request = urllib.request.Request(
         ANTHROPIC_URL,
@@ -706,12 +762,41 @@ def _call_anthropic(
     if not text:
         raise RecommendationError("Пустой ответ модели")
 
+    return text, data.get("usage", {}) or {}
+
+
+def _call_anthropic(
+    system: str,
+    user: str | list[dict[str, Any]],
+    schema: dict[str, Any],
+    *,
+    model: str,
+    max_tokens: int,
+    api_key: str,
+    timeout: float,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    backoff: float = DEFAULT_RETRY_BACKOFF,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    text, usage = _request_model(
+        system,
+        user,
+        schema=schema,
+        model=model,
+        max_tokens=max_tokens,
+        api_key=api_key,
+        timeout=timeout,
+        max_retries=max_retries,
+        backoff=backoff,
+        sleep=sleep,
+    )
+
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
         raise RecommendationError("Модель вернула невалидный JSON") from exc
 
-    return parsed, data.get("usage", {}) or {}
+    return parsed, usage
 
 
 # --------------------------------------------------------------------------- #
@@ -813,7 +898,8 @@ def _semantic_violations(
     names_by_id = {item["id"]: item["name"] for item in catalog}
     params = coach_state.phase_params(state)
     returning = coach_state.is_return_from_break(workouts, today)
-    easing = returning or _mentions_deload(recommendation)
+    deload_week = coach_state.cycle_position(state, workouts, today)["deload_week"]
+    easing = returning or deload_week or _mentions_deload(recommendation)
 
     # 1) name must literally match the catalog for its exercise_id.
     for exercise in raw.get("exercises", []) or []:
@@ -875,6 +961,8 @@ def _semantic_violations(
     total_sets = sum(len(exercise["sets"]) for exercise in recommendation["exercises"])
     if returning:
         corridor, corridor_label = (10, 14), "возврат после перерыва"
+    elif deload_week:
+        corridor, corridor_label = (10, 14), "плановая разгрузочная неделя"
     else:
         corridor, corridor_label = params["session_sets"], f"фаза {params['phase']}"
     if not corridor[0] <= total_sets <= corridor[1]:
@@ -882,6 +970,24 @@ def _semantic_violations(
             f"в сессии {total_sets} рабочих подходов, а коридор ({corridor_label}) — "
             f"{corridor[0]}–{corridor[1]}"
         )
+
+    # 3b) group coverage: a big group (or the chronically lagging hamstrings)
+    # that has been dry for 10+ days must get at least a set in the plan.
+    recent_volume = coach_features.weekly_volume(workouts, today, days=10)
+    plan_coverage: dict[str, float] = {}
+    for exercise in recommendation["exercises"]:
+        for group, share in (
+            coach_features.EFFECTIVE_SETS.get(exercise["exercise_id"]) or {}
+        ).items():
+            plan_coverage[group] = plan_coverage.get(group, 0.0) + share * len(
+                exercise["sets"]
+            )
+    for group in (*coach_features.BIG_GROUPS, "бицепс бедра"):
+        if recent_volume[group]["effective"] == 0 and not plan_coverage.get(group):
+            violations.append(
+                f"группа «{group}» больше 10 дней без единого эффективного подхода "
+                "и отсутствует в плане — добавь хотя бы 1–2 подхода"
+            )
 
     # 4) rest_days 0–4.
     rest_days = recommendation.get("rest_days", 0)
@@ -1040,3 +1146,181 @@ def generate(
         max_retries=max_retries,
     )
     return recommendation, usage, model_used
+
+
+# --------------------------------------------------------------------------- #
+# Weekly coach report
+# --------------------------------------------------------------------------- #
+REPORT_SYSTEM_PROMPT = (
+    "Ты — персональный силовой тренер этого атлета. По данным ниже напиши "
+    "НЕДЕЛЬНЫЙ ОТЧЁТ на «ты»: коротко, по делу, как живой тренер на созвоне — "
+    "без воды и без нотаций за пропуски. Формат: Markdown, пять блоков, каждый "
+    "с новой строки с жирным заголовком:\n"
+    "**Итоги недели** — сколько тренировок, что сделано по объёму против цели;\n"
+    "**Прогресс** — новые ПР и движение весов (или честно «без ПР» и почему это "
+    "ок/не ок по предусловиям);\n"
+    "**Вес и талия** — тренды и вывод матрицы питания (если замеров нет — "
+    "попроси);\n"
+    "**Дисциплина** — факт против плана, что стабильно пропускается;\n"
+    "**Фокус следующей недели** — 2–3 конкретных пункта (объём-цель, какие "
+    "группы добирать, когда разгрузка).\n"
+    "Все вычисленные числа в данных — факты, не пересчитывай. Никаких "
+    "медицинских советов: ГЗТ, дозировки и анализы — зона врача."
+)
+
+
+def _build_report_prompt(
+    workouts: list[dict[str, Any]],
+    body_weights: list[dict[str, Any]],
+    waists: list[dict[str, Any]],
+    catalog: list[dict[str, Any]],
+    state: dict[str, Any],
+    today: date,
+    days: int,
+) -> str:
+    params = coach_state.phase_params(state)
+    position = coach_state.cycle_position(state, workouts, today)
+    cycle = coach_state.cycle_info(state, today)
+
+    week_workouts = [
+        workout
+        for workout in workouts
+        if (when := coach_features._workout_date(workout)) is not None
+        and 0 <= (today - when).days < days
+    ]
+
+    chunks = [
+        f"Период отчёта: последние {days} дней, по {today.isoformat()} "
+        f"({_RU_WEEKDAYS[today.weekday()]}).",
+        f"Фаза: {params['phase']} («{params['title']}»), неделя блока "
+        f"{position['block_week']}"
+        + (" — плановая разгрузочная неделя." if position["deload_week"] else ".")
+        + f" Ориентиры фазы: {_format_range(params['calories'])} ккал, "
+        f"{params['rate_text']}, белок {_format_range(params['protein_g'])} г.",
+    ]
+
+    if week_workouts:
+        chunks.append(
+            f"Тренировки за период ({len(week_workouts)}):\n"
+            + _serialize_history(week_workouts, len(week_workouts), catalog)
+        )
+    else:
+        chunks.append("Тренировок за период: 0.")
+
+    week_target = (
+        params.get("ramp_start")
+        if position["deload_week"]
+        else coach_state.weekly_volume_target(state, position["cycle_week"])
+    )
+    maintenance_sets = (
+        params.get("sets_per_group") if params["phase"] == "maintenance" else None
+    )
+    chunks.append(
+        "Объём за 7 дней (прямые/эффективные подходы):\n"
+        + coach_features.render_weekly_volume(
+            coach_features.weekly_volume(workouts, today), week_target, maintenance_sets
+        )
+    )
+
+    summaries = coach_features.exercise_summaries(workouts, catalog, today)
+    prs = [
+        f"  {s['name']}: {s['top_weight']:g}×{s['top_reps']} ({s['top_date']})"
+        for s in summaries
+        if s["days_since_pr"] < days
+    ]
+    chunks.append(
+        "Новые ПР за период:\n" + "\n".join(prs) if prs else "Новых ПР за период нет."
+    )
+
+    matrix = coach_features.nutrition_matrix(state, params, body_weights, waists, today)
+    stall = coach_features.stall_report(
+        workouts,
+        summaries,
+        matrix.get("trend_per_week"),
+        params["phase"],
+        params.get("rate_kg_per_week"),
+        today,
+    )
+    stall_line = coach_features.render_stall_report(stall)
+    if stall_line:
+        chunks.append(stall_line)
+
+    measurements = coach_features.render_measurements(body_weights, waists, today)
+    nutrition = list(measurements)
+    if matrix["lines"]:
+        nutrition.append(
+            "Матрица питания (вычислено сервером): " + "; ".join(matrix["lines"]) + "."
+        )
+    if matrix["goal"]:
+        nutrition.append("ЦЕЛЬ ФАЗЫ: " + matrix["goal"] + ".")
+    if nutrition:
+        chunks.append("\n".join(nutrition))
+
+    discipline = coach_features.render_adherence_stats(
+        coach_features.adherence_stats(workouts, today)
+    )
+    if discipline:
+        chunks.append(discipline)
+
+    next_bits = [
+        f"Гормональный цикл сегодня: день {cycle['day']} из 7 (пик {cycle['peak_days']})."
+    ]
+    every = params.get("deload_every_weeks")
+    if position["deload_week"]:
+        next_bits.append(
+            "Эта неделя разгрузочная — со следующей ramp начинается заново с "
+            f"{_format_range(params.get('ramp_start'))} сетов/группа."
+        )
+    elif every and position["cycle_week"] >= int(every):
+        next_bits.append(
+            "Следующая неделя по циклу — плановая разгрузка (−30–40% объёма), "
+            "если объём блока реально набран."
+        )
+    else:
+        next_week = coach_state.weekly_volume_target(state, position["cycle_week"] + 1)
+        if next_week:
+            next_bits.append(
+                f"Цель следующей недели блока: {next_week[0]}–{next_week[1]} "
+                "эффективных сетов на крупную группу."
+            )
+    chunks.append("\n".join(next_bits))
+
+    chunks.append("Напиши недельный отчёт по формату из системного промпта.")
+    return "\n\n".join(chunks)
+
+
+def generate_weekly_report(
+    workouts: list[dict[str, Any]],
+    body_weights: list[dict[str, Any]],
+    waists: list[dict[str, Any]],
+    catalog: list[dict[str, Any]],
+    *,
+    state: dict[str, Any] | None = None,
+    today: date | None = None,
+    days: int = 7,
+    model: str = DEFAULT_MODEL,
+    max_tokens: int = 2000,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> tuple[str, dict[str, Any], str]:
+    """A coach-style weekly retrospective in Markdown (plain text, no schema).
+
+    Returns ``(report_text, usage, model)``."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        raise RecommendationError("ANTHROPIC_API_KEY не настроен на сервере")
+
+    today = today or date.today()
+    state = state if state is not None else coach_state.load_state(None)
+    user = _build_report_prompt(
+        workouts, body_weights, waists, catalog, state, today, max(1, int(days))
+    )
+    text, usage = _request_model(
+        REPORT_SYSTEM_PROMPT,
+        user,
+        schema=None,
+        model=model,
+        max_tokens=max_tokens,
+        api_key=api_key,
+        timeout=timeout,
+    )
+    return text.strip(), usage, model
