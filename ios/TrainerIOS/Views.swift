@@ -4066,6 +4066,9 @@ private struct BodyWeightScreen: View {
             .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
+        .refreshable {
+            await store.refreshServerData()
+        }
     }
 
     private var headerPills: some View {
