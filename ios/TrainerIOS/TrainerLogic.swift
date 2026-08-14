@@ -775,9 +775,11 @@ enum TrainerLogic {
 
     /// Plan-vs-performed adherence across workouts in `range` that carried a
     /// recommendation snapshot. Done sets are capped at planned per exercise so
-    /// extra work doesn't inflate adherence past 100%.
+    /// extra work doesn't inflate adherence past 100%. Mirrors the backend's
+    /// 30-day discipline aggregate, including WHICH exercises get skipped.
     static func adherenceSummary(_ workouts: [Workout], range: RangeOption) -> AdherenceSummary {
         var compared = 0, planned = 0, done = 0, skipped = 0
+        var skipCounts: [String: Int] = [:]
         for workout in getWorkoutsInRange(workouts, range: range) {
             guard let plan = workout.data.recommendation?.exercises, !plan.isEmpty else { continue }
             compared += 1
@@ -790,10 +792,22 @@ enum TrainerLogic {
                 let actual = doneByID[plannedExercise.exerciseID] ?? 0
                 planned += target
                 done += min(target, actual)
-                if actual == 0 { skipped += 1 }
+                if actual == 0 {
+                    skipped += 1
+                    skipCounts[plannedExercise.name, default: 0] += 1
+                }
             }
         }
-        return AdherenceSummary(comparedWorkouts: compared, plannedSets: planned, doneSets: done, skippedExercises: skipped)
+        let byName = skipCounts
+            .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+            .map { (name: $0.key, count: $0.value) }
+        return AdherenceSummary(
+            comparedWorkouts: compared,
+            plannedSets: planned,
+            doneSets: done,
+            skippedExercises: skipped,
+            skippedByName: byName
+        )
     }
 
     /// The most recently logged working weight (heaviest set) for an exercise

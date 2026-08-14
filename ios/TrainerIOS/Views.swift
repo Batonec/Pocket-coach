@@ -2767,9 +2767,11 @@ private struct ProgressTabScreen: View {
     // MARK: discipline (plan vs fact)
 
     private var disciplineSection: some View {
-        let summary = TrainerLogic.adherenceSummary(store.workouts, range: store.selectedRange)
+        // Fixed 30-day window — the same one the coach reads server-side when
+        // adapting plans to real behaviour; all-time adherence says nothing.
+        let summary = TrainerLogic.adherenceSummary(store.workouts, range: .days30)
         return VStack(alignment: .leading, spacing: 8) {
-            miniHeader("ДИСЦИПЛИНА", store.selectedRange.label)
+            miniHeader("ДИСЦИПЛИНА", "30 дней")
             DisciplineCard(summary: summary)
         }
     }
@@ -2954,20 +2956,13 @@ private struct DisciplineCard: View {
                         Text("\(Int((summary.ratio * 100).rounded()))%")
                             .font(.jbm(28, weight: .heavy)).tracking(-0.5)
                             .foregroundStyle(DesignPalette.ink)
-                        Text("плана выполнено")
+                        Text("подходов из планов тренера")
                             .font(.jbm(12, weight: .semibold))
                             .foregroundStyle(DesignPalette.ink3)
                         Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("\(summary.comparedWorkouts) трен. по плану")
-                                .font(.jbm(11, weight: .semibold))
-                                .foregroundStyle(DesignPalette.ink2)
-                            if summary.skippedExercises > 0 {
-                                Text("пропущено упр.: \(summary.skippedExercises)")
-                                    .font(.jbm(10.5, weight: .medium))
-                                    .foregroundStyle(DesignPalette.warn)
-                            }
-                        }
+                        Text("\(summary.comparedWorkouts) трен. по плану")
+                            .font(.jbm(11, weight: .semibold))
+                            .foregroundStyle(DesignPalette.ink2)
                     }
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
@@ -2976,9 +2971,16 @@ private struct DisciplineCard: View {
                         }
                     }
                     .frame(height: 7)
-                    Text("\(summary.doneSets) из \(summary.plannedSets) запланированных подходов")
+                    Text("\(summary.doneSets) из \(summary.plannedSets) запланированных подходов за 30 дней")
                         .font(.jbm(10.5, weight: .medium))
                         .foregroundStyle(DesignPalette.ink3)
+                    if !summary.skippedByName.isEmpty {
+                        Text("чаще пропускаешь: \(skippedLabel)")
+                            .font(.jbm(10.5, weight: .medium))
+                            .foregroundStyle(DesignPalette.warn)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .padding(14)
                 .glassCard(radius: 20)
@@ -2987,7 +2989,7 @@ private struct DisciplineCard: View {
                     Image(systemName: "checklist")
                         .font(.system(size: 18))
                         .foregroundStyle(DesignPalette.ink4)
-                    Text("Пока нет тренировок по плану от тренера за этот период.")
+                    Text("За последние 30 дней не было тренировок по плану тренера — дисциплину считать не по чему.")
                         .font(.jbm(12, weight: .medium))
                         .foregroundStyle(DesignPalette.ink3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2997,6 +2999,13 @@ private struct DisciplineCard: View {
                 .glassCard(radius: 20)
             }
         }
+    }
+
+    // «Сгибания ног ×2, Дельты» — the top of the skip list, the actionable part.
+    private var skippedLabel: String {
+        summary.skippedByName.prefix(3)
+            .map { $0.count > 1 ? "\($0.name) ×\($0.count)" : $0.name }
+            .joined(separator: ", ")
     }
 }
 

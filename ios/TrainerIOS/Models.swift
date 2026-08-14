@@ -468,6 +468,9 @@ struct AdherenceSummary {
     var plannedSets: Int
     var doneSets: Int       // capped at planned per exercise
     var skippedExercises: Int
+    // Exercises skipped OUTRIGHT (planned, zero sets done), most-skipped first —
+    // the same signal the coach uses to adapt plans to real behaviour.
+    var skippedByName: [(name: String, count: Int)] = []
 
     var ratio: Double { plannedSets == 0 ? 0 : Double(doneSets) / Double(plannedSets) }
     var hasData: Bool { comparedWorkouts > 0 && plannedSets > 0 }
