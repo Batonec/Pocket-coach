@@ -370,19 +370,16 @@ def _build_system_prompt(
         "них не строй. Пики и даты ПР по каждому тренажёру уже посчитаны в данных — "
         "считай их фактами, не выводи заново из сырой истории.\n"
         "- Возврат после перерыва: если с последней тренировки прошло ≥14 дней — "
-        "первая сессия medium/light на ~85–90% последних рабочих весов (чем "
-        "длиннее перерыв, тем ниже: 3–5 недель ~85%, 5–8 недель ~80%), 10–14 "
-        "подходов, без отказа (коридор подходов фазы не действует); возврат к "
-        "прежним весам за 2–3 сессии. ПОЧЕМУ: при простое нервная сила уходит "
-        "последней, а связки, сухожилия и рабочая выносливость — первыми, "
-        "поэтому вес, который до перерыва шёл «легко», сейчас бьёт по "
-        "неподготовленным тканям; первая сессия — это вход обратно, а не "
-        "проверка формы. Отсюда следствие, которое легко упустить: правило "
-        "двойной прогрессии на возвратной сессии НЕ применяется — отметки «-» "
-        "(легко) и запас RIR из последней сессии описывают форму ДО перерыва, "
-        "прибавлять к ним вес или повторы нельзя ни по одному движению. Если в "
-        "данных есть возвратные ПОТОЛКИ или готовые СТУПЕНИ разгона до пика — "
-        "это границы, а не ориентир «примерно»: планируй на них или ниже. "
+        "веди возврат по принятым тренерским принципам работы после простоя "
+        "(детренированность и её разная скорость по системам, готовность "
+        "соединительной ткани, разгон за несколько сессий). Ты профессионал — "
+        "насколько снизить вход и как быстро возвращать прежние веса, решаешь "
+        "сам по длительности перерыва, данным о доперерывных весах и профилю "
+        "атлета. Жёстко фиксировано только одно: возвратная сессия не место "
+        "для прибавки — вес выше доперерывного рабочего сервер не примет ни по "
+        "одному движению. Сессия medium/light, 10–14 подходов, без отказа "
+        "(коридор подходов фазы не действует). Если в данных есть готовые "
+        "СТУПЕНИ разгона до пика — это границы, а не ориентир «примерно». "
         "Длинный перерыв сам по себе — разгрузка: "
         "счётчик deload обнуляется, правило «после heavy не heavy» через перерыв "
         "не применяется. После перерыва в rationale вместо сводки нулевых объёмов "
@@ -545,11 +542,11 @@ def _build_user_prompt(
         chunks.append(stall_line)
 
     if returning and days is not None:
-        ceilings = coach_features.render_return_ceilings(
-            coach_features.return_ceilings(workouts, catalog or [], today, days), days
+        pre_break = coach_features.render_pre_break_weights(
+            coach_features.pre_break_working_weights(workouts, catalog or []), days
         )
-        if ceilings:
-            chunks.append(ceilings)
+        if pre_break:
+            chunks.append(pre_break)
 
     ramp_lines = coach_features.comeback_ramp(workouts, catalog or [], today)
     if ramp_lines:
@@ -1021,17 +1018,18 @@ def _semantic_violations(
         # Movements the athlete left AT their peak get no ladder — without an
         # explicit ceiling the generic ±15% band below would wave through a PR
         # attempt on the first session back.
-        days_off = _days_since_last(workouts, today) or coach_state.BREAK_DAYS
         ceiling_by_id = {
             item["exercise_id"]: item
-            for item in coach_features.return_ceilings(workouts, catalog, today, days_off)
+            for item in coach_features.pre_break_working_weights(workouts, catalog)
             if item["exercise_id"] not in ramp_by_id
         }
     for exercise in recommendation.get("exercises", []) or []:
         exercise_id = exercise["exercise_id"]
         ceiling = ceiling_by_id.get(exercise_id)
         if ceiling:
-            allowed = ceiling["ceiling"]
+            # The only hard rule on a comeback: no progression. How far BELOW
+            # the pre-break weight to start is the coach's judgement, not ours.
+            allowed = ceiling["last_working"]
             for workout_set in exercise["sets"]:
                 weight = workout_set["weight"]
                 too_hard = (
@@ -1040,10 +1038,9 @@ def _semantic_violations(
                 if too_hard:
                     what = "противовес" if ceiling["inverted"] else "вес"
                     violations.append(
-                        f"{exercise['name']}: {what} {weight:g} кг тяжелее возвратного "
-                        f"потолка {allowed:g} (прежний рабочий "
-                        f"{ceiling['last_working']:g}) — после перерыва первая сессия "
-                        "идёт ниже прежних весов, без прогрессии"
+                        f"{exercise['name']}: {what} {weight:g} кг тяжелее доперерывного "
+                        f"рабочего ({allowed:g}) — возвратная сессия не место для "
+                        "прибавки"
                     )
             continue
         ramp = ramp_by_id.get(exercise_id)

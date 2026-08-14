@@ -796,63 +796,41 @@ class ReturnCeilingTests(unittest.TestCase):
 
         # 21 days off and the model still adds weight to the pre-break 100.
         violations = self._violations(self._plan(leg_press=105), _date(2026, 6, 12))
-        self.assertTrue(any("возвратного потолка" in v for v in violations))
-        # Even repeating the exact pre-break weight is too much.
-        violations = self._violations(self._plan(leg_press=100), _date(2026, 6, 12))
-        self.assertTrue(any("возвратного потолка" in v for v in violations))
+        self.assertTrue(any("не место для прибавки" in v for v in violations))
 
-    def test_ceiling_weight_passes(self) -> None:
+    def test_below_pre_break_weight_passes(self) -> None:
         from datetime import date as _date
 
-        # 21 days → 85% of 100 = 85.
+        # How far below is the coach's call — the server only blocks the plus.
         self.assertEqual(self._violations(self._plan(leg_press=85), _date(2026, 6, 12)), [])
-
-    def test_ceiling_scales_with_break_length(self) -> None:
-        from datetime import date as _date
-
-        import coach_features
-
-        self.assertEqual(coach_features.return_ceiling_ratio(15), 0.90)
-        self.assertEqual(coach_features.return_ceiling_ratio(21), 0.85)
-        self.assertEqual(coach_features.return_ceiling_ratio(40), 0.80)
-        self.assertEqual(coach_features.return_ceiling_ratio(90), 0.75)
-
-        ceilings = coach_features.return_ceilings(
-            self._history(), self.CATALOG, _date(2026, 6, 12), 21
-        )
-        by_id = {item["exercise_id"]: item for item in ceilings}
-        self.assertEqual(by_id[8]["ceiling"], 85)     # 100 → 85
-        self.assertEqual(by_id[9]["ceiling"], 50)     # 60 → 51 → 50 (плитка 5 кг)
-        self.assertEqual(by_id[8]["last_working"], 100)
+        self.assertEqual(self._violations(self._plan(leg_press=100), _date(2026, 6, 12)), [])
 
     def test_no_ceilings_outside_a_break(self) -> None:
         from datetime import date as _date
 
         import coach_state
 
-        # Trained 3 days ago: normal progression rules, no return ceilings.
+        # Trained 3 days ago: normal progression rules, no comeback guardrail.
         rec = recommender._validate(self._plan(leg_press=105), self.CATALOG)
         violations = recommender._semantic_violations(
             rec, rec, self.CATALOG, self._history(last="2026-06-09"),
             _date(2026, 6, 12), coach_state.load_state(None),
         )
-        self.assertFalse(any("возвратного потолка" in v for v in violations))
+        self.assertFalse(any("не место для прибавки" in v for v in violations))
 
-    def test_prompt_explains_the_principle(self) -> None:
-        from datetime import date as _date
-
+    def test_prompt_states_facts_without_prescribing_numbers(self) -> None:
         import coach_features
 
-        text = coach_features.render_return_ceilings(
-            coach_features.return_ceilings(
-                self._history(), self.CATALOG, _date(2026, 6, 12), 21
-            ),
-            21,
+        text = coach_features.render_pre_break_weights(
+            coach_features.pre_break_working_weights(self._history(), self.CATALOG), 21
         )
-        self.assertIn("21 дн. без тренировок", text)
-        self.assertIn("~85%", text)
-        self.assertIn("связки", text)          # the WHY, not just the order
-        self.assertIn("Жим ногами: было 100 → не больше 85", text)
+        self.assertIn("21 дн.", text)
+        self.assertIn("Жим ногами: 100", text)
+        # The server states data and defers the judgement; no percentages, no
+        # physiology lecture baked into the algorithmic layer.
+        self.assertIn("решай сам", text)
+        self.assertNotIn("%", text)
+        self.assertNotIn("связк", text)
 
 
 class RequestModelCachingTests(unittest.TestCase):
