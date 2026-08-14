@@ -6,8 +6,9 @@ on the fly from SQLite + coach_state and the cached recommendation status. It
 never invokes the LLM. The client renders the first one or two items and never
 invents texts or compares dates itself.
 
-Taxonomy: the «замеры» family (weight+waist freshness collapsed, plus the hard
-waist limit), the «тренировки» family (return_soon → return_mode escalation),
+Taxonomy: the «замеры» family (weight+waist freshness collapsed, the
+building-phase dead-trend nudge, plus the hard waist limit), the
+«тренировки» family (return_soon → return_mode escalation),
 deload_week, weekly_report_ready and the positive week_done. Every signal dies
 on its own (state change, escalation, TTL); dismissal keys are per-episode
 instance keys, so «скрыть навсегда» does not exist.
@@ -26,6 +27,13 @@ import coach_state
 # even for a disciplined athlete — guaranteed banner blindness.
 MEASUREMENT_DUE_DAYS = 10
 MEASUREMENT_OVERDUE_DAYS = coach_features.STALE_MEASUREMENT_DAYS  # 14: matrix cut-off
+
+# Building phases steer calories by the in-phase weight trend, and a dead trend
+# is a cost TODAY even while the 14-day freshness gate is still green. Nudge
+# from day 5: an earlier weigh-in cannot revive the trend anyway (the window
+# needs a ≥5-day span between points), so day 5 is the first day a new point
+# actually helps. From day 10 the due/overdue ladder takes over.
+TREND_NUDGE_FROM_DAYS = 5
 
 RETURN_SOON_FROM_DAYS = 11          # 1–3 days before the return-protocol threshold
 RETURN_BREAK_DAYS = coach_state.BREAK_DAYS  # 14
@@ -187,6 +195,14 @@ def _measurements_signal(
     stale = overdue + due
     target = "waist" if stale == ["талия"] else "weight"
 
+    phase_start = None
+    started_raw = state.get("phase_started")
+    if isinstance(started_raw, str):
+        try:
+            phase_start = date.fromisoformat(started_raw)
+        except ValueError:
+            phase_start = None
+
     # Mockup titles name exactly what is stale — «Обнови талию — вес свежий».
     if set(stale) == {"вес", "талия"}:
         due_title = "Обнови замеры: вес и талия"
@@ -213,13 +229,6 @@ def _measurements_signal(
         # When fresh-ish data exists but the in-phase trend is still starving,
         # say why one more point matters instead of a separate nagging banner.
         note = None
-        phase_start = None
-        started_raw = state.get("phase_started")
-        if isinstance(started_raw, str):
-            try:
-                phase_start = date.fromisoformat(started_raw)
-            except ValueError:
-                phase_start = None
         if coach_features.weight_trend_per_week(weight_points, today, since=phase_start) is None:
             note = "ещё пара точек — тренд оживёт"
         return _signal(
@@ -228,6 +237,26 @@ def _measurements_signal(
             instance_fact=fact,
             action_type="open_measurements", action_label="Замеры", action_target=target,
             note=note, glyph="scale",
+        )
+
+    # Building phases only: the freshness gate is still green, but the in-phase
+    # weight trend — the signal the calorie matrix actually steers by — is not
+    # computable, and today is the first day a new weigh-in can revive it.
+    phase = state.get("phase")
+    if (
+        phase in ("cut_recomp", "lean_bulk")
+        and weight_age is not None
+        and TREND_NUDGE_FROM_DAYS <= weight_age < MEASUREMENT_DUE_DAYS
+        and coach_features.weight_trend_per_week(weight_points, today, since=phase_start) is None
+    ):
+        goal = "среза" if phase == "cut_recomp" else "набора"
+        return _signal(
+            "weight_trend_stale", "measurements", "info",
+            "Взвесься — тренд веса не считается",
+            f"Фаза {goal} рулит калориями по тренду: нужен замер каждые 3–4 дня",
+            instance_fact=f"weight={last_weight},phase={phase}",
+            action_type="open_measurements", action_label="Замеры", action_target="weight",
+            glyph="scale",
         )
     return None
 

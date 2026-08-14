@@ -122,6 +122,36 @@ class MeasurementsSignalTests(unittest.TestCase):
         self.assertEqual(signal["title"], "Обнови талию — вес свежий")
         self.assertEqual(signal["action"]["target"], "waist")
 
+    def test_dead_trend_in_building_phase_nudges_before_due_stage(self) -> None:
+        # Weight 6 days old — freshness is still green, but a single in-phase
+        # point cannot form the trend the calorie matrix steers by, and a
+        # weigh-in today is the first one that can revive it.
+        signal = coach_signals._measurements_signal(_weights(6), _waists(2), STATE, TODAY)
+        self.assertEqual(signal["id"], "weight_trend_stale")
+        self.assertEqual(signal["severity"], "info")
+        self.assertIn("тренд", signal["title"].lower())
+        self.assertIn("среза", signal["body"])
+        self.assertEqual(signal["action"]["target"], "weight")
+
+    def test_trend_nudge_waits_until_a_new_point_can_help(self) -> None:
+        # Day 4: even a weigh-in today cannot reach the 5-day trend span yet.
+        self.assertIsNone(
+            coach_signals._measurements_signal(_weights(4), _waists(2), STATE, TODAY)
+        )
+
+    def test_live_trend_or_maintenance_phase_means_no_nudge(self) -> None:
+        two_points = [
+            {"entry_date": (TODAY - timedelta(days=13)).isoformat(), "weight": 79.6},
+            {"entry_date": (TODAY - timedelta(days=6)).isoformat(), "weight": 79.0},
+        ]
+        self.assertIsNone(
+            coach_signals._measurements_signal(two_points, _waists(2), STATE, TODAY)
+        )
+        maintenance = dict(STATE, phase="maintenance")
+        self.assertIsNone(
+            coach_signals._measurements_signal(_weights(6), _waists(2), maintenance, TODAY)
+        )
+
 
 class TrainingsSignalTests(unittest.TestCase):
     def test_recent_training_is_silent(self) -> None:
