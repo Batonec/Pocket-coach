@@ -141,6 +141,14 @@ final class TrainerStore: ObservableObject {
         await reload(showSuccess: true)
     }
 
+    /// Read-only server sync used by pull-to-refresh and the developer settings
+    /// action. `reload` fetches workouts, measurements, the cached recommendation
+    /// and coach signals; it never calls the LLM-generating recommendations/refresh
+    /// endpoint.
+    func refreshServerData() async {
+        await reload(showSuccess: true)
+    }
+
     func signOut() async {
         recommendationPollTask?.cancel()
         recommendationPollTask = nil

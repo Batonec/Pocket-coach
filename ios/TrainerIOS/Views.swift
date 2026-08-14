@@ -2199,6 +2199,9 @@ private struct HistoryScreen: View {
     @State private var pendingDeleteWorkout: Workout?
     @State private var isShowingProgress = false
     @State private var isShowingWeeklyReport = false
+    // Keep the internal backend switcher reachable in code without exposing
+    // implementation details (UID / server URL) in the product UI.
+    private let showsDeveloperHeader = false
 
     var body: some View {
         NavigationStack {
@@ -2206,15 +2209,17 @@ private struct HistoryScreen: View {
                 WarmWallpaper()
                 List {
                     Section {
-                        headerPills
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 0, trailing: 14))
+                        if showsDeveloperHeader {
+                            headerPills
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 0, trailing: 14))
+                        }
 
                         TopTitle(sub: "Тренировки · \(store.workouts.count)", title: "История")
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 12, leading: 18, bottom: 4, trailing: 18))
+                            .listRowInsets(EdgeInsets(top: 6, leading: 18, bottom: 4, trailing: 18))
 
                         // Attention always wins over retrospective stats: every
                         // visible server signal is placed before the streak.
@@ -2305,6 +2310,9 @@ private struct HistoryScreen: View {
                 .scrollContentBackground(.hidden)
                 .background(Color.clear)
                 .scrollIndicators(.hidden)
+                .refreshable {
+                    await store.refreshServerData()
+                }
             }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $isShowingProgress) {
@@ -4616,7 +4624,7 @@ private struct SettingsSheet: View {
                         dismiss()
                     }
                     Button("Обновить данные") {
-                        Task { await store.reload() }
+                        Task { await store.refreshServerData() }
                         dismiss()
                     }
                 }
