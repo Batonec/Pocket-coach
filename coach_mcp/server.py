@@ -461,7 +461,9 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
         profile = recommender.load_profile(_PROFILE_PATH)
         state = coach_state.load_state(_STATE_PATH)
         today = date.today()
-        system = recommender._build_system_prompt(catalog, profile)
+        # state обязателен: без него политика фаз рендерится из дефолтов, и
+        # preview показывает не тот промпт, который уйдёт в модель.
+        system = recommender._build_system_prompt(catalog, profile, state)
         user = recommender._build_user_prompt(
             workouts, body_weights, today, limit,
             catalog=catalog, state=state, waists=waists,
