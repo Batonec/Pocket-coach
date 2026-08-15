@@ -1103,16 +1103,19 @@ final class TrainerStore: ObservableObject {
     private static func normalizedBackendURL(_ storedURL: String?) -> String {
         let localDevelopmentURL = "http://127.0.0.1:8080"
         let localHostURL = "http://localhost:8080"
-        let legacyProductionURL = "https://trainer.89.124.83.32.nip.io:8443"
         let productionURL = "https://trainer.superbatonec.org"
         var value = storedURL?.trimmingCharacters(in: .whitespacesAndNewlines)
         while value?.hasSuffix("/") == true {
             value?.removeLast()
         }
+        // Старый прод жил на nip.io-адресе поверх IP: сохранённое значение той эпохи
+        // молча переезжает на домен. Матчим по хосту, а не по литералу, — сам адрес
+        // в публичном репозитории не хранится.
+        let isLegacyProduction = value?.contains(".nip.io") == true
         guard let value, !value.isEmpty,
               value != localDevelopmentURL,
               value != localHostURL,
-              value != legacyProductionURL else {
+              !isLegacyProduction else {
             return productionURL
         }
         return value

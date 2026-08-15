@@ -4,7 +4,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MINIAPP_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
-TARGET_HOST="${TRAINER_VPS_HOST:-root@89.124.83.32}"
+# Адрес VPS в публичном репозитории не хранится: он берётся из переменной
+# TRAINER_VPS_HOST либо из gitignored-файла target.local рядом с этим скриптом
+# (одна строка вида: TRAINER_VPS_HOST=root@1.2.3.4).
+TARGET_LOCAL="$SCRIPT_DIR/target.local"
+if [[ -z "${TRAINER_VPS_HOST:-}" && -f "$TARGET_LOCAL" ]]; then
+  # shellcheck source=/dev/null
+  source "$TARGET_LOCAL"
+fi
+
+TARGET_HOST="${TRAINER_VPS_HOST:-}"
 REMOTE_BASE="${TRAINER_REMOTE_BASE:-/opt/trainer-miniapp}"
 BOT_SERVICE="${TRAINER_BOT_SERVICE:-trainer-miniapp-bot.service}"
 BACKEND_SERVICE="${TRAINER_BACKEND_SERVICE:-trainer-miniapp-backend.service}"
@@ -24,12 +33,28 @@ Usage:
   $(basename "$0") coach-mcp
   $(basename "$0") all
 
-Optional environment variables:
-  TRAINER_VPS_HOST      SSH target, default: $TARGET_HOST
+Environment variables:
+  TRAINER_VPS_HOST      SSH target (required; may come from deploy/target.local)
   TRAINER_REMOTE_BASE   Remote base dir, default: $REMOTE_BASE
   TRAINER_BOT_SERVICE   systemd service name, default: $BOT_SERVICE
   TRAINER_BACKEND_SERVICE systemd service name, default: $BACKEND_SERVICE
 EOF
+}
+
+
+require_target_host() {
+  if [[ -z "$TARGET_HOST" ]]; then
+    cat >&2 <<EOF
+[deploy] error: SSH target not set.
+
+Set it once in $TARGET_LOCAL (gitignored):
+
+  echo 'TRAINER_VPS_HOST=root@<адрес>' > $TARGET_LOCAL
+
+or pass it per run: TRAINER_VPS_HOST=root@<адрес> $(basename "$0") backend
+EOF
+    exit 1
+  fi
 }
 
 
@@ -151,18 +176,23 @@ main() {
 
   case "$target" in
     web)
+      require_target_host
       deploy_web
       ;;
     bot)
+      require_target_host
       deploy_bot
       ;;
     backend)
+      require_target_host
       deploy_backend
       ;;
     coach-mcp)
+      require_target_host
       deploy_coach_mcp
       ;;
     all)
+      require_target_host
       deploy_web
       deploy_bot
       deploy_backend

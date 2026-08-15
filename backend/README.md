@@ -188,8 +188,9 @@ Coach MCP); единый допустимый диапазон записи и �
 
 ## Локальный запуск
 
+Команды запускаются из корня репозитория; зависимостей и venv у backend нет.
+
 ```bash
-cd /Users/batonec/AndroidStudioProjects/Trainer
 MINIAPP_ALLOW_DEBUG_USER=1 python3 backend/server.py
 ```
 
@@ -236,7 +237,6 @@ API поднимается на `http://127.0.0.1:8080/`, SQLite — локал�
 ## Тесты
 
 ```bash
-cd /Users/batonec/AndroidStudioProjects/Trainer
 python3 -m unittest discover -s backend/tests -p "test_*.py" -v
 ```
 
@@ -246,13 +246,16 @@ Backend деплоится через CI ([../.github/workflows/deploy-backend.y
 после зелёных тестов на `main`, либо вручную:
 
 ```bash
-cd /Users/batonec/AndroidStudioProjects/Trainer
 ./backend/deploy/deploy.sh backend
 ```
 
-Значения по умолчанию в deploy tooling:
+**Адрес VPS в репозитории не хранится** (репозиторий публичный): скрипт берёт его из
+`TRAINER_VPS_HOST` либо из gitignored-файла `backend/deploy/target.local` рядом с собой —
+одна строка `TRAINER_VPS_HOST=root@<адрес>`. Без адреса деплой падает с подсказкой,
+не дойдя до `ssh`. В CI адрес приходит из секрета `VPS_HOST`.
 
-- `root@89.124.83.32`
+Остальные значения по умолчанию в deploy tooling:
+
 - `/opt/trainer-miniapp` (исторический путь на VPS, не переименовывался)
 - `trainer-miniapp-backend.service`
 
