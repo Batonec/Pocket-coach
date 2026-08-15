@@ -27,6 +27,10 @@ EXERCISE_ALIASES: dict[int, int] = {1: 18}
 
 # Assisted pull-ups: the weight field is the COUNTERWEIGHT (assistance), so
 # progress is the weight going DOWN — every comparison below is inverted.
+# The machine left the catalog in Aug 2026 (the athlete's gym has none, and the
+# history never used it), but the inverted-progress support stays: it is the
+# only place that knows how to read a "lower is better" weight column, and any
+# future assisted machine plugs straight into it.
 GRAVITRON_ID = 4
 
 # Base movements that get an explicit comeback ramp after a break; isolation
