@@ -1,4 +1,4 @@
-name: Deploy Mini App Backend
+name: Deploy Backend
 
 on:
   workflow_call:

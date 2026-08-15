@@ -12,6 +12,36 @@
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<!-- Каждая фраза App Shortcuts обязана содержать имя приложения — фраза без
+	     него молча выбрасывается из NLU-модели. Но имя выбираем мы: короткое
+	     «Зал» превращает обязательное имя в кодовое слово, и команда сжимается
+	     до «Зал жим ногами».
+
+	     iOS разрешает максимум 3 записи — приложение не установится, если
+	     добавить четвёртую. Слоты: русское кодовое слово, узнаваемое имя
+	     продукта и английское кодовое слово на случай переключения Siri.
+	     Само имя Trainer работает в обеих локалях без объявления. -->
+	<key>INAlternativeAppNames</key>
+	<array>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Зал</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>зал</string>
+		</dict>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Покет Коуч</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>покет коуч</string>
+		</dict>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Gym</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>gym</string>
+		</dict>
+	</array>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>

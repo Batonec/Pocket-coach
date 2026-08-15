@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<!-- Рендер-харнесс для скриншотов README: те же компоненты, что в макете,
+     но без канваса — каждый снимок отдельным элементом #shot-<id>.
+     Снимает design/shots/capture.py. -->
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Trainer iOS — shots</title>
+<link rel="stylesheet" href="../styles.css">
+<style>
+  /* Прозрачный фон: PNG/WebP с альфой одинаково живут на светлой и тёмной теме GitHub.
+     Паддинг — место под тень телефона. */
+  body { background: transparent; }
+  .shot { padding: 34px; display: inline-block; }
+  .row { display: flex; gap: 34px; align-items: flex-start; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="../data.jsx"></script>
+<script type="text/babel" src="../icons.jsx"></script>
+<script type="text/babel" src="../shell.jsx"></script>
+
+<script type="text/babel" src="../screens/today.jsx"></script>
+<script type="text/babel" src="../screens/coach.jsx"></script>
+<script type="text/babel" src="../screens/quickadd.jsx"></script>
+<script type="text/babel" src="../screens/picker.jsx"></script>
+<script type="text/babel" src="../screens/history.jsx"></script>
+<script type="text/babel" src="../screens/progress.jsx"></script>
+<script type="text/babel" src="../screens/exercise.jsx"></script>
+<script type="text/babel" src="../screens/weight.jsx"></script>
+
+<script type="text/babel">
+const A = '#FF4D1F';
+
+// Голосовой слой — единственная фича без экрана в макетах: иллюстрируем диалогом
+// в том же визуальном языке (mono, ink-палитра, стеклянные пузыри).
+const Bubble = ({ who, children, tone }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div className="t-label" style={{ color: tone === 'accent' ? A : '#6E727B' }}>{who}</div>
+    <div style={{
+      borderRadius: 24, padding: '18px 22px',
+      background: tone === 'accent' ? 'rgba(255,255,255,0.86)' : 'rgba(255,255,255,0.62)',
+      border: '0.5px solid rgba(255,255,255,0.85)',
+      boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.7), 0 12px 28px -12px rgba(14,15,18,0.16)',
+      fontSize: 19, lineHeight: 1.5, letterSpacing: -0.3,
+      color: tone === 'accent' ? '#0E0F12' : '#2E3138',
+      fontWeight: tone === 'accent' ? 700 : 500,
+      flex: 1, display: 'flex', alignItems: 'center',
+    }}>{children}</div>
+  </div>
+);
+
+const VoiceCard = () => (
+  <div style={{
+    width: 960, borderRadius: 44, padding: '34px 38px 32px',
+    position: 'relative', overflow: 'hidden',
+    fontFamily: 'var(--font-mono)',
+    boxShadow: '0 0 0 1px rgba(20,16,12,0.14), 0 30px 60px rgba(20,16,12,0.16)',
+  }}>
+    <div className="iframe-wall" />
+    <div style={{ position: 'relative' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 26 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ width: 9, height: 9, borderRadius: 5, background: A, display: 'inline-block' }} />
+          <span className="t-label-lg" style={{ letterSpacing: 1.4 }}>SIRI · ЗАПИСЬ ПОДХОДА ГОЛОСОМ</span>
+        </div>
+        <span className="t-label" style={{ color: '#6E727B' }}>телефон в кармане · экран заблокирован</span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22 }}>
+        <Bubble who="ТЫ · МЕЖДУ ПОДХОДАМИ" tone="accent">«Зал&nbsp;жим&nbsp;ногами»</Bubble>
+        <Bubble who="КОУЧ · В НАУШНИКИ">Жим ногами, 90 на 12. Первый подход из трёх. Взял вес и повторы из плана.</Bubble>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 24 }}>
+        {[
+          ['Зал подход', '«жим ногами 80 на 10, тяжело»'],
+          ['Зал дальше', 'что делать сейчас'],
+          ['Зал отмена', 'снять последний подход'],
+          ['Зал финиш', 'сохранить тренировку'],
+        ].map(([cmd, hint]) => (
+          <div key={cmd} className="chip" style={{
+            borderRadius: 20, padding: '10px 16px', display: 'flex', alignItems: 'baseline', gap: 10,
+          }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: '#0E0F12', letterSpacing: -0.2 }}>{cmd}</span>
+            <span style={{ fontSize: 13, color: '#6E727B' }}>{hint}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
+const SHOTS = [
+  ['voice',        <VoiceCard />],
+  ['coach',        <CoachScreen accent={A} state="ready" />],
+  ['coach-why',    <CoachScreen accent={A} state="ready" expanded={true} />],
+  ['today',        <TodayActiveWithActionsScreen accent={A} />],
+  ['today-start',  <TodayPreStartScreen accent={A} />],
+  ['quickadd',     <QuickAddScreen accent={A} />],
+  ['picker',       <PickerScreen accent={A} />],
+  ['history',      <HistoryScreen accent={A} />],
+  ['progress',     <ProgressScreen accent={A} />],
+  ['exercise',     <ExerciseDetailScreen accent={A} />],
+  ['weight',       <WeightScreen accent={A} />],
+];
+
+function App() {
+  React.useEffect(() => {
+    document.documentElement.style.setProperty('--accent', A);
+  }, []);
+  return (
+    <div>
+      <div className="shot" id="shot-hero">
+        <div className="row">
+          <CoachScreen accent={A} state="ready" />
+          <TodayActiveWithActionsScreen accent={A} />
+          <ProgressScreen accent={A} />
+        </div>
+      </div>
+      {SHOTS.map(([id, node]) => (
+        <div className="shot" id={'shot-' + id} key={id}>{node}</div>
+      ))}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
