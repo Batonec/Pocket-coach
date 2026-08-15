@@ -599,6 +599,12 @@ struct DraftWorkout: Codable, Hashable {
     var exercises: [DraftExercise]
     var editingWorkoutID: Int?
     var editingClientID: String?
+    /// Упражнение, в которое лёг последний добавленный сет — цель для отмены
+    /// («убери последний подход») независимо от порядка карточек и суперсетов.
+    var lastLoggedExerciseID: Int? = nil
+    /// Когда добавили последний сет (unix seconds). По нему голосовой слой
+    /// отличает живую сессию от забытого вчерашнего черновика.
+    var lastLoggedAt: Double? = nil
 
     static var empty: DraftWorkout {
         DraftWorkout(

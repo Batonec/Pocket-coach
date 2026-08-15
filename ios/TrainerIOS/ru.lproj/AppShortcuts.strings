@@ -1,0 +1,25 @@
+/* Фразы Siri на русском. Ключ — литерал из VoiceIntents.swift, значение —
+   фраза для русской Siri. Файл нужен как база локализации: без ru.lproj
+   английская таблица не подхватывается как альтернатива. */
+
+"Записать подход в ${applicationName}" = "Записать подход в ${applicationName}";
+"Добавь подход в ${applicationName}" = "Добавь подход в ${applicationName}";
+"Новый подход в ${applicationName}" = "Новый подход в ${applicationName}";
+"Запиши подход в ${applicationName}" = "Запиши подход в ${applicationName}";
+"${applicationName} подход" = "${applicationName} подход";
+
+"Засчитай ${exercise} в ${applicationName}" = "Засчитай ${exercise} в ${applicationName}";
+"Сделал ${exercise} в ${applicationName}" = "Сделал ${exercise} в ${applicationName}";
+"Закрой ${exercise} в ${applicationName}" = "Закрой ${exercise} в ${applicationName}";
+
+"Убери последний подход в ${applicationName}" = "Убери последний подход в ${applicationName}";
+"Отмени последний подход в ${applicationName}" = "Отмени последний подход в ${applicationName}";
+"Удали последний подход в ${applicationName}" = "Удали последний подход в ${applicationName}";
+
+"Что дальше в ${applicationName}" = "Что дальше в ${applicationName}";
+"Следующий подход в ${applicationName}" = "Следующий подход в ${applicationName}";
+"Какой следующий подход в ${applicationName}" = "Какой следующий подход в ${applicationName}";
+
+"Заверши тренировку в ${applicationName}" = "Заверши тренировку в ${applicationName}";
+"Сохрани тренировку в ${applicationName}" = "Сохрани тренировку в ${applicationName}";
+"Закончил тренировку в ${applicationName}" = "Закончил тренировку в ${applicationName}";

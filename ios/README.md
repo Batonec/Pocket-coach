@@ -82,7 +82,11 @@ xcodebuild \
 - `TrainerLogic.swift` — перенос бизнес-логики Mini App: сортировки, planned sets, summary, progress, weight stats.
 - `TrainerStore.swift` — observable app state, persistence draft/settings, API mutations.
 - `Views.swift` — SwiftUI-экраны и компоненты.
-- `Resources/exercises.json` — fallback-каталог упражнений из Mini App.
+- `VoiceSetParser.swift` — язык и грамматика голосовой фразы: упражнение, вес, повторы, тяжесть.
+- `TrainerStoreVoice.swift` — голосовые команды поверх стора и тексты ответов Siri (ru/en).
+- `VoiceIntents.swift` — App Intents и фразы Siri (см. [VOICE_LOGGING_BRIEF.md](./VOICE_LOGGING_BRIEF.md)).
+- `ru.lproj/AppShortcuts.strings`, `en.lproj/AppShortcuts.strings` — фразы Siri по локалям; требуют `LM_NO_APP_SHORTCUT_LOCALIZATION = NO` в настройках таргета.
+- `Resources/exercises.json` — fallback-каталог упражнений из Mini App; он же каталог для голосовых команд при фоновом запуске.
 
 ## API-контракт
 

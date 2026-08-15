@@ -12,6 +12,33 @@
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<!-- Приложение на устройстве называется Trainer, а вслух пользователь
+	     говорит «Покет Коуч» / «Pocket Coach». Siri сопоставляет фразы App
+	     Shortcuts с любым из этих имён. iOS разрешает максимум 3 записи —
+	     приложение не установится, если добавить четвёртую, поэтому слоты
+	     поделены между языками: латиница для английской Siri, кириллица для
+	     русской. Само имя Trainer работает в обоих. -->
+	<key>INAlternativeAppNames</key>
+	<array>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Pocket Coach</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>pocket coach</string>
+		</dict>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Покет Коуч</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>покет коуч</string>
+		</dict>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Тренер</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>тренер</string>
+		</dict>
+	</array>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>

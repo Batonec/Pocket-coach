@@ -1,0 +1,25 @@
+/* Siri phrases for an English-language device. Keys are the Russian literals
+   from VoiceIntents.swift; values are what English Siri listens for. The app
+   name resolves to "Trainer" or to an INAlternativeAppNames entry. */
+
+"Записать подход в ${applicationName}" = "Log a set in ${applicationName}";
+"Добавь подход в ${applicationName}" = "Add a set in ${applicationName}";
+"Новый подход в ${applicationName}" = "New set in ${applicationName}";
+"Запиши подход в ${applicationName}" = "Record a set in ${applicationName}";
+"${applicationName} подход" = "${applicationName} set";
+
+"Засчитай ${exercise} в ${applicationName}" = "Log ${exercise} in ${applicationName}";
+"Сделал ${exercise} в ${applicationName}" = "Did ${exercise} in ${applicationName}";
+"Закрой ${exercise} в ${applicationName}" = "Done with ${exercise} in ${applicationName}";
+
+"Убери последний подход в ${applicationName}" = "Undo last set in ${applicationName}";
+"Отмени последний подход в ${applicationName}" = "Remove last set in ${applicationName}";
+"Удали последний подход в ${applicationName}" = "Delete last set in ${applicationName}";
+
+"Что дальше в ${applicationName}" = "What's next in ${applicationName}";
+"Следующий подход в ${applicationName}" = "Next set in ${applicationName}";
+"Какой следующий подход в ${applicationName}" = "What is my next set in ${applicationName}";
+
+"Заверши тренировку в ${applicationName}" = "Finish workout in ${applicationName}";
+"Сохрани тренировку в ${applicationName}" = "Save workout in ${applicationName}";
+"Закончил тренировку в ${applicationName}" = "End workout in ${applicationName}";

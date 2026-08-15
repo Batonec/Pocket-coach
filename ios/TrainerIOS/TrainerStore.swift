@@ -3,6 +3,11 @@ import SwiftUI
 
 @MainActor
 final class TrainerStore: ObservableObject {
+    /// Один стор на процесс. Siri-интенты выполняются в процессе приложения —
+    /// в том числе когда система подняла его в фоне ради одной фразы, — и
+    /// обязаны видеть тот же черновик, что и UI, а не свою копию.
+    static let shared = TrainerStore()
+
     static let validBodyWeightRange = 30.0...400.0
     static let validWaistRange = 50.0...160.0
 
@@ -68,6 +73,9 @@ final class TrainerStore: ObservableObject {
     }
 
     private let defaults: UserDefaults
+    /// Голосовой слой живёт в отдельном файле, но хранит свой язык в тех же
+    /// defaults — в тестах они изолированные, и голос обязан их разделять.
+    var voiceDefaults: UserDefaults { defaults }
     private var toastTask: Task<Void, Never>?
     private var recommendationPollTask: Task<Void, Never>?
     private var recommendationPollGeneration = 0
@@ -460,7 +468,10 @@ final class TrainerStore: ObservableObject {
         }
     }
 
-    func saveDraftWorkout() async {
+    /// Returns whether the workout reached the server — the voice "finish"
+    /// command has to speak a truthful outcome instead of a silent toast.
+    @discardableResult
+    func saveDraftWorkout() async -> Bool {
         // The applied plan is stamped onto NEW workouts only: editing an old
         // workout must neither claim today's plan nor consume it.
         let wasNewWorkout = draft.editingWorkoutID == nil
@@ -468,7 +479,7 @@ final class TrainerStore: ObservableObject {
         let payload = TrainerLogic.workoutPayload(from: draft, recommendation: snapshot)
         guard !payload.data.exercises.isEmpty else {
             showToast("Добавь хотя бы одно упражнение")
-            return
+            return false
         }
 
         isSavingWorkout = true
@@ -506,8 +517,10 @@ final class TrainerStore: ObservableObject {
                     await self?.loadRecommendation()
                 }
             }
+            return true
         } catch {
             showToast(error.localizedDescription)
+            return false
         }
     }
 
@@ -1010,6 +1023,10 @@ final class TrainerStore: ObservableObject {
                 )
             )
         }
+        // Метка ставится на любом пути добавления (кнопка, модалка, Siri):
+        // голосовая отмена и детектор забытого черновика читают именно её.
+        draft.lastLoggedExerciseID = exercise.id
+        draft.lastLoggedAt = Date().timeIntervalSince1970
     }
 
     private func updateSet(_ set: DraftSet, exerciseID: Int, setIndex: Int) {
