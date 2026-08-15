@@ -178,11 +178,15 @@ UI. Отсюда два следствия: стор стал синглтоно
 рядом с базой. В репо — только `*.example.json`. Не коммить содержимое профиля и не вставляй его
 в примеры.
 
-**Каталог упражнений закрыт.** 12 упражнений в `backend/static/data/exercises.json`, отдаётся по
+**Каталог упражнений закрыт.** 13 упражнений в `backend/static/data/exercises.json`, отдаётся по
 `GET /data/exercises.json`; в iOS есть fallback-копия `ios/TrainerIOS/Resources/exercises.json`.
 `exercise_id` зашит enum'ом в JSON-схему запроса к модели. Дубль каталога (id 1 ≡ id 18) слит на
 сериализации: модель видит только id 18. Гравитрон (id 4) **инвертирован** — прогресс там это
 уменьшение противовеса; это учитывают `coach_features`, валидатор и рендеры.
+Добавление упражнения — это шесть мест: оба `exercises.json`, `CATALOG_SEMANTICS` и
+`CATALOG_GAPS` в `recommender.py`, `MUSCLE_GROUPS` / `EFFECTIVE_SETS` /
+`SMALL_GROUP_TARGETS` в `coach_features.py`, `muscleGroupLandmarks` в `TrainerLogic.swift`
+и словари синонимов в `VoiceSetParser.swift`.
 
 ## Документация — часть кода
 

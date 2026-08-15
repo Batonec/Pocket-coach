@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 backend/data/
 backend/deploy/target.local
+vision/

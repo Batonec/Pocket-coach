@@ -516,6 +516,11 @@ enum ExerciseVoiceMatcher {
             "плечи", "махи", "дельта", "дельтовидные", "средняя дельта",
             "delts", "shoulders", "lateral raises", "side raises", "laterals"
         ],
+        "задняя дельта": [
+            "задняя дельта", "задние дельты", "обратная бабочка", "обратные махи",
+            "махи в наклоне", "задний пучок",
+            "rear delt", "rear delts", "reverse fly", "reverse flyes", "rear fly"
+        ],
         "бицепс": [
             "бицуха", "подъем на бицепс", "сгибания на бицепс",
             "biceps", "biceps curl", "bicep curl", "curls", "arm curl"
@@ -574,6 +579,7 @@ enum ExerciseVoiceNames {
         "тяга верт": "Lat pulldown",
         "тяга горизонт": "Seated row",
         "дельты": "Lateral raises",
+        "задняя дельта": "Rear delt fly",
         "бицепс": "Biceps curl",
         "трицепс": "Triceps pushdown",
         "разгибания ног": "Leg extension",
