@@ -322,10 +322,48 @@ def _format_range(bounds: Any, unit: str = "") -> str:
     return f"{bounds}{unit}"
 
 
-def _render_phase_policy() -> str:
-    cut = coach_state.PHASE_DEFAULTS["cut_recomp"]
-    bulk = coach_state.PHASE_DEFAULTS["lean_bulk"]
-    maintenance = coach_state.PHASE_DEFAULTS["maintenance"]
+def _format_number(value: Any) -> str:
+    """A phase parameter rendered as a single number.
+
+    Overrides are validated on write, but only loosely: a range key may arrive
+    as a scalar and a scalar key as a range. The prompt must never crash over
+    it — a broken parameter has to reach the athlete as odd text, not as a
+    failed generation.
+    """
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{value:g}"
+    return str(value)
+
+
+def _format_low(bounds: Any) -> str:
+    """Lower edge of a range parameter; a scalar override stands for itself."""
+    if isinstance(bounds, (tuple, list)) and bounds:
+        return _format_number(bounds[0])
+    return _format_number(bounds)
+
+
+def _render_phase_policy(state: dict[str, Any] | None = None) -> str:
+    """Phase policy for the system prompt.
+
+    The ACTIVE phase is rendered from the athlete's merged parameters
+    (``phase_params`` overrides on top of the defaults) — otherwise the prompt
+    would carry the stock numbers while the КОНТЕКСТ block carries the real
+    ones, and the model gets two contradicting methodologies in one request.
+    The two inactive phases keep the stock text: they are background, and their
+    numbers are re-set on the switch anyway.
+    """
+    merged = coach_state.phase_params(state) if state is not None else None
+    defaults = {
+        phase: (
+            merged
+            if merged is not None and merged.get("phase") == phase
+            else coach_state.PHASE_DEFAULTS[phase]
+        )
+        for phase in coach_state.PHASES
+    }
+    cut = defaults["cut_recomp"]
+    bulk = defaults["lean_bulk"]
+    maintenance = defaults["maintenance"]
     return (
         "Подготовка ведётся ФАЗАМИ. Текущая фаза, её неделя блока и целевые ориентиры "
         "приходят в блоке КОНТЕКСТ каждого запроса — они главнее общих цифр ниже. Все "
@@ -345,20 +383,21 @@ def _render_phase_policy() -> str:
         f"{bulk['frequency_text']}, сессия {_format_range(bulk['session_sets'])} подходов, "
         f"объём — ramp {_format_range(bulk['ramp_start'])} → {_format_range(bulk['ramp_cap'])} "
         "сетов на крупную группу, прогрессия двойная — ожидаются регулярные ПР. Контроль "
-        f"набора по талии; потолок — талия у лимита либо ~{bulk['ceiling_weight_kg']:g} кг. "
+        f"набора по талии; потолок — талия у лимита либо ~{_format_number(bulk.get('ceiling_weight_kg'))} кг. "
         f"Белок {_format_range(bulk['protein_g'])} г.\n"
         f"- maintenance («{maintenance['title']}»): {maintenance['frequency_text']} — одна "
         f"fullbody heavy сессия {_format_range(maintenance['session_sets'])} подходов, "
         f"{_format_range(maintenance['sets_per_group'])} сета на группу в неделю, объём НЕ "
         "растёт и претензий к объёму в rationale быть не должно. Веса НЕ снижать — "
         "интенсивность и есть сигнал удержания; прогрессия не требуется. Калории "
-        f"{_format_range(maintenance['calories'])} ккал, белок ~{maintenance['protein_g'][0]:g}+ г."
+        f"{_format_range(maintenance['calories'])} ккал, белок ~{_format_low(maintenance.get('protein_g'))}+ г."
     )
 
 
 def _build_system_prompt(
     catalog: list[dict[str, Any]],
     profile: dict[str, Any] | None = None,
+    state: dict[str, Any] | None = None,
 ) -> str:
     catalog_lines = "\n".join(
         f"  {item['id']} — {item['name']}: {CATALOG_SEMANTICS.get(item['id'], 'тренажёр')}"
@@ -382,7 +421,7 @@ def _build_system_prompt(
         "в пару недель; атлет сам решит и добавит. В exercises[] несуществующие "
         "упражнения не включай никогда.\n\n"
         "=== ФАЗЫ ПОДГОТОВКИ ===\n"
-        f"{_render_phase_policy()}\n\n"
+        f"{_render_phase_policy(state)}\n\n"
         "=== ТРЕНЕРСКАЯ ПОЛИТИКА (ориентиры по умолчанию) ===\n"
         "Всё в этом разделе — рабочие настройки по умолчанию, а не законы: ты видишь "
         "больше контекста, чем любое правило. Отступай от ориентиров, когда видишь "
@@ -1132,7 +1171,7 @@ def generate_with_trace(
 
     today = today or date.today()
     state = state if state is not None else coach_state.load_state(None)
-    system = _build_system_prompt(catalog, profile)
+    system = _build_system_prompt(catalog, profile, state)
     user = _build_user_prompt(
         workouts, body_weights, today, history_limit,
         catalog=catalog, state=state, waists=waists,
