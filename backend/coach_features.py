@@ -27,6 +27,10 @@ EXERCISE_ALIASES: dict[int, int] = {1: 18}
 
 # Assisted pull-ups: the weight field is the COUNTERWEIGHT (assistance), so
 # progress is the weight going DOWN — every comparison below is inverted.
+# The machine left the catalog in Aug 2026 (the athlete's gym has none, and the
+# history never used it), but the inverted-progress support stays: it is the
+# only place that knows how to read a "lower is better" weight column, and any
+# future assisted machine plugs straight into it.
 GRAVITRON_ID = 4
 
 # Base movements that get an explicit comeback ramp after a break; isolation
@@ -38,6 +42,7 @@ MUSCLE_GROUPS: dict[str, tuple[int, ...]] = {
     "грудь": (18, 17),
     "спина": (9, GRAVITRON_ID, 10),
     "дельты": (13,),
+    "задняя дельта": (19,),
     "бицепс": (11,),
     "трицепс": (12,),
     "квадрицепс/ягодичные": (8, 16),
@@ -50,14 +55,16 @@ MUSCLE_GROUPS: dict[str, tuple[int, ...]] = {
 # press loads the FRONT delt, while the group's only direct machine measures the
 # mid delt — a half-set credit would overstate coverage of the visible head.
 # The leg press's extra glute share is folded into the combined quad/glute
-# group, so it stays 1.0 there.
+# group, so it stays 1.0 there. The horizontal row credits «задняя дельта» 0.25:
+# rowing does load the posterior head, but not enough to replace direct work.
 EFFECTIVE_SETS: dict[int, dict[str, float]] = {
     18: {"грудь": 1.0, "трицепс": 0.5, "дельты": 0.25},
     17: {"грудь": 1.0},
     9: {"спина": 1.0, "бицепс": 0.5},
     GRAVITRON_ID: {"спина": 1.0, "бицепс": 0.5},
-    10: {"спина": 1.0, "бицепс": 0.5},
+    10: {"спина": 1.0, "бицепс": 0.5, "задняя дельта": 0.25},
     13: {"дельты": 1.0},
+    19: {"задняя дельта": 1.0},
     11: {"бицепс": 1.0},
     12: {"трицепс": 1.0},
     8: {"квадрицепс/ягодичные": 1.0},
@@ -71,6 +78,7 @@ BIG_GROUPS = ("грудь", "спина", "квадрицепс/ягодичны
 # the system prompt); big groups follow the block-week ramp instead.
 SMALL_GROUP_TARGETS: dict[str, tuple[int, int]] = {
     "дельты": (6, 12),
+    "задняя дельта": (4, 8),
     "бицепс": (4, 8),
     "трицепс": (4, 8),
     "бицепс бедра": (5, 10),
