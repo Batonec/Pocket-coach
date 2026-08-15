@@ -68,6 +68,10 @@ final class TrainerStore: ObservableObject {
     }
 
     private let defaults: UserDefaults
+    /// Injected by tests so every request runs against a stubbed URLProtocol.
+    /// Production leaves it nil and APIClient keeps its own tuned sessions
+    /// (3s for app traffic, the long-running one for the refresh POST).
+    private let urlSession: URLSession?
     private var toastTask: Task<Void, Never>?
     private var recommendationPollTask: Task<Void, Never>?
     private var recommendationPollGeneration = 0
@@ -76,8 +80,9 @@ final class TrainerStore: ObservableObject {
     // otherwise an older pre-mutation snapshot can resurrect a dead banner.
     private var coachSignalsLoadGeneration = 0
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, urlSession: URLSession? = nil) {
         self.defaults = defaults
+        self.urlSession = urlSession
         self.currentTab = TrainerTab(rawValue: defaults.string(forKey: Keys.currentTab) ?? "") ?? .trainings
         // The Progress screen dropped its 7D/30D/All picker — everything there
         // (discipline, sparklines, exercise detail) now reads all-time.
@@ -89,6 +94,18 @@ final class TrainerStore: ObservableObject {
         self.appliedPlan = Self.readAppliedPlan(defaults: defaults)
         self.bodyWeightDate = DateTools.localTodayISO()
         self.waistDate = DateTools.localTodayISO()
+    }
+
+    /// Single construction point for API clients, so an injected test session
+    /// covers every endpoint the store touches.
+    private func apiClient(
+        baseURLString: String? = nil,
+        session: URLSession? = nil
+    ) -> APIClient {
+        APIClient(
+            baseURLString: baseURLString ?? apiBaseURLString,
+            session: urlSession ?? session
+        )
     }
 
     func boot() async {
@@ -106,7 +123,7 @@ final class TrainerStore: ObservableObject {
         let baseURL = apiBaseURLString
         let workTask = Task<Void, Error> { [weak self] in
             guard let self else { return }
-            let client = APIClient(baseURLString: baseURL)
+            let client = self.apiClient(baseURLString: baseURL)
             let session = try await client.resolveSession()
             try await self.loadAuthenticatedData(
                 client: client,
@@ -156,7 +173,7 @@ final class TrainerStore: ObservableObject {
         invalidateCoachSignalsLoads()
         isRefreshingRecommendation = false
         do {
-            _ = try await APIClient(baseURLString: apiBaseURLString).logout()
+            _ = try await apiClient().logout()
         } catch {
             showToast(error.localizedDescription)
         }
@@ -237,7 +254,7 @@ final class TrainerStore: ObservableObject {
         defer { isSavingBodyWeight = false }
 
         do {
-            let response = try await APIClient(baseURLString: apiBaseURLString)
+            let response = try await apiClient()
                 .saveBodyWeight(entryDate: bodyWeightDate, weight: value)
             currentUser = response.user ?? currentUser
             bodyWeightEntries.removeAll { $0.entryDate == response.entry.entryDate }
@@ -257,7 +274,7 @@ final class TrainerStore: ObservableObject {
 
     func deleteBodyWeight(_ entry: BodyWeightEntry) async {
         do {
-            let response = try await APIClient(baseURLString: apiBaseURLString)
+            let response = try await apiClient()
                 .deleteBodyWeight(id: entry.id)
             currentUser = response.user ?? currentUser
             bodyWeightEntries.removeAll { $0.id == entry.id }
@@ -311,7 +328,7 @@ final class TrainerStore: ObservableObject {
         defer { isSavingWaist = false }
 
         do {
-            let response = try await APIClient(baseURLString: apiBaseURLString)
+            let response = try await apiClient()
                 .saveWaist(entryDate: waistDate, waist: value)
             currentUser = response.user ?? currentUser
             waistEntries.removeAll { $0.entryDate == response.entry.entryDate }
@@ -333,7 +350,7 @@ final class TrainerStore: ObservableObject {
 
     func deleteWaist(_ entry: WaistEntry) async {
         do {
-            let response = try await APIClient(baseURLString: apiBaseURLString)
+            let response = try await apiClient()
                 .deleteWaist(id: entry.id)
             currentUser = response.user ?? currentUser
             waistEntries.removeAll { $0.id == entry.id }
@@ -394,9 +411,7 @@ final class TrainerStore: ObservableObject {
 
     private func fetchCoachSignals(generation: Int) async {
         guard case .loaded = bootState else { return }
-        guard let response = try? await APIClient(
-            baseURLString: apiBaseURLString
-        ).fetchCoachSignals() else { return }
+        guard let response = try? await apiClient().fetchCoachSignals() else { return }
         guard case .loaded = bootState,
               coachSignalsLoadGeneration == generation,
               !isCoachSignalsSuppressed,
@@ -408,7 +423,7 @@ final class TrainerStore: ObservableObject {
         coachSignals.removeAll { $0.instanceKey == signal.instanceKey }
         Task { [weak self] in
             guard let self else { return }
-            _ = try? await APIClient(baseURLString: self.apiBaseURLString)
+            _ = try? await self.apiClient()
                 .dismissCoachSignal(instanceKey: signal.instanceKey)
             await self.loadCoachSignals()
         }
@@ -419,7 +434,7 @@ final class TrainerStore: ObservableObject {
         hideCoachSignals(withIDs: ["weekly_report_ready"])
         Task { [weak self] in
             guard let self else { return }
-            _ = try? await APIClient(baseURLString: self.apiBaseURLString).markWeeklyReportRead()
+            _ = try? await self.apiClient().markWeeklyReportRead()
             await self.loadCoachSignals()
         }
     }
@@ -446,7 +461,7 @@ final class TrainerStore: ObservableObject {
     func deleteWorkout(_ workout: Workout) async {
         guard let id = workout.id else { return }
         do {
-            let response = try await APIClient(baseURLString: apiBaseURLString).deleteWorkout(id: id)
+            let response = try await apiClient().deleteWorkout(id: id)
             currentUser = response.user ?? currentUser
             workouts.removeAll { $0.id == id }
             if draft.editingWorkoutID == id {
@@ -475,7 +490,7 @@ final class TrainerStore: ObservableObject {
         defer { isSavingWorkout = false }
 
         do {
-            let client = APIClient(baseURLString: apiBaseURLString)
+            let client = apiClient()
             let response: WorkoutMutationResponse
             if let editingID = draft.editingWorkoutID {
                 response = try await client.updateWorkout(id: editingID, workout: payload)
@@ -521,7 +536,7 @@ final class TrainerStore: ObservableObject {
     /// progress screen uses this so it can stop its spinner and avoid opening
     /// a misleading empty sheet when the network request itself failed.
     func requestWeeklyReport() async throws -> WeeklyReportEntry? {
-        return try await APIClient(baseURLString: apiBaseURLString).fetchWeeklyReport().report
+        return try await apiClient().fetchWeeklyReport().report
     }
 
     // MARK: - Coach recommendation
@@ -530,9 +545,7 @@ final class TrainerStore: ObservableObject {
     /// reload deadline. Failures are silent — we keep whatever we already had.
     func loadRecommendation() async {
         do {
-            let response = try await APIClient(
-                baseURLString: apiBaseURLString
-            ).fetchRecommendation()
+            let response = try await apiClient().fetchRecommendation()
             recommendation = response
             if response.status == "pending" {
                 suppressCoachSignalsForRecommendationRefresh()
@@ -575,15 +588,41 @@ final class TrainerStore: ObservableObject {
         )
     }
 
+    /// The refresh POST outlived `APIClient.longRunningSession`, but the server
+    /// neither stops nor throws its work away: it finishes generating and SAVES
+    /// the row. So a timeout means "not yet", not "failed" — keep the pending
+    /// overlay and wait for the cached row instead of painting an error card
+    /// over a plan that is already on its way.
+    private func refreshRecommendationAfterTimeout() {
+        beginRecommendationPolling(
+            readyMessage: "Совет обновлён — генерация была дольше обычного",
+            pendingMessage: "Совет всё ещё готовится, загляни через пару минут",
+            offlineMessage: "Нет связи с сервером, совет подхватится позже",
+            window: Self.refreshTimeoutPollWindow
+        )
+    }
+
+    private static let recommendationPollInterval: TimeInterval = 2
+
+    /// How long the timeout hand-off keeps polling. The client already spent
+    /// ~90s inside the POST, while the backend's worst case is twice
+    /// `ANTHROPIC_TIMEOUT` (the semantic validator's auto-repromt makes a second
+    /// model call) — around 240s with the current server settings. The default
+    /// 50s window is sized for a background generation that started much
+    /// earlier, so this one has to cover what is left of that worst case.
+    static let refreshTimeoutPollWindow: TimeInterval = 180
+
     private func beginRecommendationPolling(
         readyMessage: String,
         pendingMessage: String,
         offlineMessage: String,
+        window: TimeInterval = 50,
         validateWorkoutSnapshot: Bool = false,
         acceptsNoRecommendation: Bool = false
     ) {
         let expectedWorkoutCount = workouts.count
         let expectedLatestWorkoutID = workouts.first?.id
+        let attempts = max(1, Int(window / Self.recommendationPollInterval))
 
         recommendationPollGeneration += 1
         let generation = recommendationPollGeneration
@@ -610,10 +649,12 @@ final class TrainerStore: ObservableObject {
 
             // Give the mutation handler time to expose server-side pending,
             // then poll the cached row; no LLM call is made by these GETs.
-            for attempt in 0..<25 {
+            for attempt in 0..<attempts {
                 do {
                     try await Task.sleep(
-                        nanoseconds: attempt == 0 ? 600_000_000 : 2_000_000_000
+                        nanoseconds: attempt == 0
+                            ? 600_000_000
+                            : UInt64(Self.recommendationPollInterval * 1_000_000_000)
                     )
                 } catch {
                     return
@@ -622,9 +663,7 @@ final class TrainerStore: ObservableObject {
                       self.recommendationPollGeneration == generation else { return }
 
                 do {
-                    let response = try await APIClient(
-                        baseURLString: self.apiBaseURLString
-                    ).fetchRecommendation()
+                    let response = try await self.apiClient().fetchRecommendation()
                     guard self.recommendationPollGeneration == generation else { return }
                     self.recommendation = response
 
@@ -693,8 +732,7 @@ final class TrainerStore: ObservableObject {
         suppressCoachSignalsForRecommendationRefresh()
         isRefreshingRecommendation = true
         do {
-            let response = try await APIClient(
-                baseURLString: apiBaseURLString,
+            let response = try await apiClient(
                 session: APIClient.longRunningSession
             ).refreshRecommendation()
             recommendation = response
@@ -703,6 +741,13 @@ final class TrainerStore: ObservableObject {
                 showToast("Совет обновлён")
             }
         } catch {
+            // Only WE gave up on a timeout; the generation keeps running and
+            // lands in the cache. Hand over to the cheap cached-read poll,
+            // which owns the pending state and every toast from here on.
+            if Self.isTimeoutError(error) {
+                refreshRecommendationAfterTimeout()
+                return
+            }
             recommendation = RecommendationResponse(
                 ok: false,
                 status: "failed",
@@ -716,6 +761,18 @@ final class TrainerStore: ObservableObject {
         }
         isRefreshingRecommendation = false
         await loadCoachSignals()
+    }
+
+    /// A timeout is the one failure that says nothing about the generation
+    /// itself. Everything else (auth, 5xx, offline, malformed payload) is a real
+    /// failure and keeps the error card. `APIClient` already maps `.timedOut` to
+    /// `TrainerAPIError.timeout`; the raw `URLError` is matched too so a session
+    /// that reports the resource timeout directly can't slip past.
+    static func isTimeoutError(_ error: Error) -> Bool {
+        if case .timeout? = error as? TrainerAPIError {
+            return true
+        }
+        return (error as? URLError)?.code == .timedOut
     }
 
     /// Auto-apply the latest ready recommendation as today's plan — there is no

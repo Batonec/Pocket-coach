@@ -525,6 +525,144 @@ final class TrainerStoreTests: XCTestCase {
         XCTAssertEqual(restored.selectedProgressExerciseID, 777)
     }
 
+    // MARK: - Refresh that outlives the client's patience
+
+    /// The refresh POST is synchronous, but the server finishes the generation
+    /// and saves it even after the client stops waiting. A timeout must
+    /// therefore keep the pending overlay and pick the plan up from the cheap
+    /// cached endpoint — never paint the error card over a ready plan.
+    func testRefreshTimeoutWaitsForThePlanTheServerSavesAnyway() async throws {
+        let store = stubbedStore()
+        store.recommendation = readyRecommendation()
+        RecommendationStub.enqueueTimeout("/api/recommendations/refresh")
+        RecommendationStub.enqueue("/api/recommendations/next", json: pollJSON(status: "pending"))
+        RecommendationStub.enqueue("/api/recommendations/next", json: pollJSON(status: "ready"))
+
+        await store.refreshRecommendation()
+
+        // Handed over to polling: still busy, still pending, no error anywhere,
+        // and the previous payload survives for the "старый план скрыт" card.
+        XCTAssertTrue(store.isRefreshingRecommendation)
+        XCTAssertEqual(store.recommendation?.status, "pending")
+        XCTAssertNil(store.recommendation?.error)
+        XCTAssertNotNil(store.recommendation?.recommendation)
+        XCTAssertNil(store.toast)
+        XCTAssertTrue(store.isTodayPlanUnavailable)
+
+        try await waitUntil("polling picks up the generated plan") {
+            !store.isRefreshingRecommendation
+        }
+
+        XCTAssertEqual(store.recommendation?.status, "ready")
+        XCTAssertEqual(store.recommendation?.recommendation?.focus, "Догенерация после таймаута")
+        XCTAssertEqual(store.appliedPlan?.exercises.map(\.exerciseID), [8, 9])
+        XCTAssertFalse(store.isTodayPlanUnavailable)
+        XCTAssertEqual(store.toast, "Совет обновлён — генерация была дольше обычного")
+        XCTAssertEqual(RecommendationStub.requestedPaths, [
+            "/api/recommendations/refresh",
+            "/api/recommendations/next",
+            "/api/recommendations/next",
+        ])
+    }
+
+    /// A failed generation that the server did answer stays a failure: error
+    /// card, error toast, no background polling of a row that will not change.
+    func testRefreshKeepsTheErrorCardForFailuresThatAreNotTimeouts() async throws {
+        let store = stubbedStore()
+        RecommendationStub.enqueue(
+            "/api/recommendations/refresh",
+            status: 502,
+            json: #"{"ok":false,"reason":"Модель нарушила ограничения"}"#
+        )
+
+        await store.refreshRecommendation()
+
+        XCTAssertFalse(store.isRefreshingRecommendation)
+        XCTAssertEqual(store.recommendation?.status, "failed")
+        XCTAssertEqual(store.recommendation?.error, "Модель нарушила ограничения")
+        XCTAssertEqual(store.toast, "Модель нарушила ограничения")
+
+        // Nothing may start polling behind the error card.
+        try await Task.sleep(nanoseconds: 900_000_000)
+        XCTAssertEqual(RecommendationStub.requestedPaths, ["/api/recommendations/refresh"])
+    }
+
+    func testOnlyTimeoutsMeanTheGenerationIsStillRunning() {
+        XCTAssertTrue(TrainerStore.isTimeoutError(TrainerAPIError.timeout))
+        XCTAssertTrue(TrainerStore.isTimeoutError(URLError(.timedOut)))
+
+        XCTAssertFalse(TrainerStore.isTimeoutError(URLError(.notConnectedToInternet)))
+        XCTAssertFalse(TrainerStore.isTimeoutError(URLError(.cancelled)))
+        XCTAssertFalse(TrainerStore.isTimeoutError(TrainerAPIError.server(status: 502, reason: "no")))
+        XCTAssertFalse(TrainerStore.isTimeoutError(TrainerAPIError.decoding("no")))
+        XCTAssertFalse(TrainerStore.isTimeoutError(TrainerAPIError.invalidResponse))
+    }
+
+    /// The default 50s window assumes a generation that started long before the
+    /// poll; after a timeout the client has waited ~90s of a worst case that is
+    /// twice ANTHROPIC_TIMEOUT (semantic-validator repromt), so the window has
+    /// to cover the remaining ~150s.
+    func testTimeoutPollWindowOutlastsTheBackendWorstCase() {
+        XCTAssertGreaterThanOrEqual(TrainerStore.refreshTimeoutPollWindow, 150)
+    }
+
+    private func stubbedStore() -> TrainerStore {
+        RecommendationStub.reset()
+        addTeardownBlock { RecommendationStub.reset() }
+        let store = TrainerStore(
+            defaults: .isolatedTestDefaults(),
+            urlSession: RecommendationStub.session()
+        )
+        store.exercises = TestFixtures.catalog
+        return store
+    }
+
+    private func waitUntil(
+        _ what: String,
+        timeout: TimeInterval = 10,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        _ isDone: () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !isDone() {
+            if Date() >= deadline {
+                XCTFail("Timed out waiting until \(what)", file: file, line: line)
+                return
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
+    /// What GET /api/recommendations/next returns while (and after) the server
+    /// finishes the generation the refresh POST no longer waits for. A pending
+    /// row keeps the previous payload, exactly like the backend's cached row.
+    private func pollJSON(status: String) -> String {
+        #"""
+        {
+          "ok": true,
+          "status": "\#(status)",
+          "stale": \#(status == "pending" ? "true" : "false"),
+          "based_on_workout_id": 133,
+          "based_on_workout_count": 10,
+          "model": "claude-opus-4-8",
+          "updated_at": 1781200500,
+          "error": null,
+          "recommendation": {
+            "focus": "\#(status == "pending" ? "Верх+низ" : "Догенерация после таймаута")",
+            "load_type": "medium",
+            "rationale": "Вторая попытка модели уложилась в серверный таймаут.",
+            "exercises": [
+              {"exercise_id": 8, "name": "Жим ногами", "note": "мягкий вход",
+               "sets": [{"reps": 12, "weight": 90}]},
+              {"exercise_id": 9, "name": "Тяга верт.", "note": null,
+               "sets": [{"reps": 12, "weight": 70}]}
+            ]
+          }
+        }
+        """#
+    }
+
     private func configuredStore(defaults: UserDefaults = .isolatedTestDefaults()) -> TrainerStore {
         let store = TrainerStore(defaults: defaults)
         store.exercises = TestFixtures.catalog
@@ -538,5 +676,75 @@ final class TrainerStoreTests: XCTestCase {
             )
         ]
         return store
+    }
+}
+
+/// Scripts the store's network per endpoint: the refresh POST and the cached
+/// reads that follow it need different answers in the same test. The last stub
+/// queued for a path sticks, so an extra poll never falls off the script.
+private final class RecommendationStub: URLProtocol {
+    struct Stub {
+        var status = 200
+        var json = "{}"
+        var error: Error?
+    }
+
+    static var stubs: [String: [Stub]] = [:]
+    static var requestedPaths: [String] = []
+
+    static func reset() {
+        stubs = [:]
+        requestedPaths = []
+    }
+
+    static func enqueue(_ path: String, status: Int = 200, json: String) {
+        stubs[path, default: []].append(Stub(status: status, json: json))
+    }
+
+    static func enqueueTimeout(_ path: String) {
+        stubs[path, default: []].append(Stub(error: URLError(.timedOut)))
+    }
+
+    static func session() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RecommendationStub.self]
+        return URLSession(configuration: config)
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let path = request.url?.path ?? ""
+        Self.requestedPaths.append(path)
+        let stub = Self.next(for: path)
+
+        if let error = stub.error {
+            client?.urlProtocol(self, didFailWithError: error)
+            return
+        }
+
+        let http = HTTPURLResponse(
+            url: request.url!,
+            statusCode: stub.status,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json; charset=utf-8"]
+        )!
+        client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(stub.json.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    private static func next(for path: String) -> Stub {
+        guard let queued = stubs[path], let stub = queued.first else {
+            return Stub(status: 500, json: #"{"ok":false,"reason":"No stub for \#(path)"}"#)
+        }
+        if queued.count > 1 {
+            stubs[path] = Array(queued.dropFirst())
+        }
+        return stub
     }
 }
