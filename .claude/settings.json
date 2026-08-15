@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/claude-md-reminder.sh\"",
+            "timeout": 10,
+            "statusMessage": "Проверяю актуальность CLAUDE.md"
+          }
+        ]
+      }
+    ]
+  }
+}
