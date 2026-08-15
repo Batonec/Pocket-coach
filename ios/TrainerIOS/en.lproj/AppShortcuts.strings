@@ -23,3 +23,10 @@
 "Заверши тренировку в ${applicationName}" = "Finish workout in ${applicationName}";
 "Сохрани тренировку в ${applicationName}" = "Save workout in ${applicationName}";
 "Закончил тренировку в ${applicationName}" = "End workout in ${applicationName}";
+
+/* Telegraphic phrases: the mandatory app name is the short codeword "Gym",
+   so the whole command collapses to two words. */
+"${applicationName} ${exercise}" = "${applicationName} ${exercise}";
+"${applicationName} отмена" = "${applicationName} undo";
+"${applicationName} дальше" = "${applicationName} next";
+"${applicationName} финиш" = "${applicationName} finish";

@@ -267,9 +267,14 @@ struct FinishWorkoutIntent: AppIntent {
 
 // MARK: - Фразы для Siri
 
-/// Каждая фраза обязана содержать `\(.applicationName)`. Приложение называется
-/// «Trainer», поэтому альтернативные произношения («Покет Коуч», «Тренер»)
-/// объявлены в Info.plist через `INAlternativeAppNames`.
+/// Каждая фраза обязана содержать `\(.applicationName)` — фраза без имени
+/// приложения молча выбрасывается из NLU-модели при сборке. Обойти это нельзя,
+/// но имя выбираем мы: короткое «Зал» (`INAlternativeAppNames` в Info.plist)
+/// превращает обязательное имя в кодовое слово.
+///
+/// Отсюда два регистра фраз у каждой команды: длинный человеческий («Записать
+/// подход в Покет Коуч») и телеграфный для зала («Зал подход», «Зал жим
+/// ногами»). Второй — рабочий: одна короткая фраза, и подход засчитан.
 struct TrainerAppShortcuts: AppShortcutsProvider {
     static var shortcutTileColor: ShortcutTileColor { .orange }
 
@@ -289,6 +294,9 @@ struct TrainerAppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: LogPlannedSetIntent(),
             phrases: [
+                // Главная рабочая фраза: кодовое слово плюс упражнение, больше
+                // ничего. Вес и повторы приезжают из плана тренера.
+                "\(.applicationName) \(\.$exercise)",
                 "Засчитай \(\.$exercise) в \(.applicationName)",
                 "Сделал \(\.$exercise) в \(.applicationName)",
                 "Закрой \(\.$exercise) в \(.applicationName)"
@@ -301,7 +309,8 @@ struct TrainerAppShortcuts: AppShortcutsProvider {
             phrases: [
                 "Убери последний подход в \(.applicationName)",
                 "Отмени последний подход в \(.applicationName)",
-                "Удали последний подход в \(.applicationName)"
+                "Удали последний подход в \(.applicationName)",
+                "\(.applicationName) отмена"
             ],
             shortTitle: "Убрать подход",
             systemImageName: "arrow.uturn.backward"
@@ -311,7 +320,8 @@ struct TrainerAppShortcuts: AppShortcutsProvider {
             phrases: [
                 "Что дальше в \(.applicationName)",
                 "Следующий подход в \(.applicationName)",
-                "Какой следующий подход в \(.applicationName)"
+                "Какой следующий подход в \(.applicationName)",
+                "\(.applicationName) дальше"
             ],
             shortTitle: "Следующий подход",
             systemImageName: "list.bullet.rectangle"
@@ -321,7 +331,8 @@ struct TrainerAppShortcuts: AppShortcutsProvider {
             phrases: [
                 "Заверши тренировку в \(.applicationName)",
                 "Сохрани тренировку в \(.applicationName)",
-                "Закончил тренировку в \(.applicationName)"
+                "Закончил тренировку в \(.applicationName)",
+                "\(.applicationName) финиш"
             ],
             shortTitle: "Завершить тренировку",
             systemImageName: "checkmark.seal.fill"

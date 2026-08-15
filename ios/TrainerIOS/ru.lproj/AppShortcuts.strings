@@ -23,3 +23,10 @@
 "Заверши тренировку в ${applicationName}" = "Заверши тренировку в ${applicationName}";
 "Сохрани тренировку в ${applicationName}" = "Сохрани тренировку в ${applicationName}";
 "Закончил тренировку в ${applicationName}" = "Закончил тренировку в ${applicationName}";
+
+/* Телеграфные фразы: обязательное имя приложения — это короткое кодовое слово
+   «Зал», поэтому команда сжимается до двух слов. */
+"${applicationName} ${exercise}" = "${applicationName} ${exercise}";
+"${applicationName} отмена" = "${applicationName} отмена";
+"${applicationName} дальше" = "${applicationName} дальше";
+"${applicationName} финиш" = "${applicationName} финиш";
