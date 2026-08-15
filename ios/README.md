@@ -1,131 +1,131 @@
 # Trainer iOS
 
-Нативный SwiftUI-клиент для текущего `Trainer` backend.
+Нативный SwiftUI-клиент Pocket Coach: история тренировок, конструктор сессии, прогресс,
+вес тела и «Совет тренера». Единственный клиент продукта — веб-мини-апп и Telegram-бот
+удалены в июне 2026.
 
-Этот проект повторяет актуальную логику Telegram Mini App из соседнего репозитория:
+Продуктовое поведение экранов описано в [BUSINESS_LOGIC.md](../BUSINESS_LOGIC.md);
+здесь — устройство клиента и его контракт с backend.
 
-- три вкладки: `Trainings`, `Progress`, `Weight`;
-- история тренировок с compact-summary сетов;
-- редактирование и удаление сохранённой тренировки через свайп карточки влево;
-- создание и редактирование тренировки через отдельный `New Workout` flow;
-- preview-карточки основной шестёрки упражнений;
-- planned add по синей кнопке `+`;
-- ручной ввод сета через long press по `+`;
-- per-set effort: `🙂 / 😐 / 😣`;
-- draft тренировки в `UserDefaults`;
-- кольцевой прогресс по основной шестёрке;
-- экран прогресса по упражнению;
-- экран веса тела с inline-вводом, графиком и удалением записи по тапу на точку.
-- нативная сессия без внешней авторизации: клиент запрашивает backend-user `id=3`.
+## Слои
 
-## Backend
+Зависимость строго в одну сторону: чистая логика → состояние → фреймворк.
 
-По умолчанию приложение ходит в:
+| Файл | Ответственность |
+| --- | --- |
+| [`TrainerLogic.swift`](./TrainerIOS/TrainerLogic.swift) | чистые статические функции: сортировки, planned sets, summary, прогресс, объёмы. Ничего не знает про сеть и состояние — на нём висит основная масса тестов |
+| [`TrainerStore.swift`](./TrainerIOS/TrainerStore.swift) | `@MainActor ObservableObject`, единственный источник состояния; persistence черновика и настроек в `UserDefaults`, все мутации через API |
+| [`APIClient.swift`](./TrainerIOS/APIClient.swift) | HTTP. Две `URLSession` намеренно: дефолтная с коротким таймаутом и `longRunningSession` под генерацию совета |
+| [`Views.swift`](./TrainerIOS/Views.swift) | экраны и дизайн-система |
+| [`Models.swift`](./TrainerIOS/Models.swift) | модели API, черновика и UI-состояний |
 
-```text
-https://trainer.superbatonec.org
-```
+Голосовой слой повторяет ту же лестницу:
 
-Для локальной разработки можно поменять URL через шестерёнку на `http://127.0.0.1:8080` и запустить backend из соседнего проекта:
+| Файл | Ответственность |
+| --- | --- |
+| [`VoiceSetParser.swift`](./TrainerIOS/VoiceSetParser.swift) | язык и грамматика фразы: упражнение, вес, повторы, тяжесть. Чистые функции |
+| [`TrainerStoreVoice.swift`](./TrainerIOS/TrainerStoreVoice.swift) | команды поверх стора и тексты ответов Siri (ru/en) |
+| [`VoiceIntents.swift`](./TrainerIOS/VoiceIntents.swift) | App Intents и фразы Siri — см. [VOICE_LOGGING_BRIEF.md](./VOICE_LOGGING_BRIEF.md) |
 
-```bash
-cd /Users/batonec/AndroidStudioProjects/Trainer
-MINIAPP_ALLOW_DEBUG_USER=1 python3 backend/server.py
-```
+Интенты объявлены **в таргете приложения, а не в расширении**: они выполняются в его
+процессе и работают с тем же `TrainerStore.shared`, что и UI. Отсюда два следствия — стор
+стал синглтоном, а голосовой путь обязан работать без `boot()`: каталог упражнений он
+берёт из бандла ([`Resources/exercises.json`](./TrainerIOS/Resources/exercises.json)),
+если сети не было.
 
-В iOS-приложении адрес backend можно поменять через шестерёнку на экране `Trainings`.
+Фразы Siri продублированы в [`ru.lproj`](./TrainerIOS/ru.lproj/AppShortcuts.strings) и
+[`en.lproj`](./TrainerIOS/en.lproj/AppShortcuts.strings) и требуют
+`LM_NO_APP_SHORTCUT_LOCALIZATION = NO` в настройках таргета — иначе NLU-модель соберётся
+только для языка разработки, без ошибки сборки.
 
-Нативный iOS-клиент не получает Telegram `initData`. Сейчас в клиенте намеренно захардкожен backend-user:
-
-- iOS отправляет `shell=ios` и `native_user_id=3` в `POST /api/session/resolve`;
-- backend проверяет, что такой пользователь есть в SQLite;
-- после этого backend выдаёт обычную cookie `trainer_session`;
-- все остальные endpoints остаются теми же, что у Mini App.
-
-Если пользователя `id=3` нет на backend, приложение покажет экран повтора подключения и настройки URL.
-
-## Сборка
-
-Открой:
-
-```text
-TrainerIOS.xcodeproj
-```
-
-Или проверь из терминала:
+## Сборка и тесты
 
 ```bash
-xcodebuild \
-  -project TrainerIOS.xcodeproj \
-  -scheme TrainerIOS \
-  -destination 'generic/platform=iOS Simulator' \
-  build
+xcodebuild -project TrainerIOS.xcodeproj -scheme TrainerIOS -destination 'generic/platform=iOS Simulator' build
 ```
-
-## Тесты
-
-В проекте есть XCTest target `TrainerIOSTests`. Он проверяет Swift-перенос бизнес-логики Mini App, модели API, backend endpoints из README, fallback-каталог `Resources/exercises.json` и persistence в `UserDefaults`.
 
 ```bash
-xcodebuild \
-  -project TrainerIOS.xcodeproj \
-  -scheme TrainerIOS \
-  -destination 'platform=iOS Simulator,name=iPhone 17' \
-  test
+xcodebuild -project TrainerIOS.xcodeproj -scheme TrainerIOS -destination 'platform=iOS Simulator,name=iPhone 17' test
 ```
 
-## Что внутри
+Таргет `TrainerIOSTests` (129 тестов) проверяет бизнес-логику, модели API, разбор голосовых
+фраз, fallback-каталог упражнений и persistence в `UserDefaults`.
 
-- `TrainerIOSApp.swift` — entrypoint приложения.
-- `Models.swift` — модели API, draft и UI-состояний.
-- `APIClient.swift` — HTTP-клиент для текущих backend endpoints.
-- `TrainerLogic.swift` — перенос бизнес-логики Mini App: сортировки, planned sets, summary, progress, weight stats.
-- `TrainerStore.swift` — observable app state, persistence draft/settings, API mutations.
-- `Views.swift` — SwiftUI-экраны и компоненты.
-- `VoiceSetParser.swift` — язык и грамматика голосовой фразы: упражнение, вес, повторы, тяжесть.
-- `TrainerStoreVoice.swift` — голосовые команды поверх стора и тексты ответов Siri (ru/en).
-- `VoiceIntents.swift` — App Intents и фразы Siri (см. [VOICE_LOGGING_BRIEF.md](./VOICE_LOGGING_BRIEF.md)).
-- `ru.lproj/AppShortcuts.strings`, `en.lproj/AppShortcuts.strings` — фразы Siri по локалям; требуют `LM_NO_APP_SHORTCUT_LOCALIZATION = NO` в настройках таргета.
-- `Resources/exercises.json` — fallback-каталог упражнений из Mini App; он же каталог для голосовых команд при фоновом запуске.
+> Xcode-проект держит файлы явными ссылками: новый `.swift` не попадёт в сборку, пока не
+> добавлен в `project.pbxproj` — молча, без ошибки компиляции.
+
+## Backend и сессия
+
+По умолчанию клиент ходит в `https://trainer.superbatonec.org`; адрес меняется через
+шестерёнку на экране `Trainings` — например на `http://127.0.0.1:8080` для локального
+backend (`MINIAPP_ALLOW_DEBUG_USER=1 python3 backend/server.py` из корня репозитория).
+
+Авторизации нет: это personal-build. Клиент отправляет `shell=ios` и `native_user_id=3`
+в `POST /api/session/resolve`, backend проверяет наличие такого пользователя в SQLite и
+выдаёт cookie `trainer_session`. Если пользователя нет — экран повтора подключения с
+настройкой URL.
+
+`reload()` ограничен дедлайном 3 с: не успели — рвём задачу и уходим в error screen с
+ретраем. Рекомендация читается **вне** этого дедлайна, отдельным запросом после старта.
 
 ## API-контракт
 
-Клиент использует существующие endpoints:
+```
+POST   /api/session/resolve          POST   /api/session/logout
+GET    /data/exercises.json
+GET    /api/workouts                 POST   /api/workouts
+PUT    /api/workouts/{id}            DELETE /api/workouts/{id}
+GET    /api/body-weights             POST   /api/body-weights
+DELETE /api/body-weights/{id}
+GET    /api/waists                   POST   /api/waists
+DELETE /api/waists/{id}
+GET    /api/coach/signals            POST   /api/coach/signals/dismiss
+GET    /api/recommendations/next     POST   /api/recommendations/refresh
+GET    /api/reports/weekly           POST   /api/reports/weekly/read
+```
 
-- `POST /api/session/resolve`
-- `POST /api/session/logout`
-- `GET /data/exercises.json`
-- `GET /api/workouts`
-- `POST /api/workouts`
-- `PUT /api/workouts/{id}`
-- `DELETE /api/workouts/{id}`
-- `GET /api/body-weights`
-- `POST /api/body-weights`
-- `DELETE /api/body-weights/{id}`
-- `GET /api/recommendations/next` — кэш «Совета тренера» (мгновенно, не ждёт генерации)
-- `POST /api/recommendations/refresh` — форс-генерация рекомендации (синхронно, на отдельной 90-сек сессии)
+`GET /api/recommendations/next` отдаёт кэш мгновенно и не ждёт генерации;
+`POST /api/recommendations/refresh` — синхронная форс-генерация (10–40 с), под неё и
+существует `longRunningSession`.
 
-### «Совет тренера»
+## «Совет тренера» в интерфейсе
 
-Карточка `CoachCard` вверху TodayScreen показывает рекомендацию следующей тренировки
-(`focus`, нагрузка, упражнения с подходами и пояснениями, сворачиваемое «Почему так»).
-`GET /api/recommendations/next` читается после старта (вне 3-сек дедлайна `reload`);
-«Обновить» дёргает `POST /api/recommendations/refresh` (10–40 с, показывается оверлей).
+Карточка `CoachCard` вверху `Trainings` показывает рекомендацию следующей тренировки:
+`focus`, нагрузку, упражнения с подходами и пояснениями, сворачиваемое «Почему так».
 Состояния: `none` / `pending` / `ready` (+ `stale`) / `failed`.
 
-**«Применить в план»** делает совет **планом** (`TrainerStore.appliedPlan`, живёт в
-`UserDefaults`), а НЕ выполненными подходами — тренировка не стартует, пока не записан
-первый сет. Пока план применён:
+**Применённый план ≠ выполненные подходы.** «Применить в план» кладёт совет в
+`TrainerStore.appliedPlan` (живёт в `UserDefaults`); тренировка не считается начатой, пока
+не записан первый реальный сет. Пока план применён:
 
 - карточки секции идут в порядке рекомендации, цель показывается с весом («90кг ×12»);
-- заголовок секции — «План от тренера» с кнопкой «Сбросить»; превью-карточку можно убрать
-  из плана long press-ом («Убрать из плана»);
+- заголовок секции — «План от тренера» с кнопкой «Сбросить», превью-карточку можно убрать
+  из плана long press-ом;
 - кнопка карточки совета — «В плане ✓» (для нового совета — «Применить новый»).
 
-Быстрый «+» предлагает следующий подход по приоритету: последний **кастомный** подход
-повторяется (а не сбрасывается к плану) → цель применённого плана по индексу → история
-+1 повтор → 12×0. Long press по «+» открывает конструктор подхода (`QuickAddSheet`).
+Приоритет следующего подхода по «+» един для всего конструктора: последний кастомный
+подход повторяется → цель применённого плана по индексу → история +1 повтор → 12×0.
 
-При сохранении новой тренировки с применённым планом в payload уходит
-`data.recommendation` — снапшот совета для будущей статистики «факт vs план»
-(см. backend/README), после чего план очищается, а рекомендация перегенерируется.
+При сохранении тренировки с применённым планом в payload уходит `data.recommendation` —
+**снапшот** совета для статистики «факт vs план» (см. [backend/README.md](../backend/README.md)),
+после чего план очищается, а рекомендация перегенерируется.
+
+## Голос
+
+Полная спецификация — [VOICE_LOGGING_BRIEF.md](./VOICE_LOGGING_BRIEF.md). Коротко: команды
+работают на заблокированном экране (`authenticationPolicy = .alwaysAllowed`), не выводят
+приложение на передний план (`openAppWhenRun = false`) и отвечают вслух в наушники.
+
+| Коротко | Что делает |
+| --- | --- |
+| «Зал жим ногами» | подход весом и повторами **из плана тренера**, без переспросов |
+| «Зал подход» → *«жим ногами 80 на 10, тяжело»* | разбирает свободную фразу |
+| «Зал отмена» · «Зал дальше» · «Зал финиш» | отменить последний сет · проговорить следующий · сохранить тренировку |
+
+По-английски то же самое через `Gym`.
+
+## Прочие брифы
+
+- [RECOMMENDATION_CARD_BRIEF.md](./RECOMMENDATION_CARD_BRIEF.md) — карточка «Совет тренера»
+- [COACH_SIGNALS_BANNER_BRIEF.md](./COACH_SIGNALS_BANNER_BRIEF.md) — баннеры коуча
+- [PROGRESS_VOLUME_DISCIPLINE_BRIEF.md](./PROGRESS_VOLUME_DISCIPLINE_BRIEF.md) — объём и дисциплина на `Progress`
