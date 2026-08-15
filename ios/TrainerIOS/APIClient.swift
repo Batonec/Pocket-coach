@@ -57,12 +57,19 @@ final class APIClient {
     }()
 
     /// Long-running session for the recommendation refresh, which blocks server-side
-    /// on a 10–40s Claude generation. Pass it into a dedicated APIClient instance
-    /// so it never touches the aggressive 3s default used by the rest of the app.
+    /// on a Claude generation. Pass it into a dedicated APIClient instance so it
+    /// never touches the aggressive 3s default used by the rest of the app.
+    ///
+    /// Both values must stay ABOVE the backend's own `ANTHROPIC_TIMEOUT` (120s):
+    /// the server keeps generating after the client gives up and stores the
+    /// result, so timing out early only costs the user a false error card.
+    /// `timeoutIntervalForRequest` is the wait for the first byte — the whole
+    /// generation happens before it, so it has to cover the full server call,
+    /// not just a network stall.
     static let longRunningSession: URLSession = {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 90
-        config.timeoutIntervalForResource = 120
+        config.timeoutIntervalForRequest = 150
+        config.timeoutIntervalForResource = 180
         config.waitsForConnectivity = false
         return URLSession(configuration: config)
     }()

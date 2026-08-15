@@ -212,15 +212,24 @@ API поднимается на `http://127.0.0.1:8080/`, SQLite — локал�
 ### Совет тренера (LLM)
 
 - `ANTHROPIC_API_KEY` — ключ Claude API (обязателен для генерации)
-- `ANTHROPIC_MODEL` — модель, по умолчанию `claude-opus-4-8`
-- `ANTHROPIC_MAX_TOKENS` — лимит вывода, по умолчанию `3500`
+- `ANTHROPIC_MODEL` — модель, по умолчанию `claude-opus-5`
+- `ANTHROPIC_MAX_TOKENS` — лимит вывода, по умолчанию `20000`. На Opus 5
+  мышление включено по умолчанию и считается в этот же лимит, поэтому запас
+  больше прежнего; при упоре в лимит генерация падает с явной ошибкой про
+  бюджет, а не с «невалидным JSON»
+- `ANTHROPIC_EFFORT` — глубина мышления (`low`/`medium`/`high`/`xhigh`/`max`),
+  по умолчанию `high`: качество плана здесь важнее задержки. Пустая строка —
+  не слать `effort` вовсе
 - `ANTHROPIC_MAX_RETRIES` — повторы при временных сбоях API (429/5xx/529, таймаут, сеть), по умолчанию `2`
 - `ANTHROPIC_RETRY_BACKOFF` — базовая пауза экспоненциального backoff в секундах, по умолчанию `1.5`
 - `COACH_PROFILE_PATH` — путь к профилю атлета, по умолчанию `<dir(MINIAPP_DB_PATH)>/coach_profile.json`
 - `COACH_STATE_PATH` — путь к состоянию подготовки (фаза/цикл/талия-лимиты), по умолчанию `<dir(MINIAPP_DB_PATH)>/coach_state.json`
 - `REFRESH_MAX_AGE_HOURS` — порог авто-свежести для `refresh_recommendation.py`, по умолчанию `24`
 - `BACKUP_DIR` / `BACKUP_KEEP` — каталог и глубина ротации для `backup_db.py`, по умолчанию `<dir(MINIAPP_DB_PATH)>/backups` и `14`
-- `ANTHROPIC_TIMEOUT` — таймаут запроса к Claude, по умолчанию `90`
+- `ANTHROPIC_TIMEOUT` — таймаут **одного** вызова Claude, по умолчанию `120`.
+  Авто-репромпт валидатора делает второй вызов, поэтому весь HTTP-запрос
+  `POST /api/recommendations/refresh` в худшем случае длится вдвое дольше;
+  таймауты iOS (`APIClient.longRunningSession`, 150/180 с) держатся выше
 - `RECOMMENDATION_HISTORY_LIMIT` — сколько последних тренировок отдавать модели, по умолчанию `20`
 - `RECOMMENDATION_REFRESH_MIN_INTERVAL` — анти-дребезг ручного refresh в секундах, по умолчанию `10`
 

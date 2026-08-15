@@ -759,13 +759,86 @@ class RequestModelCachingTests(unittest.TestCase):
         self.assertEqual(body["system"][0]["cache_control"], {"type": "ephemeral"})
         first_content = body["messages"][0]["content"]
         self.assertEqual(first_content[0]["cache_control"], {"type": "ephemeral"})
-        self.assertNotIn("output_config", body)
+        # Без схемы формат не задаётся; effort живёт в том же output_config и
+        # к схеме отношения не имеет.
+        self.assertNotIn("format", body.get("output_config", {}))
 
         recommender._request_model(
             "system text", "user text", schema={"type": "object"},
             model="m", max_tokens=10, api_key="k", timeout=1,
         )
-        self.assertIn("output_config", captured["body"])
+        self.assertIn("format", captured["body"]["output_config"])
+
+    def test_effort_is_sent_when_configured(self) -> None:
+        captured: dict = {}
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "content": [{"type": "text", "text": "ок"}],
+                    "usage": {},
+                }).encode("utf-8")
+
+        def fake_urlopen(request, timeout=None):
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _Resp()
+
+        orig = recommender.urllib.request.urlopen
+        self.addCleanup(lambda: setattr(recommender.urllib.request, "urlopen", orig))
+        recommender.urllib.request.urlopen = fake_urlopen
+
+        orig_effort = recommender.DEFAULT_EFFORT
+        self.addCleanup(lambda: setattr(recommender, "DEFAULT_EFFORT", orig_effort))
+
+        recommender.DEFAULT_EFFORT = "medium"
+        recommender._request_model(
+            "s", "u", schema=None, model="m", max_tokens=10, api_key="k", timeout=1,
+        )
+        self.assertEqual(captured["body"]["output_config"]["effort"], "medium")
+
+        # Пустая строка — способ вообще не слать effort (например, на модели,
+        # где уровень недоступен).
+        recommender.DEFAULT_EFFORT = ""
+        recommender._request_model(
+            "s", "u", schema=None, model="m", max_tokens=10, api_key="k", timeout=1,
+        )
+        self.assertNotIn("output_config", captured["body"])
+
+    def test_max_tokens_stop_reason_names_the_budget(self) -> None:
+        """Мышление тратит тот же max_tokens, поэтому обрезанный ответ должен
+        жаловаться на бюджет, а не выглядеть как сломанная схема."""
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "stop_reason": "max_tokens",
+                    "content": [{"type": "text", "text": '{"focus": "нез'}],
+                    "usage": {},
+                }).encode("utf-8")
+
+        orig = recommender.urllib.request.urlopen
+        self.addCleanup(lambda: setattr(recommender.urllib.request, "urlopen", orig))
+        recommender.urllib.request.urlopen = lambda request, timeout=None: _Resp()
+
+        with self.assertRaises(recommender.RecommendationError) as ctx:
+            recommender._request_model(
+                "s", "u", schema={"type": "object"},
+                model="m", max_tokens=777, api_key="k", timeout=1,
+            )
+        self.assertIn("777", str(ctx.exception))
+        self.assertIn("ANTHROPIC_MAX_TOKENS", str(ctx.exception))
 
 
 class WeeklyReportTests(unittest.TestCase):

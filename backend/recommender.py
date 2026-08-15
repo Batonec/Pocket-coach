@@ -28,10 +28,20 @@ import coach_state
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 
-DEFAULT_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8")
-DEFAULT_MAX_TOKENS = int(os.getenv("ANTHROPIC_MAX_TOKENS", "3500"))
+DEFAULT_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
+# На Opus 5 мышление включено по умолчанию, и max_tokens ограничивает
+# мышление ВМЕСТЕ с ответом. Прежние 3500 (хватало Opus 4.8 без мышления)
+# обрезали бы JSON на полуслове — отсюда запас.
+DEFAULT_MAX_TOKENS = int(os.getenv("ANTHROPIC_MAX_TOKENS", "20000"))
+# Глубина мышления: low | medium | high | xhigh | max. Осознанно high:
+# рекомендация генерируется несколько раз в день, и качество плана здесь
+# важнее задержки. Пустая строка — не слать effort вообще.
+DEFAULT_EFFORT = os.getenv("ANTHROPIC_EFFORT", "high").strip()
 DEFAULT_HISTORY_LIMIT = int(os.getenv("RECOMMENDATION_HISTORY_LIMIT", "20"))
-DEFAULT_TIMEOUT = float(os.getenv("ANTHROPIC_TIMEOUT", "90"))
+# Таймаут ОДНОГО вызова модели. Реврайт валидатора делает второй вызов, так
+# что весь HTTP-запрос в худшем случае занимает вдвое дольше — таймауты
+# iOS-клиента (APIClient.longRunningSession) держатся выше этого числа.
+DEFAULT_TIMEOUT = float(os.getenv("ANTHROPIC_TIMEOUT", "120"))
 
 # Transient failures worth retrying with backoff (rate limits, overload, gateway
 # hiccups). Permanent errors (400/401/403/404, refusal) are never retried.
@@ -786,8 +796,13 @@ def _request_model(
         ],
         "messages": _cacheable_messages(messages),
     }
+    output_config: dict[str, Any] = {}
     if schema is not None:
-        payload["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
+        output_config["format"] = {"type": "json_schema", "schema": schema}
+    if DEFAULT_EFFORT:
+        output_config["effort"] = DEFAULT_EFFORT
+    if output_config:
+        payload["output_config"] = output_config
     body = json.dumps(payload).encode("utf-8")
 
     request = urllib.request.Request(
@@ -816,6 +831,15 @@ def _request_model(
 
     if data.get("stop_reason") == "refusal":
         raise RecommendationError("Модель отказалась генерировать ответ")
+
+    # Отдельная ветка, потому что мышление съедает тот же max_tokens: без неё
+    # обрезанный JSON доезжает до парсера и выглядит как «модель сломала схему»,
+    # хотя чинить надо бюджет (ANTHROPIC_MAX_TOKENS) или effort.
+    if data.get("stop_reason") == "max_tokens":
+        raise RecommendationError(
+            f"Ответ не поместился в max_tokens ({max_tokens}) — подними "
+            "ANTHROPIC_MAX_TOKENS или снизь ANTHROPIC_EFFORT"
+        )
 
     text = next(
         (block.get("text", "") for block in data.get("content", []) if block.get("type") == "text"),
@@ -1401,7 +1425,8 @@ def generate_weekly_report(
     today: date | None = None,
     days: int = 7,
     model: str = DEFAULT_MODEL,
-    max_tokens: int = 2000,
+    # Отчёт — проза без схемы, но мышление на high считается в тот же бюджет.
+    max_tokens: int = 12000,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> tuple[str, dict[str, Any], str]:
     """A coach-style weekly retrospective in Markdown (plain text, no schema).
