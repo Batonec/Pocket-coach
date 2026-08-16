@@ -57,11 +57,22 @@ class PromptTemplateTests(unittest.TestCase):
             rendered = recommender._render_phase_policy(state)
             self.assertNotIn("{{", rendered, phase)
 
-    def test_report_prompt_is_loaded_from_the_template(self):
-        self.assertEqual(
-            recommender.REPORT_SYSTEM_PROMPT, coach_prompts.load("report")
+    def test_report_prompt_carries_profile_program_and_gate(self):
+        """Отчёт — единственное место, где жёсткий гейт этапа может прозвучать
+        вслух, поэтому он получает и профиль, и программу."""
+        built = recommender._build_report_system_prompt(
+            {"blocks": {"Цель": "тело цели"}},
+            "## 4. Тренировочные дни\nкаркас\n",
         )
-        self.assertNotIn("{{", recommender.REPORT_SYSTEM_PROMPT)
+        self.assertNotIn("{{", built)
+        self.assertIn("тело цели", built)
+        self.assertIn("каркас", built)
+        self.assertIn("Гейт этапа", built)
+
+    def test_report_prompt_without_profile_still_builds(self):
+        built = recommender._build_report_system_prompt()
+        self.assertNotIn("{{", built)
+        self.assertNotIn("=== ПРОГРАММА", built)
 
 
     def test_every_declared_block_is_used_by_the_code(self):

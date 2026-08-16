@@ -902,7 +902,10 @@ class WeeklyReportTests(unittest.TestCase):
         )
         self.assertIn("Итоги недели", report)
         self.assertEqual(usage["output_tokens"], 4)
-        self.assertIs(seen["system"], recommender.REPORT_SYSTEM_PROMPT)
+        # системный промпт отчёта теперь собирается, а не берётся константой:
+        # без профиля и программы он всё равно обязан быть валидным
+        self.assertNotIn("{{", seen["system"])
+        self.assertIn("Гейт этапа", seen["system"])
         self.assertIn("Период отчёта", seen["user"])
         self.assertIn("Тренировки за период (1)", seen["user"])
         self.assertIn("Объём за 7 дней", seen["user"])
