@@ -84,10 +84,13 @@ jobs:
             "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/"
           # Проза промптов — каталогом: файлы .md перечислять поимённо значит
           # снова заводить список, который забудут обновить.
-          ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "mkdir -p '$DEPLOY_BASE/app/prompts'"
+          ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "mkdir -p '$DEPLOY_BASE/app/prompts' '$DEPLOY_BASE/app/copy'"
           scp -P "${VPS_PORT:-22}" -r \
             backend/prompts/. \
             "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/prompts/"
+          scp -P "${VPS_PORT:-22}" -r \
+            backend/copy/. \
+            "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/copy/"
           scp -P "${VPS_PORT:-22}" \
             backend/deploy/trainer-miniapp-backend.service \
             "$VPS_USER@$VPS_HOST:/etc/systemd/system/$BACKEND_SERVICE"
@@ -101,7 +104,7 @@ jobs:
           set -eu
           ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "\
             chmod 644 '$DEPLOY_BASE/app/server.py' '$DEPLOY_BASE/app/backend_store.py' '$DEPLOY_BASE/app/recommender.py' '$DEPLOY_BASE/app/coach_state.py' '$DEPLOY_BASE/app/coach_features.py' '$DEPLOY_BASE/app/coach_signals.py' '$DEPLOY_BASE/app/coach_prompts.py' '$DEPLOY_BASE/app/refresh_recommendation.py' '$DEPLOY_BASE/app/weekly_report.py' '$DEPLOY_BASE/app/backup_db.py' '/etc/systemd/system/$BACKEND_SERVICE' && \
-            chmod 644 '$DEPLOY_BASE/app/prompts/'*.md && \
+            chmod 644 '$DEPLOY_BASE/app/prompts/'*.md '$DEPLOY_BASE/app/copy/'*.md && \
             test -f /etc/trainer-miniapp/backend.env && \
             systemctl daemon-reload && \
             systemctl enable --now '$BACKEND_SERVICE' && \

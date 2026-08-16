@@ -22,7 +22,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+# Две поверхности, один механизм: prompts/ читает модель, copy/ — клиент.
+# Держать их в одной папке значит смешать две разные аудитории.
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
+COPY_DIR = Path(__file__).resolve().parent / "copy"
 
 _SLOT_RE = re.compile(r"\{\{([a-z_]+)\}\}")
 
@@ -31,9 +34,9 @@ class PromptError(RuntimeError):
     """A template is missing, unreadable, or its slots do not line up."""
 
 
-def load(name: str) -> str:
+def load(name: str, *, directory: Path | None = None) -> str:
     """Raw template text by file stem (``"system"`` → ``prompts/system.md``)."""
-    path = PROMPTS_DIR / f"{name}.md"
+    path = (directory or PROMPTS_DIR) / f"{name}.md"
     try:
         return path.read_text("utf-8")
     except OSError as exc:  # missing file on a half-deployed backend
@@ -48,7 +51,7 @@ def slots(template: str) -> set[str]:
 _FRAGMENT_RE = re.compile(r"^## ([a-z_]+)[ \t]*$", re.M)
 
 
-def fragments(name: str) -> dict[str, str]:
+def fragments(name: str, *, directory: Path | None = None) -> dict[str, str]:
     """Named fragments of a block file: ``## имя`` starts a fragment.
 
     Prose that arrives interleaved with computed data — block captions, single
@@ -60,7 +63,7 @@ def fragments(name: str) -> dict[str, str]:
     legitimately start with one (« — плановая разгрузочная неделя.»). Everything
     before the first heading is a comment.
     """
-    text = load(name)
+    text = load(name, directory=directory)
     marks = list(_FRAGMENT_RE.finditer(text))
     if not marks:
         raise PromptError(f"в {name!r} нет ни одного фрагмента «## имя»")

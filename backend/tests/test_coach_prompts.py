@@ -97,6 +97,19 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertEqual(blocks["report_deload_no"], ".")
 
 
+    def test_every_signal_text_is_used(self):
+        """Текст баннера, объявленный и не вызванный, — мёртвый копирайт."""
+        import re
+
+        source = (support.MINIAPP_DIR / "coach_signals.py").read_text("utf-8")
+        used = set(re.findall(r'_text\(\s*\n?\s*"([a-z_]+)"', source))
+        declared = set(
+            coach_prompts.fragments("signals", directory=coach_prompts.COPY_DIR)
+        )
+        self.assertEqual(declared - used, set(), "объявлены, но не используются")
+        self.assertEqual(used - declared, set(), "используются, но не объявлены")
+
+
 class BuiltPromptTests(unittest.TestCase):
     def test_built_system_prompt_has_no_unfilled_slots(self):
         catalog = recommender.load_catalog(STATIC_DIR)
