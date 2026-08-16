@@ -598,6 +598,8 @@ def coach_weekly_report(
             STORE.list_body_weights(uid),
             STORE.list_waists(uid),
             _catalog(),
+            profile=recommender.load_profile(_PROFILE_PATH),
+            strategy=recommender.load_strategy(_STRATEGY_PATH),
             state=coach_state.load_state(_STATE_PATH),
             days=days,
         )

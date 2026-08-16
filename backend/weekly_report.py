@@ -27,6 +27,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
 STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "static")))
 STATE_PATH = coach_state.default_state_path(DB_PATH)
+PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
+STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))
 USER_ID = int(os.getenv("MINIAPP_TELEGRAM_RECOVERY_USER_ID", "3") or "3")
 REPORT_DAYS = int(os.getenv("WEEKLY_REPORT_DAYS", "7"))
 
@@ -44,6 +46,8 @@ def run(store: backend_store.MiniAppStore, user_id: int, force: bool = False) ->
             store.list_body_weights(user_id),
             store.list_waists(user_id),
             recommender.load_catalog(STATIC_DIR),
+            profile=recommender.load_profile(PROFILE_PATH),
+            strategy=recommender.load_strategy(STRATEGY_PATH),
             state=coach_state.load_state(STATE_PATH),
             days=REPORT_DAYS,
         )

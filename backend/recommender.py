@@ -1248,7 +1248,25 @@ def generate(
 # --------------------------------------------------------------------------- #
 # Weekly coach report
 # --------------------------------------------------------------------------- #
-REPORT_SYSTEM_PROMPT = coach_prompts.load("report")
+_REPORT_TEMPLATE = coach_prompts.load("report")
+
+
+def _build_report_system_prompt(
+    profile: dict[str, Any] | None = None,
+    strategy: str | None = None,
+) -> str:
+    """Системный промпт недельного отчёта.
+
+    До этого он был константой: отчёт не получал ни профиля, ни программы, то
+    есть писался про абстрактного атлета. Гейту этапа при этом негде было
+    прозвучать — а гейт жёсткий, и должно существовать место, где его статус
+    называют вслух.
+    """
+    return coach_prompts.render(
+        _REPORT_TEMPLATE,
+        profile=_render_profile(profile),
+        program=_render_program(strategy),
+    )
 
 
 def _build_report_prompt(
@@ -1390,6 +1408,8 @@ def generate_weekly_report(
     waists: list[dict[str, Any]],
     catalog: list[dict[str, Any]],
     *,
+    profile: dict[str, Any] | None = None,
+    strategy: str | None = None,
     state: dict[str, Any] | None = None,
     today: date | None = None,
     days: int = 7,
@@ -1411,7 +1431,7 @@ def generate_weekly_report(
         workouts, body_weights, waists, catalog, state, today, max(1, int(days))
     )
     text, usage = _request_model(
-        REPORT_SYSTEM_PROMPT,
+        _build_report_system_prompt(profile, strategy),
         user,
         schema=None,
         model=model,
