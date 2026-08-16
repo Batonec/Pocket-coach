@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
+      ios: ${{ steps.filter.outputs.ios }}
 
     steps:
       - name: Check out repository
@@ -61,6 +62,10 @@ jobs:
 
           echo "backend=$(has_match '^(backend/server\.py$|backend/backend_store\.py$|backend/recommender\.py$|backend/coach_state\.py$|backend/coach_features\.py$|backend/coach_signals\.py$|backend/coach_prompts\.py$|backend/prompts/.*\.md$|backend/copy/.*\.md$|backend/refresh_recommendation\.py$|backend/weekly_report\.py$|backend/backup_db\.py$|coach_mcp/server\.py$|backend/deploy/trainer-miniapp-backend\.service$|\.github/workflows/deploy-backend\.yml$)')" >> "$GITHUB_OUTPUT"
 
+          # Каталог целиком: в iOS нет списка модулей, который можно забыть
+          # обновить, — любой .swift, ресурс или сам проект требуют пересборки.
+          echo "ios=$(has_match '^(ios/.*|\.github/workflows/ci\.yml$)')" >> "$GITHUB_OUTPUT"
+
   test:
     name: Run test suite
     needs: changes
@@ -78,6 +83,76 @@ jobs:
 
       - name: Run automated tests
         run: python -m unittest discover -s backend/tests -p "test_*.py" -v
+
+  ios:
+    name: Run iOS tests
+    needs: changes
+    # macOS-раннеры дороже линуксовых на порядок, поэтому только когда правда
+    # тронут iOS. Для публичного репозитория минуты бесплатны, но очередь на
+    # macOS длиннее — гонять их на каждый бэкендовый коммит незачем.
+    if: needs.changes.outputs.ios == 'true'
+    # macos-26 нужен ради Xcode 26: Views.swift использует glassEffect (Liquid
+    # Glass), которого нет в SDK Xcode 16 с образа macos-15 — там сборка падает
+    # на компиляции, а не на тестах.
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Select the newest Xcode
+        run: |
+          set -eu
+          newest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "Xcode: $newest"
+          sudo xcode-select -s "$newest"
+          xcodebuild -version
+
+      - name: Pick an available iPhone simulator
+        id: sim
+        run: |
+          set -eu
+          # Берём UDID, а не имя: имена вроде «iPhone SE (3rd generation)» ломают
+          # любой разбор скобок, а образы раннера меняют состав устройств —
+          # захардкоженное имя отвалилось бы молча в день замены.
+          cat > /tmp/pick_simulator.py <<'PYEOF'
+          import json
+          import subprocess
+          import sys
+
+          raw = subprocess.check_output(
+              ["xcrun", "simctl", "list", "devices", "available", "--json"]
+          )
+          best = None
+          for runtime, devices in json.loads(raw)["devices"].items():
+              if "iOS" not in runtime:
+                  continue
+              for device in devices:
+                  if not device["name"].startswith("iPhone"):
+                      continue
+                  key = (runtime, device["name"])
+                  if best is None or key > best[0]:
+                      best = (key, device["udid"], device["name"])
+          if best is None:
+              sys.exit("на раннере нет ни одного доступного симулятора iPhone")
+          print(f"{best[1]}\t{best[2]}")
+          PYEOF
+          picked="$(python3 /tmp/pick_simulator.py)"
+          udid="${picked%%$'\t'*}"
+          name="${picked#*$'\t'}"
+          echo "Симулятор: $name ($udid)"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
+      - name: Run iOS tests
+        working-directory: ios
+        run: |
+          set -eu
+          xcodebuild \
+            -project TrainerIOS.xcodeproj \
+            -scheme TrainerIOS \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            test
 
   deploy-backend:
     name: Deploy backend after tests
