@@ -1,0 +1,94 @@
+# Ruff — линтер и форматтер Python. Это dev-инструмент, а не зависимость:
+# backend остаётся чистым stdlib, ruff не попадает ни в рантайм, ни в
+# requirements, ни на VPS. Единственное место, где он обязателен, — CI.
+#
+#   brew install ruff        # локально (или: pipx install ruff)
+#   ruff check .             # линт
+#   ruff check --fix .       # линт с автопочинкой
+#   ruff format .            # форматирование
+#
+# Версия в CI закреплена в .github/workflows/ci.yml: свежий ruff умеет
+# находить новые замечания, и обновление должно быть отдельным осознанным
+# коммитом, а не сюрпризом на чужом PR.
+
+target-version = "py313"
+line-length = 100
+
+# Корни импорта. Отсюда ruff понимает, что coach_prompts и backend_store —
+# свои модули, а не пакеты с PyPI, и раскладывает импорты по секциям сам.
+# Побочный эффект здесь важнее основного: backend/tests/support.py в эти корни
+# НЕ входит, поэтому `support` попадает в секцию выше backend-модулей — а он
+# обязан импортироваться первым, он и кладёт backend/ в sys.path. Без этого
+# isort сортирует всё в одну кучу по алфавиту, `import coach_prompts` уезжает
+# выше `import support`, и запуск одного файла тестов падает на ImportError.
+src = ["backend", "coach_mcp"]
+
+# Воркдиры Claude Code — полные копии репозитория; линтить их второй раз незачем.
+extend-exclude = [".claude/worktrees"]
+
+[lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes: неиспользуемое, undefined names
+    "I",   # isort: порядок импортов
+    "UP",  # pyupgrade: синтаксис под target-version
+    "B",   # flake8-bugbear: типовые ловушки
+    # BLE включён не «на всякий случай»: в коде УЖЕ стояло 23 пометки
+    # `# noqa: BLE001` — ровно по числу мест с `except Exception`. Автор
+    # разметил каждое. Без правила пометки становятся мусором и ruff их
+    # сносит, а новый blind-except проходит молча.
+    "BLE", # flake8-blind-except
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "RET", # flake8-return
+    "ARG", # неиспользуемые аргументы
+    "DTZ", # flake8-datetimez
+    "S",   # flake8-bandit: базовая безопасность
+    "RUF", # правила самого ruff
+]
+
+ignore = [
+    # Рабочий язык репозитория — русский, и RUF001-003 ругаются на каждую
+    # кириллическую «с», «а», «е», «о», «р», похожую на латинскую букву.
+    # Это 330+ замечаний на комментарии и тексты продукта, все ложные.
+    "RUF001", # ambiguous-unicode-character-string
+    "RUF002", # ambiguous-unicode-character-docstring
+    "RUF003", # ambiguous-unicode-character-comment
+
+    # Тренировочный день — локальный день атлета, а не UTC. date.today() здесь
+    # осознанный выбор: с датой в UTC вечерняя тренировка уезжала бы в
+    # завтра, а «сухие дни» и границы недели считались бы по чужому часовому
+    # поясу. Границы дат живут в backend_store.normalize_*, а не в tzinfo.
+    "DTZ011", # call-date-today
+]
+
+[lint.pycodestyle]
+# Форматтер укладывает КОД в line-length = 100 и делает это сам. E501 остаётся
+# нужен только для того, что форматтер разбить не может, — строковых литералов:
+# семантики каталога в recommender.py, описаний MCP-инструментов, SQL-запросов.
+# Рвать их руками ровно по сотне вредно (текст читают модель и человек), но и
+# бесконечными они быть не должны. 120 — та граница, за которой строка уже не
+# читается ни в диффе, ни в ревью.
+max-line-length = 120
+
+[lint.per-file-ignores]
+# Тесты подсовывают фейки с сигнатурой настоящих функций: неиспользуемый
+# аргумент там не забытый, а обязательный — иначе фейк не подставится.
+# Пароли и токены в фикстурах — заведомо ненастоящие.
+"backend/tests/*" = [
+    "ARG001", # unused-function-argument
+    "ARG002", # unused-method-argument
+    "ARG005", # unused-lambda-argument
+    "RUF012", # mutable-class-default: стабы-заглушки, не dataclass'ы
+    "S105",   # hardcoded-password-string
+    "S106",   # hardcoded-password-func-arg
+    "S107",   # hardcoded-password-default
+]
+
+[format]
+# Кавычки и переносы — как у black; трейлинг-запятая как маркер «не схлопывай»
+# оставлена включённой (magic-trailing-comma = respect), поэтому вручную
+# разложенные структуры не будут собираться обратно в одну строку.
+quote-style = "double"
+indent-style = "space"

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import unittest
 
-import backend_store  # support puts backend/ on sys.path
 from support import (
     JsonHttpClient,
     running_miniapp_server,
     sample_workout_payload,
 )
+
+import backend_store  # support puts backend/ on sys.path
 
 
 def sample_snapshot(**overrides):
@@ -22,7 +23,11 @@ def sample_snapshot(**overrides):
         "focus": "Верх+низ",
         "load_type": "medium",
         "exercises": [
-            {"exercise_id": 1, "name": "Bench Press", "sets": [{"reps": 12, "weight": 80}, {"reps": 12, "weight": 82.5}]}
+            {
+                "exercise_id": 1,
+                "name": "Bench Press",
+                "sets": [{"reps": 12, "weight": 80}, {"reps": 12, "weight": 82.5}],
+            }
         ],
     }
     snapshot.update(overrides)
@@ -60,7 +65,11 @@ class NormalizeSnapshotTests(unittest.TestCase):
         # reps < 1 drops the set, empty sets drop the exercise, no exercises -> None
         self.assertIsNone(
             backend_store.normalize_recommendation_snapshot(
-                {"exercises": [{"exercise_id": 1, "name": "X", "sets": [{"reps": 0, "weight": 10}]}]}
+                {
+                    "exercises": [
+                        {"exercise_id": 1, "name": "X", "sets": [{"reps": 0, "weight": 10}]}
+                    ]
+                }
             )
         )
 
@@ -112,7 +121,9 @@ class SnapshotAPITests(unittest.TestCase):
     def test_post_without_snapshot_has_no_key(self) -> None:
         with running_miniapp_server() as app:
             client = JsonHttpClient(app.base_url)
-            res = client.request_json("POST", "/api/workouts", sample_workout_payload(client_id="w-plain"))
+            res = client.request_json(
+                "POST", "/api/workouts", sample_workout_payload(client_id="w-plain")
+            )
             self.assertEqual(res.status, 201)
             self.assertNotIn("recommendation", res.payload["workout"]["data"])
 
@@ -149,9 +160,13 @@ class SnapshotAPITests(unittest.TestCase):
             )
             workout_id = created.payload["workout"]["id"]
 
-            newer = payload_with_snapshot("w-replace", sample_snapshot(focus="Новый план", generated_at=222))
+            newer = payload_with_snapshot(
+                "w-replace", sample_snapshot(focus="Новый план", generated_at=222)
+            )
             res = client.request_json("PUT", f"/api/workouts/{workout_id}", newer)
-            self.assertEqual(res.payload["workout"]["data"]["recommendation"]["focus"], "Новый план")
+            self.assertEqual(
+                res.payload["workout"]["data"]["recommendation"]["focus"], "Новый план"
+            )
             self.assertEqual(res.payload["workout"]["data"]["recommendation"]["generated_at"], 222)
 
     def test_post_dedupe_retry_backfills_snapshot(self) -> None:
@@ -176,10 +191,14 @@ class SnapshotAPITests(unittest.TestCase):
         with running_miniapp_server() as app:
             client = JsonHttpClient(app.base_url)
             client.request_json(
-                "POST", "/api/workouts", payload_with_snapshot("w-keep", sample_snapshot(focus="Оригинал"))
+                "POST",
+                "/api/workouts",
+                payload_with_snapshot("w-keep", sample_snapshot(focus="Оригинал")),
             )
             retry = client.request_json(
-                "POST", "/api/workouts", payload_with_snapshot("w-keep", sample_snapshot(focus="Подмена"))
+                "POST",
+                "/api/workouts",
+                payload_with_snapshot("w-keep", sample_snapshot(focus="Подмена")),
             )
             self.assertEqual(
                 retry.payload["workout"]["data"]["recommendation"]["focus"], "Оригинал"

@@ -23,8 +23,11 @@ def _workout(when: str, exercise_id: int = 8, sets: int = 3) -> dict:
         "data": {
             "load_type": "medium",
             "exercises": [
-                {"exercise_id": exercise_id, "name": "X",
-                 "sets": [{"reps": 10, "weight": 60}] * sets}
+                {
+                    "exercise_id": exercise_id,
+                    "name": "X",
+                    "sets": [{"reps": 10, "weight": 60}] * sets,
+                }
             ],
         },
     }
@@ -62,9 +65,7 @@ class WaistLimitSignalTests(unittest.TestCase):
         ]
 
     def test_two_consecutive_limit_readings_are_critical(self) -> None:
-        signal = coach_signals._waist_limit_signal(
-            self._points(88.0, 88.5), self._state(), TODAY
-        )
+        signal = coach_signals._waist_limit_signal(self._points(88.0, 88.5), self._state(), TODAY)
         self.assertIsNotNone(signal)
         self.assertEqual(signal["id"], "waist_limit")
         self.assertEqual(signal["severity"], "critical")
@@ -74,9 +75,7 @@ class WaistLimitSignalTests(unittest.TestCase):
 
     def test_one_crossing_does_not_trigger_on_tape_noise(self) -> None:
         self.assertIsNone(
-            coach_signals._waist_limit_signal(
-                self._points(87.8, 88.4), self._state(), TODAY
-            )
+            coach_signals._waist_limit_signal(self._points(87.8, 88.4), self._state(), TODAY)
         )
 
     def test_signal_only_exists_in_lean_bulk(self) -> None:
@@ -96,9 +95,7 @@ class WaistLimitSignalTests(unittest.TestCase):
 
 class MeasurementsSignalTests(unittest.TestCase):
     def test_fresh_measurements_mean_no_signal(self) -> None:
-        self.assertIsNone(
-            coach_signals._measurements_signal(_weights(3), _waists(5), STATE, TODAY)
-        )
+        self.assertIsNone(coach_signals._measurements_signal(_weights(3), _waists(5), STATE, TODAY))
 
     def test_due_stage_counts_down_to_the_deadline(self) -> None:
         signal = coach_signals._measurements_signal(_weights(11), _waists(2), STATE, TODAY)
@@ -135,18 +132,14 @@ class MeasurementsSignalTests(unittest.TestCase):
 
     def test_trend_nudge_waits_until_a_new_point_can_help(self) -> None:
         # Day 4: even a weigh-in today cannot reach the 5-day trend span yet.
-        self.assertIsNone(
-            coach_signals._measurements_signal(_weights(4), _waists(2), STATE, TODAY)
-        )
+        self.assertIsNone(coach_signals._measurements_signal(_weights(4), _waists(2), STATE, TODAY))
 
     def test_live_trend_or_maintenance_phase_means_no_nudge(self) -> None:
         two_points = [
             {"entry_date": (TODAY - timedelta(days=13)).isoformat(), "weight": 79.6},
             {"entry_date": (TODAY - timedelta(days=6)).isoformat(), "weight": 79.0},
         ]
-        self.assertIsNone(
-            coach_signals._measurements_signal(two_points, _waists(2), STATE, TODAY)
-        )
+        self.assertIsNone(coach_signals._measurements_signal(two_points, _waists(2), STATE, TODAY))
         maintenance = dict(STATE, phase="maintenance")
         self.assertIsNone(
             coach_signals._measurements_signal(_weights(6), _waists(2), maintenance, TODAY)
@@ -202,9 +195,13 @@ class TrainingsSignalTests(unittest.TestCase):
         )
         self.assertEqual(signal["title"], "После перерыва нужен облегчённый старт")
         self.assertEqual(signal["body"], "План пока не готов — повтори генерацию")
-        self.assertEqual(signal["action"], {
-            "type": "refresh_recommendation", "label": "Повторить",
-        })
+        self.assertEqual(
+            signal["action"],
+            {
+                "type": "refresh_recommendation",
+                "label": "Повторить",
+            },
+        )
         self.assertIn("recommendation=failed:456", signal["instance_key"])
 
     def test_return_mode_outdated_ready_plan_requests_refresh(self) -> None:
@@ -228,13 +225,13 @@ class DeloadSignalTests(unittest.TestCase):
     def test_deload_week_signal_until_first_session(self) -> None:
         start = date(2026, 5, 1)
         state = dict(coach_state.DEFAULT_STATE, phase_started=start.isoformat())
-        workouts = self._dense(start, 14)          # 6 недель набора, week 7 = deload
-        today = start + timedelta(days=43)         # день внутри 7-й недели без тренировки
+        workouts = self._dense(start, 14)  # 6 недель набора, week 7 = deload
+        today = start + timedelta(days=43)  # день внутри 7-й недели без тренировки
         signal = coach_signals._deload_signal(state, workouts, today)
         self.assertIsNotNone(signal)
         self.assertEqual(signal["severity"], "accent")
 
-        trained = workouts + [_workout((start + timedelta(days=43)).isoformat())]
+        trained = [*workouts, _workout((start + timedelta(days=43)).isoformat())]
         self.assertIsNone(coach_signals._deload_signal(state, trained, today))
 
 
@@ -244,8 +241,7 @@ class WeekDoneSignalTests(unittest.TestCase):
         workout["data"]["recommendation"] = {
             "schema": 1,
             "exercises": [
-                {"exercise_id": 8, "name": "X",
-                 "sets": [{"reps": 10, "weight": 60}] * planned}
+                {"exercise_id": 8, "name": "X", "sets": [{"reps": 10, "weight": 60}] * planned}
             ],
         }
         return workout
@@ -253,9 +249,7 @@ class WeekDoneSignalTests(unittest.TestCase):
     def _state(self, sessions_per_week: int | None = None) -> dict:
         state = dict(coach_state.DEFAULT_STATE, phase="cut_recomp")
         if sessions_per_week is not None:
-            state["phase_params"] = {
-                "cut_recomp": {"sessions_per_week": sessions_per_week}
-            }
+            state["phase_params"] = {"cut_recomp": {"sessions_per_week": sessions_per_week}}
         return state
 
     def test_ninety_percent_week_earns_the_milestone(self) -> None:
@@ -269,7 +263,9 @@ class WeekDoneSignalTests(unittest.TestCase):
         self.assertEqual(signal["severity"], "positive")
         self.assertIn("100%", signal["title"])
         # По средам сигнал уже мёртв.
-        self.assertIsNone(coach_signals._week_done_signal(workouts, self._state(2), date(2026, 8, 13)))
+        self.assertIsNone(
+            coach_signals._week_done_signal(workouts, self._state(2), date(2026, 8, 13))
+        )
 
     def test_low_adherence_week_is_not_celebrated(self) -> None:
         monday = date(2026, 8, 10)
@@ -287,20 +283,14 @@ class WeekDoneSignalTests(unittest.TestCase):
             self._planned_workout("2026-08-04", done=5, planned=5),
             self._planned_workout("2026-08-07", done=5, planned=5),
         ]
-        self.assertIsNone(
-            coach_signals._week_done_signal(workouts, self._state(4), monday)
-        )
-        self.assertIsNotNone(
-            coach_signals._week_done_signal(workouts, self._state(2), monday)
-        )
+        self.assertIsNone(coach_signals._week_done_signal(workouts, self._state(4), monday))
+        self.assertIsNotNone(coach_signals._week_done_signal(workouts, self._state(2), monday))
 
     def test_single_session_week_is_never_closed(self) -> None:
         """Нижняя граница держится, даже если фаза просит одну тренировку."""
         monday = date(2026, 8, 10)
         workouts = [self._planned_workout("2026-08-04", done=5, planned=5)]
-        self.assertIsNone(
-            coach_signals._week_done_signal(workouts, self._state(1), monday)
-        )
+        self.assertIsNone(coach_signals._week_done_signal(workouts, self._state(1), monday))
 
 
 class ComputeSignalsIntegrationTests(unittest.TestCase):
@@ -316,60 +306,38 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
         self.store.save_workout(self.uid, payload)
 
     def test_saving_missing_waist_clears_calorie_pause_signal(self) -> None:
-        self.store.save_body_weight(
-            self.uid, {"entry_date": TODAY.isoformat(), "weight": 79.0}
-        )
-        before = coach_signals.compute_signals(
-            self.store, self.uid, dict(STATE), today=TODAY
-        )
+        self.store.save_body_weight(self.uid, {"entry_date": TODAY.isoformat(), "weight": 79.0})
+        before = coach_signals.compute_signals(self.store, self.uid, dict(STATE), today=TODAY)
         self.assertEqual([signal["id"] for signal in before], ["measurements_overdue"])
         self.assertEqual(before[0]["action"]["target"], "waist")
 
-        self.store.save_waist(
-            self.uid, {"entry_date": TODAY.isoformat(), "waist": 84.0}
-        )
+        self.store.save_waist(self.uid, {"entry_date": TODAY.isoformat(), "waist": 84.0})
 
         self.assertEqual(
-            coach_signals.compute_signals(
-                self.store, self.uid, dict(STATE), today=TODAY
-            ),
+            coach_signals.compute_signals(self.store, self.uid, dict(STATE), today=TODAY),
             [],
         )
 
     def test_pending_recommendation_suppresses_every_banner_family(self) -> None:
-        self.store.save_body_weight(
-            self.uid, {"entry_date": TODAY.isoformat(), "weight": 79.0}
-        )
-        before = coach_signals.compute_signals(
-            self.store, self.uid, dict(STATE), today=TODAY
-        )
+        self.store.save_body_weight(self.uid, {"entry_date": TODAY.isoformat(), "weight": 79.0})
+        before = coach_signals.compute_signals(self.store, self.uid, dict(STATE), today=TODAY)
         self.assertEqual([signal["id"] for signal in before], ["measurements_overdue"])
 
         self.store.set_recommendation_pending(self.uid)
         self.assertEqual(
-            coach_signals.compute_signals(
-                self.store, self.uid, dict(STATE), today=TODAY
-            ),
+            coach_signals.compute_signals(self.store, self.uid, dict(STATE), today=TODAY),
             [],
         )
 
         self.store.fail_recommendation(self.uid, "generation failed")
-        after = coach_signals.compute_signals(
-            self.store, self.uid, dict(STATE), today=TODAY
-        )
+        after = coach_signals.compute_signals(self.store, self.uid, dict(STATE), today=TODAY)
         self.assertEqual([signal["id"] for signal in after], ["measurements_overdue"])
 
     def test_waist_limit_is_first_and_replaces_freshness_reminder(self) -> None:
         self._add_workout("2026-08-02")  # warn: return_soon
-        self.store.save_body_weight(
-            self.uid, {"entry_date": TODAY.isoformat(), "weight": 79.0}
-        )
-        self.store.save_waist(
-            self.uid, {"entry_date": "2026-08-07", "waist": 88.0}
-        )
-        self.store.save_waist(
-            self.uid, {"entry_date": TODAY.isoformat(), "waist": 88.5}
-        )
+        self.store.save_body_weight(self.uid, {"entry_date": TODAY.isoformat(), "weight": 79.0})
+        self.store.save_waist(self.uid, {"entry_date": "2026-08-07", "waist": 88.0})
+        self.store.save_waist(self.uid, {"entry_date": TODAY.isoformat(), "waist": 88.5})
         state = dict(
             STATE,
             phase="lean_bulk",
@@ -377,13 +345,15 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
             waist_limit_cm=88.0,
         )
 
-        signals = coach_signals.compute_signals(
-            self.store, self.uid, state, today=TODAY
-        )
+        signals = coach_signals.compute_signals(self.store, self.uid, state, today=TODAY)
 
-        self.assertEqual([signal["id"] for signal in signals], [
-            "waist_limit", "return_soon",
-        ])
+        self.assertEqual(
+            [signal["id"] for signal in signals],
+            [
+                "waist_limit",
+                "return_soon",
+            ],
+        )
 
     def test_positive_is_suppressed_next_to_a_warn(self) -> None:
         today = date(2026, 8, 10)  # понедельник
@@ -392,14 +362,13 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
             payload = sample_workout_payload(client_id=f"w-{when}", workout_date=when)
             payload["data"]["recommendation"] = {
                 "schema": 1,
-                "exercises": [{"exercise_id": 1, "name": "Bench Press",
-                               "sets": [{"reps": 12, "weight": 80}]}],
+                "exercises": [
+                    {"exercise_id": 1, "name": "Bench Press", "sets": [{"reps": 12, "weight": 80}]}
+                ],
             }
             self.store.save_workout(self.uid, payload)
         # …но замеров веса нет вовсе → warn по замерам подавляет позитив.
-        signals = coach_signals.compute_signals(
-            self.store, self.uid, dict(STATE), today=today
-        )
+        signals = coach_signals.compute_signals(self.store, self.uid, dict(STATE), today=today)
         ids = [signal["id"] for signal in signals]
         self.assertIn("measurements_overdue", ids)
         self.assertNotIn("week_done", ids)
@@ -429,23 +398,15 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
     def test_return_banner_tracks_cached_recommendation_status(self) -> None:
         today = date(2026, 8, 14)
         self._add_workout("2026-07-20")
-        self.store.save_body_weight(
-            self.uid, {"entry_date": today.isoformat(), "weight": 79.0}
-        )
-        self.store.save_waist(
-            self.uid, {"entry_date": today.isoformat(), "waist": 84.0}
-        )
+        self.store.save_body_weight(self.uid, {"entry_date": today.isoformat(), "weight": 79.0})
+        self.store.save_waist(self.uid, {"entry_date": today.isoformat(), "waist": 84.0})
 
         self.store.fail_recommendation(self.uid, "invalid plan")
-        failed = coach_signals.compute_signals(
-            self.store, self.uid, dict(STATE), today=today
-        )
+        failed = coach_signals.compute_signals(self.store, self.uid, dict(STATE), today=today)
         self.assertEqual(failed[0]["action"]["type"], "refresh_recommendation")
 
         self.store.set_recommendation_pending(self.uid)
-        pending = coach_signals.compute_signals(
-            self.store, self.uid, dict(STATE), today=today
-        )
+        pending = coach_signals.compute_signals(self.store, self.uid, dict(STATE), today=today)
         self.assertEqual(pending, [])
 
         self.store.save_recommendation(
@@ -457,9 +418,7 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
             1,
             1,
         )
-        ready = coach_signals.compute_signals(
-            self.store, self.uid, dict(STATE), today=today
-        )
+        ready = coach_signals.compute_signals(self.store, self.uid, dict(STATE), today=today)
         self.assertEqual(
             ready[0]["title"],
             "Возвратная тренировка готова, облегчённый вход",
@@ -473,7 +432,8 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
         today = date(2026, 8, 14)
         self._add_workout("2026-07-20")  # 25 дней → return_mode
         self.store.save_body_weight(
-            self.uid, {"entry_date": "2026-08-08", "weight": 79.0}  # 6 дн., тренда нет
+            self.uid,
+            {"entry_date": "2026-08-08", "weight": 79.0},  # 6 дн., тренда нет
         )
         self.store.save_waist(self.uid, {"entry_date": today.isoformat(), "waist": 84.0})
         self.store.save_recommendation(
@@ -485,22 +445,16 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
             1,
             1,
         )
-        signals = coach_signals.compute_signals(
-            self.store, self.uid, dict(STATE), today=today
-        )
+        signals = coach_signals.compute_signals(self.store, self.uid, dict(STATE), today=today)
         self.assertEqual([signal["id"] for signal in signals], ["return_mode"])
         self.assertIn("взвесься", signals[0]["note"].lower())
 
     def test_trend_nudge_stands_alone_without_higher_banners(self) -> None:
         today = date(2026, 8, 14)
         self._add_workout("2026-08-12")  # тренировка свежая — «тренировки» молчат
-        self.store.save_body_weight(
-            self.uid, {"entry_date": "2026-08-08", "weight": 79.0}
-        )
+        self.store.save_body_weight(self.uid, {"entry_date": "2026-08-08", "weight": 79.0})
         self.store.save_waist(self.uid, {"entry_date": today.isoformat(), "waist": 84.0})
-        signals = coach_signals.compute_signals(
-            self.store, self.uid, dict(STATE), today=today
-        )
+        signals = coach_signals.compute_signals(self.store, self.uid, dict(STATE), today=today)
         self.assertEqual([signal["id"] for signal in signals], ["weight_trend_stale"])
 
     def test_expired_timed_snooze_returns_the_signal(self) -> None:
@@ -520,9 +474,12 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
             [],
         )
         self.assertEqual(
-            [s["id"] for s in coach_signals.compute_signals(
-                self.store, self.uid, dict(STATE), today=today, now_ts=now + 7200
-            )],
+            [
+                s["id"]
+                for s in coach_signals.compute_signals(
+                    self.store, self.uid, dict(STATE), today=today, now_ts=now + 7200
+                )
+            ],
             ["return_soon"],
         )
 

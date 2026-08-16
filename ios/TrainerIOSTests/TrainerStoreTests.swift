@@ -1,6 +1,7 @@
-import XCTest
 import SwiftUI
 import UIKit
+import XCTest
+
 @testable import TrainerIOS
 
 @MainActor
@@ -81,7 +82,7 @@ final class TrainerStoreTests: XCTestCase {
             basedOnWorkoutID: 133,
             basedOnWorkoutCount: 10,
             model: "claude-opus-4-8",
-            updatedAt: 1781200000,
+            updatedAt: 1_781_200_000,
             error: nil,
             recommendation: RecommendationPayload(
                 focus: "Верх+низ",
@@ -90,7 +91,10 @@ final class TrainerStoreTests: XCTestCase {
                 exercises: [
                     RecommendedExercise(
                         exerciseID: 8, name: "Жим ногами", note: "n",
-                        sets: [RecommendedSet(reps: 12, weight: 90), RecommendedSet(reps: 10, weight: 95)]
+                        sets: [
+                            RecommendedSet(reps: 12, weight: 90),
+                            RecommendedSet(reps: 10, weight: 95),
+                        ]
                     ),
                     RecommendedExercise(
                         exerciseID: 9, name: "Тяга верт.", note: nil,
@@ -99,7 +103,7 @@ final class TrainerStoreTests: XCTestCase {
                     RecommendedExercise(
                         exerciseID: 999, name: "Выдумка", note: nil,
                         sets: [RecommendedSet(reps: 5, weight: 5)]
-                    )
+                    ),
                 ]
             )
         )
@@ -115,7 +119,7 @@ final class TrainerStoreTests: XCTestCase {
         // Plan captured (unknown id 999 dropped), but the draft is untouched:
         // applying a plan must not look like a started workout.
         XCTAssertEqual(store.appliedPlan?.exercises.map(\.exerciseID), [8, 9])
-        XCTAssertEqual(store.appliedPlan?.generatedAt, 1781200000)
+        XCTAssertEqual(store.appliedPlan?.generatedAt, 1_781_200_000)
         XCTAssertTrue(store.draft.exercises.isEmpty)
         XCTAssertFalse(store.draft.hasRealSets)
         XCTAssertTrue(store.isRecommendationApplied)
@@ -144,10 +148,13 @@ final class TrainerStoreTests: XCTestCase {
     func testAutoApplySkipsWhileEditingPastWorkout() {
         let store = TrainerStore(defaults: .isolatedTestDefaults())
         store.exercises = TestFixtures.catalog
-        store.startEditing(TestFixtures.workout(
-            id: 42,
-            exercises: [TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [TestFixtures.set()])]
-        ))
+        store.startEditing(
+            TestFixtures.workout(
+                id: 42,
+                exercises: [
+                    TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [TestFixtures.set()])
+                ]
+            ))
         store.recommendation = readyRecommendation()
 
         store.autoApplyRecommendationIfReady()
@@ -273,7 +280,7 @@ final class TrainerStoreTests: XCTestCase {
                     type: "open_weekly_report", label: "Отчёт", target: nil
                 ),
                 snoozable: true
-            ),
+            )
         ]
 
         var pending = readyRecommendation()
@@ -293,26 +300,29 @@ final class TrainerStoreTests: XCTestCase {
         oldRecommendation.basedOnWorkoutID = 133
         oldRecommendation.basedOnWorkoutCount = 10
 
-        XCTAssertFalse(TrainerStore.recommendation(
-            oldRecommendation,
-            matchesWorkoutCount: 9,
-            latestWorkoutID: 132
-        ))
+        XCTAssertFalse(
+            TrainerStore.recommendation(
+                oldRecommendation,
+                matchesWorkoutCount: 9,
+                latestWorkoutID: 132
+            ))
 
         oldRecommendation.basedOnWorkoutID = 132
         oldRecommendation.basedOnWorkoutCount = 9
-        XCTAssertTrue(TrainerStore.recommendation(
-            oldRecommendation,
-            matchesWorkoutCount: 9,
-            latestWorkoutID: 132
-        ))
+        XCTAssertTrue(
+            TrainerStore.recommendation(
+                oldRecommendation,
+                matchesWorkoutCount: 9,
+                latestWorkoutID: 132
+            ))
 
         oldRecommendation.stale = true
-        XCTAssertFalse(TrainerStore.recommendation(
-            oldRecommendation,
-            matchesWorkoutCount: 9,
-            latestWorkoutID: 132
-        ))
+        XCTAssertFalse(
+            TrainerStore.recommendation(
+                oldRecommendation,
+                matchesWorkoutCount: 9,
+                latestWorkoutID: 132
+            ))
     }
 
     func testAutoApplySkipsNonReadyRecommendation() {
@@ -345,7 +355,9 @@ final class TrainerStoreTests: XCTestCase {
         XCTAssertEqual(store.draft.exercises.first?.sets.last?.weight, 95)
 
         // Custom set → the next "+" repeats it instead of snapping back.
-        store.applySet(TestFixtures.draftSet(reps: 8, weight: 100, effort: .hard), exerciseID: 8, setIndex: nil)
+        store.applySet(
+            TestFixtures.draftSet(reps: 8, weight: 100, effort: .hard), exerciseID: 8, setIndex: nil
+        )
         store.addPlannedSet(exerciseID: 8)
         XCTAssertEqual(store.draft.exercises.first?.sets.last?.reps, 8)
         XCTAssertEqual(store.draft.exercises.first?.sets.last?.weight, 100)
@@ -394,9 +406,11 @@ final class TrainerStoreTests: XCTestCase {
         store.workouts = [
             TestFixtures.workout(
                 exercises: [
-                    TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [
-                        TestFixtures.set(index: 1, reps: 15, weight: 80, effort: .hard)
-                    ])
+                    TestFixtures.exercise(
+                        id: 8, name: "Жим ногами",
+                        sets: [
+                            TestFixtures.set(index: 1, reps: 15, weight: 80, effort: .hard)
+                        ])
                 ]
             )
         ]
@@ -416,8 +430,11 @@ final class TrainerStoreTests: XCTestCase {
         let store = configuredStore()
 
         store.applySet(TestFixtures.draftSet(reps: 12, weight: 70), exerciseID: 8, setIndex: nil)
-        store.applySet(TestFixtures.draftSet(reps: 13, weight: 75, effort: .ok), exerciseID: 8, setIndex: nil)
-        store.applySet(TestFixtures.draftSet(reps: 11, weight: 77.5, effort: .hard), exerciseID: 8, setIndex: 1)
+        store.applySet(
+            TestFixtures.draftSet(reps: 13, weight: 75, effort: .ok), exerciseID: 8, setIndex: nil)
+        store.applySet(
+            TestFixtures.draftSet(reps: 11, weight: 77.5, effort: .hard), exerciseID: 8, setIndex: 1
+        )
 
         XCTAssertEqual(store.draft.exercises.first?.sets.map(\.reps), [12, 11])
         XCTAssertEqual(store.draft.exercises.first?.sets.last?.weight, 77.5)
@@ -450,9 +467,11 @@ final class TrainerStoreTests: XCTestCase {
             clientID: "editable-client",
             date: "2026-05-03",
             exercises: [
-                TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [
-                    TestFixtures.set(index: 1, reps: 12, weight: 90, effort: .easy)
-                ])
+                TestFixtures.exercise(
+                    id: 8, name: "Жим ногами",
+                    sets: [
+                        TestFixtures.set(index: 1, reps: 12, weight: 90, effort: .easy)
+                    ])
             ]
         )
 
@@ -469,7 +488,7 @@ final class TrainerStoreTests: XCTestCase {
         let store = configuredStore()
         store.bodyWeightEntries = TrainerLogic.sortBodyWeights([
             TestFixtures.bodyWeight(id: 1, date: "2026-05-01", weight: 82.4),
-            TestFixtures.bodyWeight(id: 2, date: "2026-05-03", weight: 81.9)
+            TestFixtures.bodyWeight(id: 2, date: "2026-05-03", weight: 81.9),
         ])
 
         store.bodyWeightDate = "unchanged"
@@ -542,9 +561,11 @@ final class TrainerStoreTests: XCTestCase {
         store.workouts = [
             TestFixtures.workout(
                 exercises: [
-                    TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [
-                        TestFixtures.set(index: 1, reps: 15, weight: 80)
-                    ])
+                    TestFixtures.exercise(
+                        id: 8, name: "Жим ногами",
+                        sets: [
+                            TestFixtures.set(index: 1, reps: 15, weight: 80)
+                        ])
                 ]
             )
         ]

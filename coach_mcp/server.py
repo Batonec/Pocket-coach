@@ -26,6 +26,7 @@ Environment:
     COACH_MCP_AUTH_TOKEN     if set, require Authorization: Bearer <token>
     COACH_MCP_ALLOWED_HOSTS  comma list to enable strict DNS-rebinding protection
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,7 +41,7 @@ try:
     from dotenv import load_dotenv
 
     load_dotenv()
-except Exception:  # noqa: BLE001 - dotenv is optional
+except Exception:  # noqa: BLE001, S110 — dotenv опционален, .env может не быть
     pass
 
 # --- locate and import the backend modules (backend_store + recommender) ------
@@ -50,20 +51,17 @@ _BACKEND_DIR = os.getenv("COACH_MCP_BACKEND_DIR") or str(
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
+from mcp.server.fastmcp import FastMCP  # noqa: E402
+from mcp.server.transport_security import TransportSecuritySettings  # noqa: E402
+from mcp.types import CallToolResult, TextContent  # noqa: E402
+
 import backend_store  # noqa: E402
 import coach_features  # noqa: E402
 import coach_state  # noqa: E402
 import recommender  # noqa: E402
 
-from mcp.server.fastmcp import FastMCP  # noqa: E402
-from mcp.server.transport_security import TransportSecuritySettings  # noqa: E402
-from mcp.types import CallToolResult, TextContent  # noqa: E402
-
-
 # --- configuration ------------------------------------------------------------
-_DB_PATH = Path(
-    os.getenv("MINIAPP_DB_PATH") or str(Path(_BACKEND_DIR) / "data" / "trainer.db")
-)
+_DB_PATH = Path(os.getenv("MINIAPP_DB_PATH") or str(Path(_BACKEND_DIR) / "data" / "trainer.db"))
 _STATIC_DIR = Path(
     os.getenv("COACH_MCP_STATIC_DIR")
     or os.getenv("MINIAPP_STATIC_DIR")
@@ -85,9 +83,7 @@ _STRATEGY_PATH = Path(
 # same as the profile; COACH_STATE_PATH overrides.
 _STATE_PATH = coach_state.default_state_path(_DB_PATH)
 _DEFAULT_USER_ID = int(
-    os.getenv("COACH_MCP_USER_ID")
-    or os.getenv("MINIAPP_TELEGRAM_RECOVERY_USER_ID")
-    or "3"
+    os.getenv("COACH_MCP_USER_ID") or os.getenv("MINIAPP_TELEGRAM_RECOVERY_USER_ID") or "3"
 )
 
 STORE = backend_store.MiniAppStore(_DB_PATH)
@@ -141,9 +137,7 @@ def _result(payload: dict[str, Any]) -> CallToolResult:
     text content (so every client shows the model the data) and also placed in
     structuredContent; isError is derived from ``ok``.
     """
-    summary = payload.get("summary") or (
-        "Ошибка." if not payload.get("ok", True) else "Готово."
-    )
+    summary = payload.get("summary") or ("Ошибка." if not payload.get("ok", True) else "Готово.")
     return CallToolResult(
         content=[TextContent(type="text", text=f"{summary}\n\n{_json(payload)}")],
         structuredContent=payload,
@@ -238,9 +232,7 @@ def coach_get_catalog() -> CallToolResult:
     """Каталог доступных упражнений (id + название) — других упражнений не существует."""
     try:
         catalog = _catalog()
-        return _result(
-            {"ok": True, "summary": f"Упражнений: {len(catalog)}.", "catalog": catalog}
-        )
+        return _result({"ok": True, "summary": f"Упражнений: {len(catalog)}.", "catalog": catalog})
     except Exception as exc:  # noqa: BLE001
         return _result(_err(f"Каталог недоступен: {exc}"))
 
@@ -287,7 +279,9 @@ def coach_get_state(user_id: int | None = None) -> CallToolResult:
 
 @mcp.tool()
 def coach_set_phase(phase: str, params: dict[str, Any] | None = None) -> CallToolResult:
-    """Переключить фазу подготовки РУКАМИ (cut_recomp / lean_bulk / maintenance). Дата старта фазы = сегодня; params — переопределения дефолтов фазы (например {"target_weight_kg": 75}). Автопереключений нет: вызывай только по явной просьбе пользователя."""
+    """Переключить фазу подготовки РУКАМИ (cut_recomp / lean_bulk / maintenance). Дата старта фазы =
+    сегодня; params — переопределения дефолтов фазы (например {"target_weight_kg": 75}).
+    Автопереключений нет: вызывай только по явной просьбе пользователя."""
     try:
         state = coach_state.set_phase(_STATE_PATH, str(phase).strip(), params)
         merged = coach_state.phase_params(state)
@@ -313,7 +307,8 @@ def coach_update_state(
     waist_limit_cm: float | None = None,
     waist_base_cm: float | None = None,
 ) -> CallToolResult:
-    """Обновить глобальные параметры состояния: жёсткий лимит талии (см), базовую талию фазы (см). Не переданные поля не трогаются."""
+    """Обновить глобальные параметры состояния: жёсткий лимит талии (см), базовую талию фазы (см). Не
+    переданные поля не трогаются."""
     try:
         state = coach_state.load_state(_STATE_PATH)
         changed: list[str] = []
@@ -343,7 +338,9 @@ def coach_update_state(
 
 @mcp.tool()
 def coach_update_profile(block: str, text: str | None = None) -> CallToolResult:
-    """Заменить текст ОДНОГО блока профиля атлета (coach_profile.json); пустой text удаляет блок. Только по явной просьбе пользователя — профиль содержит персональный/медицинский контекст. Предыдущая версия файла сохраняется рядом (.bak-таймстамп)."""
+    """Заменить текст ОДНОГО блока профиля атлета (coach_profile.json); пустой text удаляет блок.
+    Только по явной просьбе пользователя — профиль содержит персональный/медицинский контекст.
+    Предыдущая версия файла сохраняется рядом (.bak-таймстамп)."""
     try:
         profile = recommender.update_profile_block(_PROFILE_PATH, block, text)
         replaced = text is not None and str(text).strip()
@@ -369,10 +366,13 @@ def coach_update_profile(block: str, text: str | None = None) -> CallToolResult:
 # --- tools: waist measurements ------------------------------------------------
 @mcp.tool()
 def coach_add_waist(
-    waist_cm: float, entry_date: str | None = None, notes: str | None = None,
+    waist_cm: float,
+    entry_date: str | None = None,
+    notes: str | None = None,
     user_id: int | None = None,
 ) -> CallToolResult:
-    """Записать замер талии в см (утром натощак, по пупку). entry_date по умолчанию — сегодня; повторный замер за ту же дату перезаписывается."""
+    """Записать замер талии в см (утром натощак, по пупку). entry_date по умолчанию — сегодня;
+    повторный замер за ту же дату перезаписывается."""
     try:
         uid = _uid(user_id)
         payload = {
@@ -447,10 +447,24 @@ def coach_get_stored_recommendation(user_id: int | None = None) -> CallToolResul
         latest = STORE.get_latest_workout_id(uid)
         if rec is None:
             return _result(
-                {"ok": True, "summary": "Рекомендации в кэше ещё нет.", "user_id": uid, "status": "none"}
+                {
+                    "ok": True,
+                    "summary": "Рекомендации в кэше ещё нет.",
+                    "user_id": uid,
+                    "status": "none",
+                }
             )
-        rec["stale"] = bool(rec.get("status") == "ready" and rec.get("based_on_workout_id") != latest)
-        rec.update({"ok": True, "user_id": uid, "latest_workout_id": latest, "summary": f"Статус: {rec.get('status')}."})
+        rec["stale"] = bool(
+            rec.get("status") == "ready" and rec.get("based_on_workout_id") != latest
+        )
+        rec.update(
+            {
+                "ok": True,
+                "user_id": uid,
+                "latest_workout_id": latest,
+                "summary": f"Статус: {rec.get('status')}.",
+            }
+        )
         return _result(rec)
     except Exception as exc:  # noqa: BLE001
         return _result(_err(f"Ошибка: {exc}"))
@@ -474,8 +488,13 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
             catalog, profile, state, recommender.load_strategy(_STRATEGY_PATH)
         )
         user = recommender._build_user_prompt(
-            workouts, body_weights, today, limit,
-            catalog=catalog, state=state, waists=waists,
+            workouts,
+            body_weights,
+            today,
+            limit,
+            catalog=catalog,
+            state=state,
+            waists=waists,
         )
         schema = recommender._build_schema(catalog)
         return _result(
@@ -499,7 +518,8 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
 
 @mcp.tool()
 def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> CallToolResult:
-    """Глубокая отладка: полный прогон генерации с семантическим валидатором — попытки модели (сырой ответ + нарушения + репромпт), итог и токены/стоимость.
+    """Глубокая отладка: полный прогон генерации с семантическим валидатором — попытки модели (сырой
+    ответ + нарушения + репромпт), итог и токены/стоимость.
 
     Ничего не записывает в базу приложения."""
     try:
@@ -518,8 +538,13 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
         today = date.today()
         model = recommender.DEFAULT_MODEL
         user = recommender._build_user_prompt(
-            workouts, body_weights, today, limit,
-            catalog=catalog, state=state, waists=waists,
+            workouts,
+            body_weights,
+            today,
+            limit,
+            catalog=catalog,
+            state=state,
+            waists=waists,
         )
 
         validated = None
@@ -572,7 +597,9 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
 def coach_weekly_report(
     days: int = 7, fresh: bool = False, user_id: int | None = None
 ) -> CallToolResult:
-    """Недельный отчёт тренера (Markdown): итоги недели, прогресс/ПР, вес и талия, дисциплина, фокус следующей недели. Сегодняшний отчёт отдаётся из кэша мгновенно и бесплатно (воскресный таймер генерирует его сам); fresh=true — перегенерировать за токены."""
+    """Недельный отчёт тренера (Markdown): итоги недели, прогресс/ПР, вес и талия, дисциплина, фокус
+    следующей недели. Сегодняшний отчёт отдаётся из кэша мгновенно и бесплатно (воскресный таймер
+    генерирует его сам); fresh=true — перегенерировать за токены."""
     try:
         uid = _uid(user_id)
         period_end = date.today().isoformat()
@@ -604,8 +631,13 @@ def coach_weekly_report(
             days=days,
         )
         STORE.save_coach_report(
-            uid, period_end, days, report, model,
-            usage.get("input_tokens"), usage.get("output_tokens"),
+            uid,
+            period_end,
+            days,
+            report,
+            model,
+            usage.get("input_tokens"),
+            usage.get("output_tokens"),
         )
         return _result(
             {
@@ -627,8 +659,12 @@ def coach_weekly_report(
 
 
 @mcp.tool()
-def coach_phase_summary(history_index: int | None = None, user_id: int | None = None) -> CallToolResult:
-    """Итоги фазы подготовки: длительность, тренировки и частота, вес/талия старт→финиш с темпом, ПР за фазу, дисциплина. Без аргументов — текущая фаза; history_index (0 = самая старая) — завершённая фаза из журнала переходов."""
+def coach_phase_summary(
+    history_index: int | None = None, user_id: int | None = None
+) -> CallToolResult:
+    """Итоги фазы подготовки: длительность, тренировки и частота, вес/талия старт→финиш с темпом, ПР за
+    фазу, дисциплина. Без аргументов — текущая фаза; history_index (0 = самая старая) — завершённая
+    фаза из журнала переходов."""
     try:
         uid = _uid(user_id)
         state = coach_state.load_state(_STATE_PATH)
@@ -644,9 +680,9 @@ def coach_phase_summary(history_index: int | None = None, user_id: int | None = 
         else:
             index = int(history_index)
             if not 0 <= index < len(history):
-                return _result(_err(
-                    f"history_index={index} вне журнала (закрытых фаз: {len(history)})."
-                ))
+                return _result(
+                    _err(f"history_index={index} вне журнала (закрытых фаз: {len(history)}).")
+                )
             entry = history[index]
             if not entry.get("started") or not entry.get("ended"):
                 return _result(_err("У этой записи журнала нет полных дат."))
@@ -722,7 +758,8 @@ def coach_costs(user_id: int | None = None) -> CallToolResult:
 def coach_generate_recommendation(
     limit: int = 20, store: bool = False, user_id: int | None = None
 ) -> CallToolResult:
-    """Сгенерировать новую рекомендацию (валидированную). store=false (по умолчанию) — НЕ писать в базу приложения; store=true — обновить кэш, который видит приложение."""
+    """Сгенерировать новую рекомендацию (валидированную). store=false (по умолчанию) — НЕ писать в базу
+    приложения; store=true — обновить кэш, который видит приложение."""
     try:
         uid = _uid(user_id)
         workouts = STORE.list_workouts(uid)
@@ -788,8 +825,13 @@ class _BearerAuthMiddleware:
         headers = dict(scope.get("headers") or [])
         auth = headers.get(b"authorization", b"").decode("latin-1")
         if auth != f"Bearer {self.token}":
-            await send({"type": "http.response.start", "status": 401,
-                        "headers": [(b"content-type", b"application/json")]})
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [(b"content-type", b"application/json")],
+                }
+            )
             await send({"type": "http.response.body", "body": b'{"error":"unauthorized"}'})
             return
         await self.app(scope, receive, send)
@@ -827,8 +869,12 @@ def main() -> None:
     if token:
         import uvicorn
 
-        uvicorn.run(_BearerAuthMiddleware(mcp.streamable_http_app(), token),
-                    host=args.host, port=args.port, log_level="info")
+        uvicorn.run(
+            _BearerAuthMiddleware(mcp.streamable_http_app(), token),
+            host=args.host,
+            port=args.port,
+            log_level="info",
+        )
     else:
         mcp.run(transport="streamable-http")
 

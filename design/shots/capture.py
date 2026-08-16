@@ -33,8 +33,18 @@ DEFAULT_WIDTH = 820
 QUALITY = 90
 
 IDS = [
-    "hero", "voice", "coach", "coach-why", "today", "today-start",
-    "quickadd", "picker", "history", "progress", "exercise", "weight",
+    "hero",
+    "voice",
+    "coach",
+    "coach-why",
+    "today",
+    "today-start",
+    "quickadd",
+    "picker",
+    "history",
+    "progress",
+    "exercise",
+    "weight",
 ]
 
 

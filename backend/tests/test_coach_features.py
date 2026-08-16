@@ -8,7 +8,6 @@ import support  # noqa: F401 — adds backend to sys.path
 import coach_features
 import coach_state
 
-
 CATALOG = [
     {"id": 18, "name": "Жим в тренажере"},
     {"id": 1, "name": "Жим гор."},
@@ -51,9 +50,9 @@ class AliasAndE1rmTests(unittest.TestCase):
 class SummaryTests(unittest.TestCase):
     def test_summary_tracks_peak_pr_and_percent(self) -> None:
         workouts = [
-            _workout("2026-08-10", [(18, [(47.5, 13)])]),   # newest-first order
+            _workout("2026-08-10", [(18, [(47.5, 13)])]),  # newest-first order
             _workout("2026-03-31", [(18, [(55, 12), (55, 12)])]),
-            _workout("2026-03-01", [(1, [(50, 12)])]),      # duplicate id merges in
+            _workout("2026-03-01", [(1, [(50, 12)])]),  # duplicate id merges in
         ]
         summaries = coach_features.exercise_summaries(workouts, CATALOG, TODAY)
         self.assertEqual(len(summaries), 1)
@@ -74,8 +73,8 @@ class SummaryTests(unittest.TestCase):
     def test_gravitron_progress_is_inverted(self) -> None:
         workouts = [
             _workout("2026-08-01", [(4, [(28, 10)])]),
-            _workout("2026-07-01", [(4, [(25, 12)])]),   # PR: more reps at 25
-            _workout("2026-06-15", [(4, [(25, 10)])]),   # PR: lower counterweight
+            _workout("2026-07-01", [(4, [(25, 12)])]),  # PR: more reps at 25
+            _workout("2026-06-15", [(4, [(25, 10)])]),  # PR: lower counterweight
             _workout("2026-06-01", [(4, [(30, 10)])]),
         ]
         summary = coach_features.exercise_summaries(workouts, CATALOG, TODAY)[0]
@@ -94,17 +93,17 @@ class WeeklyVolumeTests(unittest.TestCase):
     def test_direct_and_effective_sets(self) -> None:
         workouts = [
             _workout("2026-08-13", [(18, [(50, 10)] * 3), (9, [(60, 10)] * 2)]),
-            _workout("2026-08-01", [(18, [(50, 10)] * 5)]),   # outside the 7-day window
+            _workout("2026-08-01", [(18, [(50, 10)] * 5)]),  # outside the 7-day window
         ]
         volume = coach_features.weekly_volume(workouts, TODAY)
         self.assertEqual(volume["грудь"]["direct"], 3)
         self.assertEqual(volume["грудь"]["effective"], 3.0)
         self.assertEqual(volume["спина"]["direct"], 2)
-        self.assertEqual(volume["трицепс"]["effective"], 1.5)   # 3 presses × 0.5
+        self.assertEqual(volume["трицепс"]["effective"], 1.5)  # 3 presses × 0.5
         # Horizontal press hits the front delt, not the measured mid delt →
         # only a quarter-set credit per press.
-        self.assertEqual(volume["дельты"]["effective"], 0.75)   # 3 presses × 0.25
-        self.assertEqual(volume["бицепс"]["effective"], 1.0)    # 2 pulls × 0.5
+        self.assertEqual(volume["дельты"]["effective"], 0.75)  # 3 presses × 0.25
+        self.assertEqual(volume["бицепс"]["effective"], 1.0)  # 2 pulls × 0.5
 
     def test_duplicate_press_id_counts_into_chest(self) -> None:
         workouts = [_workout("2026-08-13", [(1, [(50, 10)] * 4)])]
@@ -130,9 +129,7 @@ class StallTests(unittest.TestCase):
     def test_green_preconditions_flag_the_stalled_lifts(self) -> None:
         workouts = self._green_history()
         summaries = coach_features.exercise_summaries(workouts, CATALOG, TODAY)
-        report = coach_features.stall_report(
-            workouts, summaries, 0.0, "lean_bulk", None, TODAY
-        )
+        report = coach_features.stall_report(workouts, summaries, 0.0, "lean_bulk", None, TODAY)
         self.assertTrue(report["preconditions_ok"])
         stalled_names = {s["name"] for s in report["stalled"]}
         self.assertIn("Жим в тренажере", stalled_names)
@@ -147,9 +144,7 @@ class StallTests(unittest.TestCase):
             for index in range(4)
         ]
         summaries = coach_features.exercise_summaries(workouts, CATALOG, TODAY)
-        report = coach_features.stall_report(
-            workouts, summaries, None, "lean_bulk", None, TODAY
-        )
+        report = coach_features.stall_report(workouts, summaries, None, "lean_bulk", None, TODAY)
         self.assertFalse(report["preconditions_ok"])
         self.assertEqual(report["stalled"], [])
         text = coach_features.render_stall_report(report)
@@ -171,12 +166,10 @@ class CurrentWorkingWeightTests(unittest.TestCase):
 
     def test_light_day_next_to_a_real_session_is_not_a_regression(self) -> None:
         workouts = [
-            _workout("2026-07-22", [(8, [(40, 12)] * 3)]),   # лёгкий день
+            _workout("2026-07-22", [(8, [(40, 12)] * 3)]),  # лёгкий день
             _workout("2026-07-19", [(8, [(60, 12)] * 3)]),
         ]
-        current = coach_features.current_working_weight(
-            self._sessions(workouts), inverted=False
-        )
+        current = coach_features.current_working_weight(self._sessions(workouts), inverted=False)
         self.assertEqual(current, 60)
 
     def test_single_garbage_set_is_filtered(self) -> None:
@@ -190,12 +183,10 @@ class CurrentWorkingWeightTests(unittest.TestCase):
 
     def test_sessions_from_a_previous_era_are_ignored(self) -> None:
         workouts = [
-            _workout("2026-08-10", [(8, [(80, 12)] * 3)]),   # после перерыва
+            _workout("2026-08-10", [(8, [(80, 12)] * 3)]),  # после перерыва
             _workout("2026-04-20", [(8, [(120, 12)] * 3)]),  # прошлая эпоха
         ]
-        current = coach_features.current_working_weight(
-            self._sessions(workouts), inverted=False
-        )
+        current = coach_features.current_working_weight(self._sessions(workouts), inverted=False)
         self.assertEqual(current, 80)
 
     def test_summary_uses_the_filtered_metric(self) -> None:
@@ -214,18 +205,19 @@ class RampInvariantTests(unittest.TestCase):
     def test_peak_matches_the_summary_set_not_max_weight(self) -> None:
         workouts = [
             _workout("2026-08-10", [(9, [(65, 12)] * 3)]),
-            _workout("2026-07-01", [(9, [(75, 15)] * 2)]),   # e1RM peak 112.5
-            _workout("2026-06-20", [(9, [(80, 11)] * 2)]),   # heavier but weaker
+            _workout("2026-07-01", [(9, [(75, 15)] * 2)]),  # e1RM peak 112.5
+            _workout("2026-06-20", [(9, [(80, 11)] * 2)]),  # heavier but weaker
             _workout("2026-06-10", [(9, [(70, 12)] * 2)]),
         ]
         items = coach_features.comeback_ramp_steps(workouts, CATALOG, TODAY)
         item = next(i for i in items if i["exercise_id"] == 9)
         summary = next(
-            s for s in coach_features.exercise_summaries(workouts, CATALOG, TODAY)
+            s
+            for s in coach_features.exercise_summaries(workouts, CATALOG, TODAY)
             if s["exercise_id"] == 9
         )
         self.assertEqual(item["peak_weight"], summary["top_weight"])  # 75, не 80
-        self.assertEqual(item["peak_reps"], summary["top_reps"])      # 15
+        self.assertEqual(item["peak_reps"], summary["top_reps"])  # 15
         # From 65 to 75 with the machine's 5-kg step: no jump above 13%.
         self.assertEqual(item["steps"], [70, 75])
 
@@ -239,14 +231,14 @@ class RampInvariantTests(unittest.TestCase):
             _workout("2026-06-25", [(10, [(40, 12)] * 3)]),
             _workout("2026-06-15", [(10, [(60, 12)] * 3)]),
         ]
-        catalog = CATALOG + [{"id": 10, "name": "Тяга горизонт."}]
+        catalog = [*CATALOG, {"id": 10, "name": "Тяга горизонт."}]
         items = coach_features.comeback_ramp_steps(workouts, catalog, TODAY)
         item = next(i for i in items if i["exercise_id"] == 10)
-        self.assertGreaterEqual(len(item["steps"]), 3)   # no single 40→60 jump
+        self.assertGreaterEqual(len(item["steps"]), 3)  # no single 40→60 jump
         previous = item["current"]
         for step in item["steps"]:
-            self.assertGreater(step, previous)           # strictly ascending
-            self.assertLess(step - previous, 20)         # each rung < the raw gap
+            self.assertGreater(step, previous)  # strictly ascending
+            self.assertLess(step - previous, 20)  # each rung < the raw gap
             previous = step
         self.assertEqual(item["steps"][-1], item["peak_weight"])
 
@@ -285,9 +277,7 @@ class TrendValidityTests(unittest.TestCase):
             (TODAY - timedelta(days=2), 78.6),
             (TODAY, 79.0),
         ]
-        self.assertIsNone(
-            coach_features.weight_trend_per_week(points, TODAY, since=phase_start)
-        )
+        self.assertIsNone(coach_features.weight_trend_per_week(points, TODAY, since=phase_start))
         # Without the boundary the same points give a number.
         self.assertIsNotNone(coach_features.weight_trend_per_week(points, TODAY))
 
@@ -301,7 +291,9 @@ class TrendValidityTests(unittest.TestCase):
         self.assertAlmostEqual(trend, -0.4, places=1)
 
     def test_matrix_asks_for_measurements_instead_of_advising(self) -> None:
-        state = dict(coach_state.DEFAULT_STATE, phase_started=(TODAY - timedelta(days=1)).isoformat())
+        state = dict(
+            coach_state.DEFAULT_STATE, phase_started=(TODAY - timedelta(days=1)).isoformat()
+        )
         params = coach_state.phase_params(state)
         weights = [
             {"entry_date": (TODAY - timedelta(days=27)).isoformat(), "weight": 77.25},
@@ -379,17 +371,17 @@ class NutritionMatrixTests(unittest.TestCase):
     def test_bulk_waist_creep_pauses_the_surplus(self) -> None:
         state = self._state(phase="lean_bulk", waist_base_cm=84.0)
         weights = [
-            {"entry_date": (TODAY - timedelta(days=offset)).isoformat(),
-             "weight": 80.0 + (21 - offset) * 0.02}
+            {
+                "entry_date": (TODAY - timedelta(days=offset)).isoformat(),
+                "weight": 80.0 + (21 - offset) * 0.02,
+            }
             for offset in range(21, -1, -1)
         ]
         waists = [
             {"entry_date": (TODAY - timedelta(days=8)).isoformat(), "waist": 85.2},
             {"entry_date": (TODAY - timedelta(days=1)).isoformat(), "waist": 85.4},
         ]
-        result = coach_features.nutrition_matrix(
-            state, self._params(state), weights, waists, TODAY
-        )
+        result = coach_features.nutrition_matrix(state, self._params(state), weights, waists, TODAY)
         self.assertTrue(any("паузу набора" in line for line in result["lines"]))
 
     def test_bulk_waist_at_limit_is_a_hard_signal(self) -> None:
@@ -408,9 +400,7 @@ class NutritionMatrixTests(unittest.TestCase):
         old_weights = [
             {"entry_date": (TODAY - timedelta(days=20)).isoformat(), "weight": 79.0},
         ]
-        result = coach_features.nutrition_matrix(
-            state, self._params(state), old_weights, [], TODAY
-        )
+        result = coach_features.nutrition_matrix(state, self._params(state), old_weights, [], TODAY)
         self.assertTrue(any("устарел" in line for line in result["lines"]))
         self.assertFalse(any("ккал" in line for line in result["lines"] if "−100" in line))
 
@@ -418,7 +408,7 @@ class NutritionMatrixTests(unittest.TestCase):
 class MeasurementRenderTests(unittest.TestCase):
     def test_drops_garbage_and_lists_waist(self) -> None:
         weights = [
-            {"entry_date": "2026-08-01", "weight": 22.0},   # logging noise
+            {"entry_date": "2026-08-01", "weight": 22.0},  # logging noise
             {"entry_date": "2026-08-10", "weight": 79.0},
         ]
         waists = [{"entry_date": "2026-08-10", "waist": 84.0}]
@@ -437,28 +427,45 @@ class AdherenceStatsTests(unittest.TestCase):
         workout["data"]["recommendation"] = {
             "schema": 1,
             "exercises": [
-                {"exercise_id": 18, "name": "Жим в тренажере",
-                 "sets": [{"reps": 10, "weight": 50}] * 3},
-                {"exercise_id": 15, "name": "Сгибания ног",
-                 "sets": [{"reps": 12, "weight": 30}] * 2},
+                {
+                    "exercise_id": 18,
+                    "name": "Жим в тренажере",
+                    "sets": [{"reps": 10, "weight": 50}] * 3,
+                },
+                {
+                    "exercise_id": 15,
+                    "name": "Сгибания ног",
+                    "sets": [{"reps": 12, "weight": 30}] * 2,
+                },
             ],
         }
         exercises = []
         if fact_first:
             # Recorded under the duplicate id 1 — must match plan id 18 via alias.
-            exercises.append({"exercise_id": 1, "name": "Жим гор.",
-                              "sets": [{"reps": 10, "weight": 50}] * fact_first})
+            exercises.append(
+                {
+                    "exercise_id": 1,
+                    "name": "Жим гор.",
+                    "sets": [{"reps": 10, "weight": 50}] * fact_first,
+                }
+            )
         if include_second:
-            exercises.append({"exercise_id": 15, "name": "Сгибания ног",
-                              "sets": [{"reps": 12, "weight": 30}] * 2})
+            exercises.append(
+                {
+                    "exercise_id": 15,
+                    "name": "Сгибания ног",
+                    "sets": [{"reps": 12, "weight": 30}] * 2,
+                }
+            )
         workout["data"]["exercises"] = exercises
         return workout
 
     def test_aggregates_pct_and_skips_with_alias_matching(self) -> None:
         workouts = [
             self._planned_workout((TODAY - timedelta(days=2)).isoformat()),
-            self._planned_workout((TODAY - timedelta(days=9)).isoformat(),
-                                  fact_first=4, include_second=True),
+            self._planned_workout(
+                (TODAY - timedelta(days=9)).isoformat(), fact_first=4, include_second=True
+            ),
             self._planned_workout((TODAY - timedelta(days=60)).isoformat()),  # вне окна
         ]
         stats = coach_features.adherence_stats(workouts, TODAY)
@@ -483,9 +490,9 @@ class PhaseSummaryTests(unittest.TestCase):
         started, ended = date(2026, 8, 1), date(2026, 8, 28)  # 4 weeks
         workouts = [
             _workout("2026-08-05", [(8, [(100, 10)] * 3)]),
-            _workout("2026-08-12", [(8, [(105, 10)] * 3)]),   # PR in range
+            _workout("2026-08-12", [(8, [(105, 10)] * 3)]),  # PR in range
             _workout("2026-08-19", [(8, [(105, 10)] * 3)]),
-            _workout("2026-07-01", [(8, [(90, 10)] * 3)]),    # before the phase
+            _workout("2026-07-01", [(8, [(90, 10)] * 3)]),  # before the phase
         ]
         weights = [
             {"entry_date": "2026-07-30", "weight": 79.0},
@@ -496,8 +503,13 @@ class PhaseSummaryTests(unittest.TestCase):
             {"entry_date": "2026-08-26", "waist": 84.5},
         ]
         summary = coach_features.phase_summary(
-            workouts, weights, waists, CATALOG,
-            phase="cut_recomp", started=started, ended=ended,
+            workouts,
+            weights,
+            waists,
+            CATALOG,
+            phase="cut_recomp",
+            started=started,
+            ended=ended,
         )
         self.assertEqual(summary["workouts"], 3)
         self.assertEqual(summary["weight_start"], 79.0)
@@ -515,8 +527,8 @@ class PhaseSummaryTests(unittest.TestCase):
 
     def test_pr_dates_exclude_the_baseline_session(self) -> None:
         workouts = [
-            _workout("2026-08-10", [(8, [(105, 10)])]),   # improvement
-            _workout("2026-08-01", [(8, [(100, 10)])]),   # baseline
+            _workout("2026-08-10", [(8, [(105, 10)])]),  # improvement
+            _workout("2026-08-01", [(8, [(100, 10)])]),  # baseline
         ]
         summary = coach_features.exercise_summaries(workouts, CATALOG, TODAY)[0]
         self.assertEqual(summary["pr_dates"], ["2026-08-10"])
@@ -528,7 +540,7 @@ class GroupTargetTests(unittest.TestCase):
         self.assertEqual(targets["грудь"], (6, 8))
         self.assertEqual(targets["спина"], (6, 8))
         self.assertEqual(targets["квадрицепс/ягодичные"], (6, 8))
-        self.assertEqual(targets["дельты"], (6, 12))     # small groups stay fixed
+        self.assertEqual(targets["дельты"], (6, 12))  # small groups stay fixed
         self.assertEqual(targets["бицепс бедра"], (5, 10))
         self.assertEqual(set(targets), set(coach_features.MUSCLE_GROUPS))
 
@@ -545,11 +557,9 @@ class WeightRangeTests(unittest.TestCase):
         workouts = [
             _workout("2026-08-10", [(18, [(50, 10), (55, 8)])]),
             _workout("2026-07-20", [(1, [(45, 12)])]),
-            _workout("2026-01-01", [(18, [(70, 10)])]),   # far outside 8 weeks
+            _workout("2026-01-01", [(18, [(70, 10)])]),  # far outside 8 weeks
         ]
-        self.assertEqual(
-            coach_features.recent_weight_range(workouts, 18, TODAY), (45.0, 55.0)
-        )
+        self.assertEqual(coach_features.recent_weight_range(workouts, 18, TODAY), (45.0, 55.0))
         self.assertIsNone(coach_features.recent_weight_range(workouts, 9, TODAY))
 
 
@@ -570,13 +580,15 @@ class HoldingPhaseMatrixTests(unittest.TestCase):
         params = dict(coach_state.PHASE_DEFAULTS["cut_recomp"], rate_kg_per_week=rate)
         params["phase"] = "cut_recomp"
         weights = self._points(
-            ("2026-07-25", 79.0), ("2026-07-28", 79.1), ("2026-08-01", 78.9),
-            ("2026-08-05", 79.0), ("2026-08-09", 79.1), ("2026-08-13", 79.0),
+            ("2026-07-25", 79.0),
+            ("2026-07-28", 79.1),
+            ("2026-08-01", 78.9),
+            ("2026-08-05", 79.0),
+            ("2026-08-09", 79.1),
+            ("2026-08-13", 79.0),
             ("2026-08-15", 79.0),
         )
-        return coach_features.nutrition_matrix(
-            state, params, weights, [], date(2026, 8, 16)
-        )
+        return coach_features.nutrition_matrix(state, params, weights, [], date(2026, 8, 16))
 
     def test_holding_phase_does_not_ask_to_cut_calories(self):
         lines = " ".join(self._matrix((-0.10, 0.10))["lines"])

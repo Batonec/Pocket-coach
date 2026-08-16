@@ -9,7 +9,7 @@ enum TrainerAPIError: LocalizedError {
 
     var statusCode: Int? {
         switch self {
-        case let .server(status, _):
+        case .server(let status, _):
             status
         default:
             nil
@@ -22,9 +22,9 @@ enum TrainerAPIError: LocalizedError {
             "Некорректный адрес backend"
         case .invalidResponse:
             "Backend вернул неожиданный ответ"
-        case let .server(status, reason):
+        case .server(let status, let reason):
             reason.isEmpty ? "Ошибка backend: \(status)" : reason
-        case let .decoding(message):
+        case .decoding(let message):
             "Не удалось прочитать ответ backend: \(message)"
         case .timeout:
             "Сервер не ответил вовремя"
@@ -109,7 +109,9 @@ final class APIClient {
         try await delete("/api/workouts/\(id)")
     }
 
-    func saveBodyWeight(entryDate: String, weight: Double) async throws -> BodyWeightMutationResponse {
+    func saveBodyWeight(entryDate: String, weight: Double) async throws
+        -> BodyWeightMutationResponse
+    {
         try await post(
             "/api/body-weights",
             body: BodyWeightSaveRequest(entryDate: entryDate, weight: weight, notes: nil)
@@ -149,7 +151,8 @@ final class APIClient {
     }
 
     func dismissCoachSignal(instanceKey: String) async throws -> CoachSignalDismissResponse {
-        try await post("/api/coach/signals/dismiss", body: SignalDismissRequest(instanceKey: instanceKey))
+        try await post(
+            "/api/coach/signals/dismiss", body: SignalDismissRequest(instanceKey: instanceKey))
     }
 
     /// Force-regenerate. Synchronous on the server (10–40s); construct this client
@@ -162,11 +165,15 @@ final class APIClient {
         try await request(path, method: "GET", body: Optional<Data>.none)
     }
 
-    private func post<Body: Encodable, Response: Decodable>(_ path: String, body: Body) async throws -> Response {
+    private func post<Body: Encodable, Response: Decodable>(_ path: String, body: Body) async throws
+        -> Response
+    {
         try await request(path, method: "POST", body: encoder.encode(body))
     }
 
-    private func put<Body: Encodable, Response: Decodable>(_ path: String, body: Body) async throws -> Response {
+    private func put<Body: Encodable, Response: Decodable>(_ path: String, body: Body) async throws
+        -> Response
+    {
         try await request(path, method: "PUT", body: encoder.encode(body))
     }
 
@@ -225,7 +232,8 @@ final class APIClient {
             base.deleteLastPathComponent()
         }
 
-        return base.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+        return base.appendingPathComponent(
+            path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
     }
 }
 

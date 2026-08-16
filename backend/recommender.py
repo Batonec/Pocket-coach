@@ -10,6 +10,7 @@ The public entry point is :func:`generate`, which takes the user's workout
 history (as returned by ``MiniAppStore.list_workouts``) plus the exercise
 catalog and returns a validated, schema-shaped recommendation dict.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,14 +18,14 @@ import os
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import coach_features
 import coach_prompts
 import coach_state
-
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -58,7 +59,7 @@ MAX_REPS = 100
 MAX_WEIGHT = 1000.0
 MAX_EXERCISES = 10
 MAX_SETS_PER_EXERCISE = 12
-MAX_REST_DAYS = 4   # rest_days is clamped to 0–4 silently, never reprompted
+MAX_REST_DAYS = 4  # rest_days is clamped to 0–4 silently, never reprompted
 
 # Raw history shown to the model; everything older is covered by the computed
 # per-exercise summaries (the prompt must not grow from the feature work).
@@ -75,7 +76,8 @@ _EFFORT_MARK = {"easy": "-", "ok": "", "hard": "+"}
 CATALOG_SEMANTICS: dict[int, str] = {
     18: "рычажный жим сидя от груди, горизонтальный — грудь (вся), вторично трицепс и передняя дельта",
     17: "пек-дек «бабочка» — изоляция груди",
-    9: "РЫЧАЖНАЯ вертикальная тяга (хаммер) с двумя сходящимися ручками, имитация подтягиваний — широчайшие, вторично бицепс",
+    9: "РЫЧАЖНАЯ вертикальная тяга (хаммер) с двумя сходящимися ручками, имитация "
+    "подтягиваний — широчайшие, вторично бицепс",
     10: "рычажная горизонтальная тяга (хаммер) — толщина спины (середина трапеции, ромбовидные), вторично бицепс",
     13: "махи в тренажёре с упором в локти, сидя — средняя дельта",
     19: "тренажёр обратных махов (сидя, разведение рук назад) — задняя дельта. Шаг стека 2.5 кг",
@@ -145,9 +147,7 @@ def load_profile(path: Path | str | None) -> dict[str, Any] | None:
     return raw
 
 
-def update_profile_block(
-    path: Path | str | None, block: str, text: str | None
-) -> dict[str, Any]:
+def update_profile_block(path: Path | str | None, block: str, text: str | None) -> dict[str, Any]:
     """Replace one prose block of coach_profile.json (or delete it when `text`
     is empty). This is the write path for the Coach MCP tool — the profile is
     personal data living only next to the DB, so remote edits go through here
@@ -164,9 +164,7 @@ def update_profile_block(
             "Профиль не найден или сломан — проверь coach_profile.json руками"
         ) from exc
     if not isinstance(raw, dict) or not isinstance(raw.get("blocks"), dict):
-        raise RecommendationError(
-            "Профиль без blocks{} — проверь coach_profile.json руками"
-        )
+        raise RecommendationError("Профиль без blocks{} — проверь coach_profile.json руками")
     name = str(block).strip()
     if not name:
         raise RecommendationError("Не задано имя блока профиля")
@@ -175,9 +173,7 @@ def update_profile_block(
     if not cleaned and name not in blocks:
         raise RecommendationError(f"Блока «{name}» нет в профиле — удалять нечего")
 
-    backup = path.with_name(
-        f"{path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
-    )
+    backup = path.with_name(f"{path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
     backup.write_text(original, "utf-8")
     if cleaned:
         blocks[name] = cleaned
@@ -296,7 +292,10 @@ def _plan_adherence_report(workouts: list[dict[str, Any]]) -> str | None:
         if extras:
             deviations.append("сверх плана: " + ", ".join(filter(None, extras)))
 
-        summary = f"Последняя тренировка по твоему плану ({workout.get('workout_date')}): {done}/{total} плановых подходов"
+        summary = (
+            f"Последняя тренировка по твоему плану ({workout.get('workout_date')}): "
+            f"{done}/{total} плановых подходов"
+        )
         if deviations:
             summary += "; отклонения: " + "; ".join(deviations[:4])
         return summary + "."
@@ -306,9 +305,7 @@ def _plan_adherence_report(workouts: list[dict[str, Any]]) -> str | None:
 # --------------------------------------------------------------------------- #
 # Prompt building
 # --------------------------------------------------------------------------- #
-def _serialize_workout(
-    workout: dict[str, Any], names_by_id: dict[int, str] | None = None
-) -> str:
+def _serialize_workout(workout: dict[str, Any], names_by_id: dict[int, str] | None = None) -> str:
     data = workout.get("data", {}) or {}
     load_type = data.get("load_type") or "?"
     parts: list[str] = []
@@ -439,9 +436,7 @@ def _render_phase_policy(state: dict[str, Any] | None = None) -> str:
                 else _format_range(params.get("protein_g"))
             )
         if f"{prefix}_ceiling_weight_kg" in _PHASE_POLICY_SLOTS:
-            values[f"{prefix}_ceiling_weight_kg"] = _format_number(
-                params.get("ceiling_weight_kg")
-            )
+            values[f"{prefix}_ceiling_weight_kg"] = _format_number(params.get("ceiling_weight_kg"))
     return coach_prompts.render(_PHASE_POLICY_TEMPLATE, **values)
 
 
@@ -499,9 +494,7 @@ def _build_user_prompt(
     # --- explicit context block, always the first thing the model reads ------
     week_label = f"неделя блока {week}"
     if position["deload_week"]:
-        week_label += _block(
-            "deload_week_label", weeks=str(params.get("deload_every_weeks"))
-        )
+        week_label += _block("deload_week_label", weeks=str(params.get("deload_every_weeks")))
     context_lines = [
         _block(
             "context_today",
@@ -541,9 +534,7 @@ def _build_user_prompt(
     matrix = coach_features.nutrition_matrix(state, params, body_weights, waists, today)
     nutrition_chunk = list(measurement_lines)
     if matrix["lines"]:
-        nutrition_chunk.append(
-            _block("nutrition_matrix", lines="; ".join(matrix["lines"]))
-        )
+        nutrition_chunk.append(_block("nutrition_matrix", lines="; ".join(matrix["lines"])))
     if matrix["goal"]:
         nutrition_chunk.append(_block("nutrition_goal", goal=matrix["goal"]))
     if nutrition_chunk:
@@ -552,9 +543,7 @@ def _build_user_prompt(
     summaries = coach_features.exercise_summaries(workouts, catalog or [], today)
     if summaries:
         chunks.append(
-            _block("summaries_header")
-            + "\n"
-            + coach_features.render_exercise_summaries(summaries)
+            _block("summaries_header") + "\n" + coach_features.render_exercise_summaries(summaries)
         )
 
     stall = coach_features.stall_report(
@@ -578,9 +567,7 @@ def _build_user_prompt(
 
     ramp_lines = coach_features.comeback_ramp(workouts, catalog or [], today)
     if ramp_lines:
-        chunks.append(
-            _block("comeback_ramp_header") + "\n" + "\n".join(ramp_lines)
-        )
+        chunks.append(_block("comeback_ramp_header") + "\n" + "\n".join(ramp_lines))
 
     discipline_lines: list[str] = []
     discipline = coach_features.render_adherence_stats(
@@ -602,7 +589,13 @@ def _build_user_prompt(
 
 
 _RU_WEEKDAYS = (
-    "понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье",
+    "понедельник",
+    "вторник",
+    "среда",
+    "четверг",
+    "пятница",
+    "суббота",
+    "воскресенье",
 )
 
 
@@ -693,15 +686,15 @@ def _fetch_anthropic(
     attempt = 0
     while True:
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            # Схема не пользовательская: request собирается тут же из константы
+            # API_URL, подставить file:// или другую схему некому.
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
                 return response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             retryable = exc.code in RETRYABLE_STATUS
             if not retryable or attempt >= max_retries:
                 detail = exc.read().decode("utf-8", "replace")[:300]
-                raise RecommendationError(
-                    f"Claude API вернул ошибку {exc.code}: {detail}"
-                ) from exc
+                raise RecommendationError(f"Claude API вернул ошибку {exc.code}: {detail}") from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             if attempt >= max_retries:
                 if isinstance(exc, TimeoutError) or isinstance(
@@ -709,10 +702,8 @@ def _fetch_anthropic(
                 ):
                     raise RecommendationError("Claude API не ответил вовремя") from exc
                 reason = getattr(exc, "reason", exc)
-                raise RecommendationError(
-                    f"Не удалось связаться с Claude API: {reason}"
-                ) from exc
-        sleep(backoff * (2 ** attempt))
+                raise RecommendationError(f"Не удалось связаться с Claude API: {reason}") from exc
+        sleep(backoff * (2**attempt))
         attempt += 1
 
 
@@ -759,9 +750,7 @@ def _request_model(
         "max_tokens": max_tokens,
         # The system prompt (catalog + profile + policy) is stable between
         # calls — cache it so retries/reprompts/bursts pay ~10% for it.
-        "system": [
-            {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
-        ],
+        "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         "messages": _cacheable_messages(messages),
     }
     output_config: dict[str, Any] = {}
@@ -974,9 +963,7 @@ def _semantic_violations(
         allowed = ceiling["last_working"]
         for workout_set in exercise["sets"]:
             weight = workout_set["weight"]
-            too_hard = (
-                weight < allowed - 1e-9 if ceiling["inverted"] else weight > allowed + 1e-9
-            )
+            too_hard = weight < allowed - 1e-9 if ceiling["inverted"] else weight > allowed + 1e-9
             if too_hard:
                 what = "противовес" if ceiling["inverted"] else "вес"
                 violations.append(
@@ -993,9 +980,7 @@ def _semantic_violations(
         for group, share in (
             coach_features.EFFECTIVE_SETS.get(exercise["exercise_id"]) or {}
         ).items():
-            plan_coverage[group] = plan_coverage.get(group, 0.0) + share * len(
-                exercise["sets"]
-            )
+            plan_coverage[group] = plan_coverage.get(group, 0.0) + share * len(exercise["sets"])
     for group in (*coach_features.BIG_GROUPS, "бицепс бедра"):
         if recent_volume[group]["effective"] == 0 and not plan_coverage.get(group):
             violations.append(
@@ -1026,14 +1011,11 @@ def _resolve_violations(
         allowed = ceiling["last_working"]
         for workout_set in exercise["sets"]:
             weight = workout_set["weight"]
-            too_hard = (
-                weight < allowed - 1e-9 if ceiling["inverted"] else weight > allowed + 1e-9
-            )
+            too_hard = weight < allowed - 1e-9 if ceiling["inverted"] else weight > allowed + 1e-9
             if too_hard:
                 workout_set["weight"] = allowed
                 adjustments.append(
-                    f"{exercise['name']}: {weight:g} → {allowed:g} кг (доперерывный "
-                    "рабочий)"
+                    f"{exercise['name']}: {weight:g} → {allowed:g} кг (доперерывный рабочий)"
                 )
 
     notes: list[str] = []
@@ -1046,14 +1028,13 @@ def _resolve_violations(
     if remaining:
         notes.append(
             "**Проверка методики:** сервер не смог согласовать с моделью: "
-            + "; ".join(remaining) + " — учти при выполнении."
+            + "; ".join(remaining)
+            + " — учти при выполнении."
         )
     if notes:
         rationale = str(recommendation.get("rationale", "")).rstrip()
         appendix = "\n\n".join(notes)
-        recommendation["rationale"] = (
-            f"{rationale}\n\n{appendix}" if rationale else appendix
-        )
+        recommendation["rationale"] = f"{rationale}\n\n{appendix}" if rationale else appendix
     return adjustments
 
 
@@ -1102,8 +1083,13 @@ def generate_with_trace(
     state = state if state is not None else coach_state.load_state(None)
     system = _build_system_prompt(catalog, profile, state, strategy)
     user = _build_user_prompt(
-        workouts, body_weights, today, history_limit,
-        catalog=catalog, state=state, waists=waists,
+        workouts,
+        body_weights,
+        today,
+        history_limit,
+        catalog=catalog,
+        state=state,
+        waists=waists,
     )
     schema = _build_schema(catalog)
 
@@ -1181,9 +1167,7 @@ def _coach_context(
     instead of hardcoding the policy ranges."""
     params = coach_state.phase_params(state)
     position = coach_state.cycle_position(state, workouts, today)
-    maintenance_sets = (
-        params.get("sets_per_group") if params["phase"] == "maintenance" else None
-    )
+    maintenance_sets = params.get("sets_per_group") if params["phase"] == "maintenance" else None
     if position["deload_week"]:
         week_target = params.get("ramp_start")
     else:
@@ -1302,9 +1286,7 @@ def _build_report_prompt(
             phase=params["phase"],
             title=str(params["title"]),
             week=str(position["block_week"]),
-            deload=_block(
-                "report_deload_yes" if position["deload_week"] else "report_deload_no"
-            ),
+            deload=_block("report_deload_yes" if position["deload_week"] else "report_deload_no"),
             calories=_format_range(params["calories"]),
             rate=str(params["rate_text"]),
             protein=_format_range(params["protein_g"]),
@@ -1325,9 +1307,7 @@ def _build_report_prompt(
         if position["deload_week"]
         else coach_state.weekly_volume_target(state, position["cycle_week"])
     )
-    maintenance_sets = (
-        params.get("sets_per_group") if params["phase"] == "maintenance" else None
-    )
+    maintenance_sets = params.get("sets_per_group") if params["phase"] == "maintenance" else None
     chunks.append(
         _block("report_volume_header")
         + "\n"
@@ -1346,9 +1326,7 @@ def _build_report_prompt(
         if s["days_since_pr"] < days
     ]
     chunks.append(
-        _block("report_prs_header") + "\n" + "\n".join(prs)
-        if prs
-        else _block("report_no_prs")
+        _block("report_prs_header") + "\n" + "\n".join(prs) if prs else _block("report_no_prs")
     )
 
     matrix = coach_features.nutrition_matrix(state, params, body_weights, waists, today)

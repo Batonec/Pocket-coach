@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import TrainerIOS
 
 @MainActor
@@ -32,7 +33,7 @@ final class VoiceLoggingTests: XCTestCase {
                         name: "Разгибания ног",
                         note: nil,
                         sets: Array(repeating: RecommendedSet(reps: 12, weight: 45), count: 3)
-                    )
+                    ),
                 ]
             )
         }
@@ -51,9 +52,11 @@ final class VoiceLoggingTests: XCTestCase {
         XCTAssertEqual(store.draft.workoutDate, DateTools.localTodayISO())
         XCTAssertEqual(store.draft.exercises.count, 1)
         XCTAssertEqual(store.draft.exercises[0].exerciseID, 8)
-        XCTAssertEqual(store.draft.exercises[0].sets, [
-            DraftSet(reps: 10, weight: 80, effort: .hard, notes: nil)
-        ])
+        XCTAssertEqual(
+            store.draft.exercises[0].sets,
+            [
+                DraftSet(reps: 10, weight: 80, effort: .hard, notes: nil)
+            ])
     }
 
     func testSecondSetContinuesTheSameWorkout() throws {
@@ -121,8 +124,9 @@ final class VoiceLoggingTests: XCTestCase {
     func testUnknownExerciseIsRejectedWithTheSpokenFragment() {
         let store = makeStore()
 
-        XCTAssertThrowsError(try store.logVoiceSet(phrase: "становая тяга штанги 100 на 5")) { error in
-            guard case let .unknownExercise(spoken) = (error as? VoiceCommandError)?.kind else {
+        XCTAssertThrowsError(try store.logVoiceSet(phrase: "становая тяга штанги 100 на 5")) {
+            error in
+            guard case .unknownExercise(let spoken) = (error as? VoiceCommandError)?.kind else {
                 return XCTFail("Ожидалась unknownExercise, получено \(error)")
             }
             XCTAssertTrue(spoken.contains("становая"))
@@ -134,7 +138,7 @@ final class VoiceLoggingTests: XCTestCase {
         let store = makeStore()
 
         XCTAssertThrowsError(try store.logVoiceSet(phrase: "тяга 55 на 12")) { error in
-            guard case let .ambiguousExercise(names) = (error as? VoiceCommandError)?.kind else {
+            guard case .ambiguousExercise(let names) = (error as? VoiceCommandError)?.kind else {
                 return XCTFail("Ожидалась ambiguousExercise, получено \(error)")
             }
             XCTAssertEqual(Set(names), ["Тяга вертикальная", "Тяга горизонтальная"])
@@ -156,11 +160,13 @@ final class VoiceLoggingTests: XCTestCase {
         let store = makeStore()
         store.draft = DraftWorkout(
             workoutDate: "2026-08-01",
-            exercises: [DraftExercise(
-                exerciseID: 8,
-                exerciseName: "Жим ногами",
-                sets: [DraftSet(reps: 10, weight: 80, effort: nil, notes: nil)]
-            )],
+            exercises: [
+                DraftExercise(
+                    exerciseID: 8,
+                    exerciseName: "Жим ногами",
+                    sets: [DraftSet(reps: 10, weight: 80, effort: nil, notes: nil)]
+                )
+            ],
             editingWorkoutID: nil,
             editingClientID: nil,
             lastLoggedExerciseID: 8,
@@ -178,11 +184,13 @@ final class VoiceLoggingTests: XCTestCase {
         let yesterday = DateTools.iso(from: Date().addingTimeInterval(-24 * 3600))
         store.draft = DraftWorkout(
             workoutDate: yesterday,
-            exercises: [DraftExercise(
-                exerciseID: 8,
-                exerciseName: "Жим ногами",
-                sets: [DraftSet(reps: 10, weight: 80, effort: nil, notes: nil)]
-            )],
+            exercises: [
+                DraftExercise(
+                    exerciseID: 8,
+                    exerciseName: "Жим ногами",
+                    sets: [DraftSet(reps: 10, weight: 80, effort: nil, notes: nil)]
+                )
+            ],
             editingWorkoutID: nil,
             editingClientID: nil,
             lastLoggedExerciseID: 8,
@@ -322,7 +330,8 @@ final class VoiceLoggingTests: XCTestCase {
         let undone = try store.undoLastVoiceSet()
 
         XCTAssertEqual(undone.language, .en)
-        XCTAssertEqual(undone.spokenSummary, "Removed Leg press, 80 by 10. The workout is empty again.")
+        XCTAssertEqual(
+            undone.spokenSummary, "Removed Leg press, 80 by 10. The workout is empty again.")
     }
 
     func testEnglishErrorsAreSpokenInEnglish() {

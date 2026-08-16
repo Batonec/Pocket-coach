@@ -3,6 +3,7 @@
 .venv/
 __pycache__/
 *.pyc
+.ruff_cache/
 backend/data/
 backend/deploy/target.local
 vision/

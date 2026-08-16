@@ -8,8 +8,8 @@ import mimetypes
 import os
 import threading
 import time
-from http.cookies import SimpleCookie
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -19,7 +19,6 @@ import coach_signals
 import coach_state
 import recommender
 from backend_store import MiniAppStore
-
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "static"))).resolve()
@@ -34,8 +33,12 @@ DEFAULT_DEBUG_USER_LAST_NAME = os.getenv("MINIAPP_DEFAULT_DEBUG_USER_LAST_NAME",
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(DATA_DIR / "trainer.db")))
 # Athlete profile for the coach prompt: personal/medical context, lives next to
 # the DB on the server only (never in the public repo).
-COACH_PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
-COACH_STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))
+COACH_PROFILE_PATH = Path(
+    os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json"))
+)
+COACH_STRATEGY_PATH = Path(
+    os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md"))
+)
 # Mutable coaching state (preparation phase, waist limits) —
 # same location policy as the profile; switched via the Coach MCP tools.
 COACH_STATE_PATH = coach_state.default_state_path(DB_PATH)
@@ -174,14 +177,15 @@ def iter_watched_files() -> list[Path]:
     return [
         path
         for path in sorted(BASE_DIR.rglob("*"))
-        if path.is_file()
-        and path.suffix in WATCHED_EXTENSIONS
-        and "__pycache__" not in path.parts
+        if path.is_file() and path.suffix in WATCHED_EXTENSIONS and "__pycache__" not in path.parts
     ]
 
 
 def build_dev_version() -> dict[str, object]:
-    hasher = hashlib.sha1()
+    # sha1 здесь — не подпись, а дешёвый отпечаток «путь + mtime» для
+    # cache-busting в деве. usedforsecurity=False говорит это и линтеру,
+    # и FIPS-сборкам OpenSSL, где иначе sha1 недоступен вовсе.
+    hasher = hashlib.sha1(usedforsecurity=False)
     latest_mtime_ns = 0
     watched_files = 0
 
@@ -446,7 +450,10 @@ class MiniAppHandler(BaseHTTPRequestHandler):
                 if user is None:
                     self._send_json(
                         HTTPStatus.UNAUTHORIZED,
-                        {"ok": False, "reason": f"Configured iOS user #{native_user_id} was not found."},
+                        {
+                            "ok": False,
+                            "reason": f"Configured iOS user #{native_user_id} was not found.",
+                        },
                     )
                     return
 
@@ -624,7 +631,10 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             if matched is not None and matched["severity"] == "critical":
                 self._send_json(
                     HTTPStatus.CONFLICT,
-                    {"ok": False, "reason": "Критический сигнал не откладывается — он гаснет только действием"},
+                    {
+                        "ok": False,
+                        "reason": "Критический сигнал не откладывается — он гаснет только действием",
+                    },
                     extra_headers=headers,
                 )
                 return
@@ -635,7 +645,8 @@ class MiniAppHandler(BaseHTTPRequestHandler):
                     snooze_until: int | None = now_ts + int(snooze_hours) * 3600
                 except (TypeError, ValueError):
                     self._send_json(
-                        HTTPStatus.BAD_REQUEST, {"ok": False, "reason": "snooze_hours must be an integer"}
+                        HTTPStatus.BAD_REQUEST,
+                        {"ok": False, "reason": "snooze_hours must be an integer"},
                     )
                     return
             else:
@@ -663,9 +674,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
                 return
 
             marked = STORE.mark_coach_report_read(int(user["id"]))
-            self._send_json(
-                HTTPStatus.OK, {"ok": True, "read": marked}, extra_headers=headers
-            )
+            self._send_json(HTTPStatus.OK, {"ok": True, "read": marked}, extra_headers=headers)
             return
 
         if path == "/api/recommendations/refresh":
@@ -683,7 +692,10 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             if EXERCISE_CATALOG is None:
                 self._send_json(
                     HTTPStatus.SERVICE_UNAVAILABLE,
-                    {"ok": False, "reason": "Рекомендации недоступны: каталог упражнений не загружен"},
+                    {
+                        "ok": False,
+                        "reason": "Рекомендации недоступны: каталог упражнений не загружен",
+                    },
                 )
                 return
 
@@ -789,7 +801,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
             entry = STORE.delete_waist(int(user["id"]), waist_id)
             if entry is None:
-                self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Waist entry not found"})
+                self._send_json(
+                    HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Waist entry not found"}
+                )
                 return
 
             trigger_recommendation_async(int(user["id"]))
@@ -815,7 +829,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
             entry = STORE.delete_body_weight(int(user["id"]), body_weight_id)
             if entry is None:
-                self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Body weight entry not found"})
+                self._send_json(
+                    HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Body weight entry not found"}
+                )
                 return
 
             trigger_recommendation_async(int(user["id"]))
@@ -878,9 +894,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
                 "stale": False,
             }
         latest = STORE.get_latest_workout_id(user_id)
-        stale = bool(
-            rec.get("status") == "ready" and rec.get("based_on_workout_id") != latest
-        )
+        stale = bool(rec.get("status") == "ready" and rec.get("based_on_workout_id") != latest)
         return {"ok": True, "user": user, "stale": stale, **rec}
 
     def _send_json(

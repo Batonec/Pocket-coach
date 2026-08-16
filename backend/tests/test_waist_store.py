@@ -10,7 +10,7 @@ from support import MINIAPP_DIR, sample_workout_payload
 if str(MINIAPP_DIR) not in sys.path:
     sys.path.insert(0, str(MINIAPP_DIR))
 
-from backend_store import (  # noqa: E402
+from backend_store import (
     MAX_WAIST_CM,
     MIN_WAIST_CM,
     MiniAppStore,
@@ -44,15 +44,11 @@ class WaistNormalizationTests(unittest.TestCase):
         self.assertEqual(MIN_WAIST_CM, coach_features.MIN_PLAUSIBLE_WAIST_CM)
         self.assertEqual(MAX_WAIST_CM, coach_features.MAX_PLAUSIBLE_WAIST_CM)
         self.assertEqual(
-            normalize_waist_payload(
-                {"entry_date": "2026-08-14", "waist": MIN_WAIST_CM}
-            )["waist"],
+            normalize_waist_payload({"entry_date": "2026-08-14", "waist": MIN_WAIST_CM})["waist"],
             MIN_WAIST_CM,
         )
         self.assertEqual(
-            normalize_waist_payload(
-                {"entry_date": "2026-08-14", "waist": MAX_WAIST_CM}
-            )["waist"],
+            normalize_waist_payload({"entry_date": "2026-08-14", "waist": MAX_WAIST_CM})["waist"],
             MAX_WAIST_CM,
         )
 

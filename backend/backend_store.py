@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, suppress
 from datetime import date
 from pathlib import Path
 from typing import Any
-
 
 ALLOWED_LOAD_TYPES = {"heavy", "medium", "light", "deload"}
 ALLOWED_SET_EFFORTS = {"easy", "ok", "hard"}
@@ -207,7 +206,7 @@ def normalize_workout_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
     try:
         date.fromisoformat(workout_date)
     except ValueError as exc:
-        raise ValueError("workout_date must be in YYYY-MM-DD format")
+        raise ValueError("workout_date must be in YYYY-MM-DD format") from exc
 
     client_id = str(payload.get("client_id") or payload.get("id") or "").strip()
     if not client_id:
@@ -245,7 +244,7 @@ def normalize_body_weight_payload(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         date.fromisoformat(entry_date)
     except ValueError as exc:
-        raise ValueError("entry_date must be in YYYY-MM-DD format")
+        raise ValueError("entry_date must be in YYYY-MM-DD format") from exc
 
     try:
         weight = float(payload.get("weight", 0))
@@ -278,8 +277,8 @@ def normalize_waist_payload(payload: dict[str, Any]) -> dict[str, Any]:
     entry_date = str(payload.get("entry_date", "")).strip()
     try:
         date.fromisoformat(entry_date)
-    except ValueError:
-        raise ValueError("entry_date must be in YYYY-MM-DD format")
+    except ValueError as exc:
+        raise ValueError("entry_date must be in YYYY-MM-DD format") from exc
 
     try:
         waist = float(payload.get("waist", 0))
@@ -287,9 +286,7 @@ def normalize_waist_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("waist must be numeric") from exc
 
     if not (MIN_WAIST_CM <= waist <= MAX_WAIST_CM):
-        raise ValueError(
-            f"waist must be between {MIN_WAIST_CM:g} and {MAX_WAIST_CM:g} cm"
-        )
+        raise ValueError(f"waist must be between {MIN_WAIST_CM:g} and {MAX_WAIST_CM:g} cm")
 
     return {
         "entry_date": entry_date,
@@ -450,12 +447,12 @@ class MiniAppStore:
             )
             # Additive migration for DBs created before read_at existed
             # (CREATE IF NOT EXISTS cannot add a column to an existing table).
-            try:
+            with suppress(sqlite3.OperationalError):
                 connection.execute("ALTER TABLE coach_reports ADD COLUMN read_at INTEGER")
-            except sqlite3.OperationalError:
-                pass
 
-    def ensure_debug_user(self, alias: str, first_name: str = "Browser", last_name: str = "Debug") -> dict[str, Any]:
+    def ensure_debug_user(
+        self, alias: str, first_name: str = "Browser", last_name: str = "Debug"
+    ) -> dict[str, Any]:
         timestamp = utc_now()
         with self._connection() as connection:
             row = connection.execute(
@@ -608,11 +605,18 @@ class MiniAppStore:
                 # attempt silently loses the workout↔recommendation link.
                 incoming_snapshot = normalized_payload["data"].get("recommendation")
                 existing_payload = json.loads(existing["payload_json"])
-                if incoming_snapshot is not None and existing_payload.get("data", {}).get("recommendation") is None:
+                if (
+                    incoming_snapshot is not None
+                    and existing_payload.get("data", {}).get("recommendation") is None
+                ):
                     existing_payload.setdefault("data", {})["recommendation"] = incoming_snapshot
                     connection.execute(
                         "UPDATE workouts SET payload_json = ?, updated_at = ? WHERE id = ?",
-                        (json.dumps(existing_payload, ensure_ascii=False), timestamp, existing["id"]),
+                        (
+                            json.dumps(existing_payload, ensure_ascii=False),
+                            timestamp,
+                            existing["id"],
+                        ),
                     )
                     existing = connection.execute(
                         """
@@ -677,7 +681,9 @@ class MiniAppStore:
             # incoming payload lacks one: clients rebuild the payload from the
             # draft on edit and would otherwise wipe the linkage.
             if "recommendation" not in normalized_payload["data"]:
-                existing_snapshot = json.loads(existing["payload_json"]).get("data", {}).get("recommendation")
+                existing_snapshot = (
+                    json.loads(existing["payload_json"]).get("data", {}).get("recommendation")
+                )
                 if existing_snapshot is not None:
                     normalized_payload["data"]["recommendation"] = existing_snapshot
 
@@ -891,9 +897,7 @@ class MiniAppStore:
             ),
         )
 
-    def list_recommendation_log(
-        self, user_id: int, limit: int = 50
-    ) -> list[dict[str, Any]]:
+    def list_recommendation_log(self, user_id: int, limit: int = 50) -> list[dict[str, Any]]:
         """Past generations for a user, newest first (append-only journal)."""
         with self._connection() as connection:
             rows = connection.execute(
@@ -939,7 +943,9 @@ class MiniAppStore:
             ).fetchall()
         return [self._deserialize_body_weight(row) for row in rows]
 
-    def save_body_weight(self, user_id: int, payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    def save_body_weight(
+        self, user_id: int, payload: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool]:
         normalized_payload = normalize_body_weight_payload(payload)
         timestamp = utc_now()
 
@@ -1159,7 +1165,16 @@ class MiniAppStore:
                     output_tokens = excluded.output_tokens,
                     created_at = excluded.created_at
                 """,
-                (user_id, period_end, int(days), report, model, input_tokens, output_tokens, timestamp),
+                (
+                    user_id,
+                    period_end,
+                    int(days),
+                    report,
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    timestamp,
+                ),
             )
         stored = self.get_coach_report(user_id, period_end, days)
         if stored is None:
@@ -1213,9 +1228,7 @@ class MiniAppStore:
             ).fetchall()
         return {row["instance_key"]: row["snooze_until"] for row in rows}
 
-    def save_signal_snooze(
-        self, user_id: int, instance_key: str, snooze_until: int | None
-    ) -> None:
+    def save_signal_snooze(self, user_id: int, instance_key: str, snooze_until: int | None) -> None:
         timestamp = utc_now()
         with self._connection() as connection:
             connection.execute(
@@ -1229,9 +1242,7 @@ class MiniAppStore:
                 (user_id, str(instance_key), snooze_until, timestamp),
             )
 
-    def get_coach_report(
-        self, user_id: int, period_end: str, days: int
-    ) -> dict[str, Any] | None:
+    def get_coach_report(self, user_id: int, period_end: str, days: int) -> dict[str, Any] | None:
         with self._connection() as connection:
             row = connection.execute(
                 """

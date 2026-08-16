@@ -12,6 +12,7 @@ Usage:
     python3 refresh_recommendation.py            # regenerate only if stale
     python3 refresh_recommendation.py --force    # regenerate unconditionally
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,10 +24,9 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import backend_store  # noqa: E402
-import coach_state  # noqa: E402
-import recommender  # noqa: E402
-
+import backend_store
+import coach_state
+import recommender
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
@@ -69,7 +69,9 @@ def should_refresh(
 def run(store: backend_store.MiniAppStore, user_id: int, force: bool = False) -> bool:
     """Returns True if a regeneration was performed (successfully or not)."""
     rec = store.get_recommendation(user_id)
-    refresh, reason = (True, "форсировано (--force)") if force else should_refresh(rec, int(time.time()))
+    refresh, reason = (
+        (True, "форсировано (--force)") if force else should_refresh(rec, int(time.time()))
+    )
     print(f"[refresh] user {user_id}: {reason}")
     if not refresh:
         return False

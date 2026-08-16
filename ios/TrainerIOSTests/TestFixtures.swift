@@ -1,4 +1,5 @@
 import Foundation
+
 @testable import TrainerIOS
 
 enum TestFixtures {
@@ -14,7 +15,7 @@ enum TestFixtures {
         ExerciseDefinition(id: 10, name: "Тяга горизонт."),
         ExerciseDefinition(id: 17, name: "Бабочка"),
         ExerciseDefinition(id: 18, name: "Жим в тренажере"),
-        ExerciseDefinition(id: 4, name: "Подтягивания грав.")
+        ExerciseDefinition(id: 4, name: "Подтягивания грав."),
     ]
 
     static func workout(
@@ -116,7 +117,9 @@ enum TestFixtures {
 }
 
 extension UserDefaults {
-    static func isolatedTestDefaults(file: StaticString = #filePath, line: UInt = #line) -> UserDefaults {
+    static func isolatedTestDefaults(file: StaticString = #filePath, line: UInt = #line)
+        -> UserDefaults
+    {
         let suiteName = "TrainerIOSTests.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
             fatalError("Failed to create isolated defaults", file: file, line: line)

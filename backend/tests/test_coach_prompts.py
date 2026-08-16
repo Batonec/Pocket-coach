@@ -3,7 +3,7 @@ from __future__ import annotations
 import pathlib
 import unittest
 
-import support  # noqa: F401 — adds backend to sys.path
+import support
 from support import STATIC_DIR
 
 import coach_prompts
@@ -43,7 +43,6 @@ class PromptTemplateTests(unittest.TestCase):
             '{"reps": 12} и X',
         )
 
-
     def test_phase_policy_template_slots_match_the_renderer(self):
         """Every slot in phase_policy.md must be filled by _render_phase_policy
         for any phase — a new number in the prose must not ship as «{{...}}»."""
@@ -74,7 +73,6 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertNotIn("{{", built)
         self.assertNotIn("=== ПРОГРАММА", built)
 
-
     def test_every_declared_block_is_used_by_the_code(self):
         """Фрагмент, оставшийся в файле без единого вызова _block(), — мёртвый
         текст: его правят, а в промпт он не едет."""
@@ -94,9 +92,7 @@ class PromptTemplateTests(unittest.TestCase):
             saved = coach_prompts.PROMPTS_DIR
             coach_prompts.PROMPTS_DIR = pathlib.Path(tmp)
             try:
-                (pathlib.Path(tmp) / "dup.md").write_text(
-                    "## one\nA\n\n## one\nB\n", "utf-8"
-                )
+                (pathlib.Path(tmp) / "dup.md").write_text("## one\nA\n\n## one\nB\n", "utf-8")
                 with self.assertRaises(coach_prompts.PromptError):
                     coach_prompts.fragments("dup")
             finally:
@@ -107,27 +103,21 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertTrue(blocks["deload_week_label"].startswith(" — "))
         self.assertEqual(blocks["report_deload_no"], ".")
 
-
     def test_every_signal_text_is_used(self):
         """Текст баннера, объявленный и не вызванный, — мёртвый копирайт."""
         import re
 
         source = (support.MINIAPP_DIR / "coach_signals.py").read_text("utf-8")
         used = set(re.findall(r'_text\(\s*\n?\s*"([a-z_]+)"', source))
-        declared = set(
-            coach_prompts.fragments("signals", directory=coach_prompts.COPY_DIR)
-        )
+        declared = set(coach_prompts.fragments("signals", directory=coach_prompts.COPY_DIR))
         self.assertEqual(declared - used, set(), "объявлены, но не используются")
         self.assertEqual(used - declared, set(), "используются, но не объявлены")
-
 
     def test_sections_are_sliced_by_heading_not_by_number(self):
         """Атлет перенумеровывает разделы, правя документ: срез по «## 4.»
         начал бы молча отдавать не ту главу."""
         doc = "## 7. Прогрессия\nтело П\n\n## 8. Тренировочные дни\nтело Т\n"
-        body, missing = coach_prompts.document_sections(
-            doc, ["Тренировочные дни", "Прогрессия"]
-        )
+        body, missing = coach_prompts.document_sections(doc, ["Тренировочные дни", "Прогрессия"])
         self.assertEqual(missing, [])
         self.assertLess(body.index("тело Т"), body.index("тело П"))  # порядок запроса
 

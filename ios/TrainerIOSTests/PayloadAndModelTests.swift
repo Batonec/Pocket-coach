@@ -1,5 +1,6 @@
-import XCTest
 import UIKit
+import XCTest
+
 @testable import TrainerIOS
 
 final class PayloadAndModelTests: XCTestCase {
@@ -39,24 +40,24 @@ final class PayloadAndModelTests: XCTestCase {
 
     func testRecommendationResponseDecodesSnakeCaseContract() throws {
         let json = #"""
-        {
-          "ok": true,
-          "status": "ready",
-          "stale": true,
-          "based_on_workout_count": 56,
-          "model": "claude-opus-4-8",
-          "error": null,
-          "recommendation": {
-            "focus": "Верх+низ",
-            "load_type": "medium",
-            "rationale": "После перерыва — средняя нагрузка.",
-            "exercises": [
-              {"exercise_id": 8, "name": "Жим ногами", "note": "мягкий вход",
-               "sets": [{"reps": 12, "weight": 90}, {"reps": 10, "weight": 90}]}
-            ]
-          }
-        }
-        """#
+            {
+              "ok": true,
+              "status": "ready",
+              "stale": true,
+              "based_on_workout_count": 56,
+              "model": "claude-opus-4-8",
+              "error": null,
+              "recommendation": {
+                "focus": "Верх+низ",
+                "load_type": "medium",
+                "rationale": "После перерыва — средняя нагрузка.",
+                "exercises": [
+                  {"exercise_id": 8, "name": "Жим ногами", "note": "мягкий вход",
+                   "sets": [{"reps": 12, "weight": 90}, {"reps": 10, "weight": 90}]}
+                ]
+              }
+            }
+            """#
 
         let decoded = try JSONDecoder().decode(RecommendationResponse.self, from: Data(json.utf8))
 
@@ -89,11 +90,12 @@ final class PayloadAndModelTests: XCTestCase {
                     id: 8,
                     name: "Жим ногами",
                     sets: [
-                        TestFixtures.draftSet(reps: 15, weight: 80, effort: .hard, notes: "  good  "),
-                        TestFixtures.draftSet(reps: 13, weight: 90, effort: nil, notes: "   ")
+                        TestFixtures.draftSet(
+                            reps: 15, weight: 80, effort: .hard, notes: "  good  "),
+                        TestFixtures.draftSet(reps: 13, weight: 90, effort: nil, notes: "   "),
                     ]
                 ),
-                TestFixtures.draftExercise(id: 9, name: "Тяга верт.", sets: [])
+                TestFixtures.draftExercise(id: 9, name: "Тяга верт.", sets: []),
             ]
         )
 
@@ -140,7 +142,7 @@ final class PayloadAndModelTests: XCTestCase {
             from: TestFixtures.draft(exercises: [
                 TestFixtures.draftExercise(sets: [
                     TestFixtures.draftSet(reps: 10, weight: 80),
-                    TestFixtures.draftSet(reps: 10, weight: 80)
+                    TestFixtures.draftSet(reps: 10, weight: 80),
                 ])
             ]),
             recommendation: snapshot
@@ -155,52 +157,52 @@ final class PayloadAndModelTests: XCTestCase {
 
     func testAPIModelsDecodeServerSnakeCaseResponses() throws {
         let json = """
-        {
-          "ok": true,
-          "user": {
-            "id": 1,
-            "auth_source": "debug",
-            "telegram_user_id": null,
-            "username": null,
-            "email": null,
-            "first_name": "Browser",
-            "last_name": "Debug",
-            "debug_alias": "browser-default",
-            "is_default_debug_user": true,
-            "display_name": "Browser Debug"
-          },
-          "workouts": [
             {
-              "id": 10,
-              "client_id": "client-a",
-              "workout_date": "2026-05-10",
-              "plan_id": null,
-              "created_at": 100,
-              "updated_at": 110,
-              "data": {
-                "focus": null,
-                "notes": null,
-                "load_type": "medium",
-                "exercises": [
-                  {
-                    "exercise_id": 8,
-                    "name": "Жим ногами",
-                    "sets": [
+              "ok": true,
+              "user": {
+                "id": 1,
+                "auth_source": "debug",
+                "telegram_user_id": null,
+                "username": null,
+                "email": null,
+                "first_name": "Browser",
+                "last_name": "Debug",
+                "debug_alias": "browser-default",
+                "is_default_debug_user": true,
+                "display_name": "Browser Debug"
+              },
+              "workouts": [
+                {
+                  "id": 10,
+                  "client_id": "client-a",
+                  "workout_date": "2026-05-10",
+                  "plan_id": null,
+                  "created_at": 100,
+                  "updated_at": 110,
+                  "data": {
+                    "focus": null,
+                    "notes": null,
+                    "load_type": "medium",
+                    "exercises": [
                       {
-                        "set_index": 1,
-                        "reps": 15,
-                        "weight": 80,
-                        "effort": "hard",
-                        "notes": null
+                        "exercise_id": 8,
+                        "name": "Жим ногами",
+                        "sets": [
+                          {
+                            "set_index": 1,
+                            "reps": 15,
+                            "weight": 80,
+                            "effort": "hard",
+                            "notes": null
+                          }
+                        ]
                       }
                     ]
                   }
-                ]
-              }
+                }
+              ]
             }
-          ]
-        }
-        """
+            """
 
         let response = try JSONDecoder().decode(WorkoutsResponse.self, from: Data(json.utf8))
 
@@ -216,22 +218,23 @@ final class PayloadAndModelTests: XCTestCase {
 
     func testBodyWeightResponseDecodesUpsertShape() throws {
         let json = """
-        {
-          "ok": true,
-          "created": false,
-          "entry": {
-            "id": 3,
-            "user_id": 1,
-            "entry_date": "2026-05-10",
-            "weight": 81.95,
-            "notes": "Morning",
-            "created_at": 100,
-            "updated_at": 120
-          }
-        }
-        """
+            {
+              "ok": true,
+              "created": false,
+              "entry": {
+                "id": 3,
+                "user_id": 1,
+                "entry_date": "2026-05-10",
+                "weight": 81.95,
+                "notes": "Morning",
+                "created_at": 100,
+                "updated_at": 120
+              }
+            }
+            """
 
-        let response = try JSONDecoder().decode(BodyWeightMutationResponse.self, from: Data(json.utf8))
+        let response = try JSONDecoder().decode(
+            BodyWeightMutationResponse.self, from: Data(json.utf8))
 
         XCTAssertEqual(response.created, false)
         XCTAssertEqual(response.entry.entryDate, "2026-05-10")

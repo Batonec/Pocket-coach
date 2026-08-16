@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import TrainerIOS
 
 final class TrainerLogicTests: XCTestCase {
@@ -8,7 +9,9 @@ final class TrainerLogicTests: XCTestCase {
             date: "2026-05-01",
             createdAt: 100,
             updatedAt: 100,
-            exercises: [TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [TestFixtures.set()])]
+            exercises: [
+                TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [TestFixtures.set()])
+            ]
         )
         let newestSameDay = TestFixtures.workout(
             id: 4,
@@ -29,7 +32,9 @@ final class TrainerLogicTests: XCTestCase {
             date: "2026-05-04",
             createdAt: 1,
             updatedAt: 1,
-            exercises: [TestFixtures.exercise(id: 9, name: "Тяга верт.", sets: [TestFixtures.set()])]
+            exercises: [
+                TestFixtures.exercise(id: 9, name: "Тяга верт.", sets: [TestFixtures.set()])
+            ]
         )
 
         let sorted = TrainerLogic.sortWorkouts([old, newestSameDay, newerDate, createdLaterSameDay])
@@ -42,7 +47,7 @@ final class TrainerLogicTests: XCTestCase {
             TestFixtures.set(index: 1, reps: 14, weight: 60, effort: .easy),
             TestFixtures.set(index: 2, reps: 14, weight: 60, effort: .easy),
             TestFixtures.set(index: 3, reps: 13, weight: 60, effort: .easy, notes: "steady"),
-            TestFixtures.set(index: 4, reps: 12, weight: 90, effort: .hard)
+            TestFixtures.set(index: 4, reps: 12, weight: 90, effort: .hard),
         ])
 
         XCTAssertEqual(summary.parts, ["60кг ×14×2, 13 🙂", "90кг ×12 😣"])
@@ -55,19 +60,24 @@ final class TrainerLogicTests: XCTestCase {
             id: 1,
             date: "2026-05-01",
             exercises: [
-                TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [
-                    TestFixtures.set(index: 1, reps: 10, weight: 70)
-                ])
+                TestFixtures.exercise(
+                    id: 8, name: "Жим ногами",
+                    sets: [
+                        TestFixtures.set(index: 1, reps: 10, weight: 70)
+                    ])
             ]
         )
         let latest = TestFixtures.workout(
             id: 2,
             date: "2026-05-04",
             exercises: [
-                TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [
-                    TestFixtures.set(index: 1, reps: 15, weight: 80, effort: .hard, notes: "last"),
-                    TestFixtures.set(index: 2, reps: 13, weight: 90, effort: .ok)
-                ])
+                TestFixtures.exercise(
+                    id: 8, name: "Жим ногами",
+                    sets: [
+                        TestFixtures.set(
+                            index: 1, reps: 15, weight: 80, effort: .hard, notes: "last"),
+                        TestFixtures.set(index: 2, reps: 13, weight: 90, effort: .ok),
+                    ])
             ]
         )
 
@@ -86,22 +96,26 @@ final class TrainerLogicTests: XCTestCase {
     func testPlannedSetFallsBackAndThenAdvancesThroughLatestPlanSequence() {
         let workout = TestFixtures.workout(
             exercises: [
-                TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [
-                    TestFixtures.set(index: 1, reps: 15, weight: 80),
-                    TestFixtures.set(index: 2, reps: 13, weight: 90),
-                    TestFixtures.set(index: 3, reps: 12, weight: 90)
-                ])
+                TestFixtures.exercise(
+                    id: 8, name: "Жим ногами",
+                    sets: [
+                        TestFixtures.set(index: 1, reps: 15, weight: 80),
+                        TestFixtures.set(index: 2, reps: 13, weight: 90),
+                        TestFixtures.set(index: 3, reps: 12, weight: 90),
+                    ])
             ]
         )
 
         let first = TrainerLogic.plannedSet(workouts: [workout], exerciseID: 8, draftSetIndex: 0)
         let second = TrainerLogic.plannedSet(workouts: [workout], exerciseID: 8, draftSetIndex: 1)
         let third = TrainerLogic.plannedSet(workouts: [workout], exerciseID: 8, draftSetIndex: 2)
-        let beyondPlan = TrainerLogic.plannedSet(workouts: [workout], exerciseID: 8, draftSetIndex: 99)
+        let beyondPlan = TrainerLogic.plannedSet(
+            workouts: [workout], exerciseID: 8, draftSetIndex: 99)
         let fallback = TrainerLogic.plannedSet(workouts: [], exerciseID: 8, draftSetIndex: 0)
 
         XCTAssertEqual([first.reps, second.reps, third.reps, beyondPlan.reps], [16, 14, 13, 13])
-        XCTAssertEqual([first.weight, second.weight, third.weight, beyondPlan.weight], [80, 90, 90, 90])
+        XCTAssertEqual(
+            [first.weight, second.weight, third.weight, beyondPlan.weight], [80, 90, 90, 90])
         XCTAssertEqual(fallback.reps, 12)
         XCTAssertEqual(fallback.weight, 0)
     }
@@ -115,14 +129,16 @@ final class TrainerLogicTests: XCTestCase {
             draftExercises: []
         )
 
-        XCTAssertEqual(groups.primary.map(\.name), [
-            "Жим ногами",
-            "Бабочка",
-            "Тяга верт.",
-            "Дельты",
-            "Бицепс",
-            "Трицепс"
-        ])
+        XCTAssertEqual(
+            groups.primary.map(\.name),
+            [
+                "Жим ногами",
+                "Бабочка",
+                "Тяга верт.",
+                "Дельты",
+                "Бицепс",
+                "Трицепс",
+            ])
         XCTAssertFalse(groups.primary.map(\.id).contains(1))
         XCTAssertTrue(groups.secondary.map(\.name).contains("Жим гор."))
         XCTAssertEqual(groups.primaryPoolTotal, 6)
@@ -140,7 +156,7 @@ final class TrainerLogicTests: XCTestCase {
                 id: 1,
                 name: "Жим гор.",
                 sets: [TestFixtures.draftSet(reps: 12, weight: 50)]
-            )
+            ),
         ]
 
         let cards = TrainerLogic.draftDisplayCards(
@@ -149,14 +165,16 @@ final class TrainerLogicTests: XCTestCase {
             draftExercises: draft
         )
 
-        XCTAssertEqual(cards.prefix(6).map(\.exerciseName), [
-            "Жим ногами",
-            "Бабочка",
-            "Тяга верт.",
-            "Дельты",
-            "Бицепс",
-            "Трицепс"
-        ])
+        XCTAssertEqual(
+            cards.prefix(6).map(\.exerciseName),
+            [
+                "Жим ногами",
+                "Бабочка",
+                "Тяга верт.",
+                "Дельты",
+                "Бицепс",
+                "Трицепс",
+            ])
         XCTAssertEqual(cards.first?.isPreview, false)
         XCTAssertEqual(cards.first?.sets.count, 1)
         XCTAssertEqual(cards.last?.exerciseName, "Жим гор.")
@@ -164,19 +182,22 @@ final class TrainerLogicTests: XCTestCase {
     }
 
     func testDraftProgressIsInvisibleUntilRealSetsAndCountsFractionalPlanProgress() {
-        let workouts = popularHistory() + [
-            TestFixtures.workout(
-                id: 99,
-                date: "2026-05-07",
-                exercises: [
-                    TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [
-                        TestFixtures.set(index: 1, reps: 15, weight: 80),
-                        TestFixtures.set(index: 2, reps: 13, weight: 90),
-                        TestFixtures.set(index: 3, reps: 12, weight: 90)
-                    ])
-                ]
-            )
-        ]
+        let workouts =
+            popularHistory() + [
+                TestFixtures.workout(
+                    id: 99,
+                    date: "2026-05-07",
+                    exercises: [
+                        TestFixtures.exercise(
+                            id: 8, name: "Жим ногами",
+                            sets: [
+                                TestFixtures.set(index: 1, reps: 15, weight: 80),
+                                TestFixtures.set(index: 2, reps: 13, weight: 90),
+                                TestFixtures.set(index: 3, reps: 12, weight: 90),
+                            ])
+                    ]
+                )
+            ]
 
         XCTAssertEqual(
             TrainerLogic.draftProgressRatio(
@@ -202,7 +223,7 @@ final class TrainerLogicTests: XCTestCase {
                 sets: [
                     TestFixtures.draftSet(reps: 16, weight: 80),
                     TestFixtures.draftSet(reps: 14, weight: 90),
-                    TestFixtures.draftSet(reps: 13, weight: 90)
+                    TestFixtures.draftSet(reps: 13, weight: 90),
                 ]
             )
         ]
@@ -235,22 +256,27 @@ final class TrainerLogicTests: XCTestCase {
                 id: 3,
                 date: DateTools.iso(from: Date()),
                 exercises: [
-                    TestFixtures.exercise(id: 16, name: "Разгибания ног", sets: [
-                        TestFixtures.set(index: 1, reps: 12, weight: 130),
-                        TestFixtures.set(index: 2, reps: 10, weight: 150)
-                    ])
+                    TestFixtures.exercise(
+                        id: 16, name: "Разгибания ног",
+                        sets: [
+                            TestFixtures.set(index: 1, reps: 12, weight: 130),
+                            TestFixtures.set(index: 2, reps: 10, weight: 150),
+                        ])
                 ]
             ),
             TestFixtures.workout(
                 id: 1,
-                date: DateTools.iso(from: Calendar.current.date(byAdding: .day, value: -2, to: Date())!),
+                date: DateTools.iso(
+                    from: Calendar.current.date(byAdding: .day, value: -2, to: Date())!),
                 exercises: [
-                    TestFixtures.exercise(id: 16, name: "Разгибания ног", sets: [
-                        TestFixtures.set(index: 1, reps: 10, weight: 120),
-                        TestFixtures.set(index: 2, reps: 14, weight: 110)
-                    ])
+                    TestFixtures.exercise(
+                        id: 16, name: "Разгибания ног",
+                        sets: [
+                            TestFixtures.set(index: 1, reps: 10, weight: 120),
+                            TestFixtures.set(index: 2, reps: 14, weight: 110),
+                        ])
                 ]
-            )
+            ),
         ]
 
         let series = TrainerLogic.buildExerciseProgressSeries(
@@ -272,11 +298,12 @@ final class TrainerLogicTests: XCTestCase {
         let entries = [
             TestFixtures.bodyWeight(id: 3, date: "2026-05-03", weight: 81.95),
             TestFixtures.bodyWeight(id: 1, date: "2026-05-01", weight: 82.4),
-            TestFixtures.bodyWeight(id: 2, date: "2026-05-02", weight: 82.05)
+            TestFixtures.bodyWeight(id: 2, date: "2026-05-02", weight: 82.05),
         ]
 
         let sorted = TrainerLogic.sortBodyWeights(entries)
-        let summary = TrainerLogic.summarizeBodyWeights(filteredEntries: sorted, allEntries: entries)
+        let summary = TrainerLogic.summarizeBodyWeights(
+            filteredEntries: sorted, allEntries: entries)
 
         XCTAssertEqual(sorted.map(\.entryDate), ["2026-05-01", "2026-05-02", "2026-05-03"])
         XCTAssertEqual(summary.totalEntries, 3)
@@ -292,7 +319,7 @@ final class TrainerLogicTests: XCTestCase {
             basedOnWorkoutID: 133,
             basedOnWorkoutCount: 56,
             model: "claude-opus-4-8",
-            generatedAt: 1781200000,
+            generatedAt: 1_781_200_000,
             appliedAt: "2026-06-12",
             focus: "Верх+низ",
             loadType: "medium",
@@ -303,8 +330,10 @@ final class TrainerLogicTests: XCTestCase {
                 ),
                 RecommendedExercise(
                     exerciseID: 8, name: "Жим ногами", note: "мягкий вход",
-                    sets: [RecommendedSet(reps: 12, weight: 90), RecommendedSet(reps: 10, weight: 95)]
-                )
+                    sets: [
+                        RecommendedSet(reps: 12, weight: 90), RecommendedSet(reps: 10, weight: 95),
+                    ]
+                ),
             ]
         )
     }
@@ -312,7 +341,8 @@ final class TrainerLogicTests: XCTestCase {
     func testNextPlannedSetWalksPlanTargetsAndClampsOnExhaustion() {
         let targets = [RecommendedSet(reps: 12, weight: 90), RecommendedSet(reps: 10, weight: 95)]
 
-        let first = TrainerLogic.nextPlannedSet(workouts: [], exerciseID: 8, draftSets: [], planTargets: targets)
+        let first = TrainerLogic.nextPlannedSet(
+            workouts: [], exerciseID: 8, draftSets: [], planTargets: targets)
         XCTAssertEqual(first.reps, 12)
         XCTAssertEqual(first.weight, 90)
 
@@ -326,7 +356,10 @@ final class TrainerLogicTests: XCTestCase {
 
         let exhausted = TrainerLogic.nextPlannedSet(
             workouts: [], exerciseID: 8,
-            draftSets: [TestFixtures.draftSet(reps: 12, weight: 90), TestFixtures.draftSet(reps: 10, weight: 95)],
+            draftSets: [
+                TestFixtures.draftSet(reps: 12, weight: 90),
+                TestFixtures.draftSet(reps: 10, weight: 95),
+            ],
             planTargets: targets
         )
         XCTAssertEqual(exhausted.reps, 10)
@@ -358,14 +391,17 @@ final class TrainerLogicTests: XCTestCase {
         let history = [
             TestFixtures.workout(
                 exercises: [
-                    TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [
-                        TestFixtures.set(index: 1, reps: 10, weight: 80)
-                    ])
+                    TestFixtures.exercise(
+                        id: 8, name: "Жим ногами",
+                        sets: [
+                            TestFixtures.set(index: 1, reps: 10, weight: 80)
+                        ])
                 ]
             )
         ]
 
-        let fromHistory = TrainerLogic.nextPlannedSet(workouts: history, exerciseID: 8, draftSets: [], planTargets: nil)
+        let fromHistory = TrainerLogic.nextPlannedSet(
+            workouts: history, exerciseID: 8, draftSets: [], planTargets: nil)
         XCTAssertEqual(fromHistory.reps, 11)
         XCTAssertEqual(fromHistory.weight, 80)
 
@@ -379,7 +415,8 @@ final class TrainerLogicTests: XCTestCase {
         XCTAssertEqual(afterCustom.reps, 6)
         XCTAssertEqual(afterCustom.weight, 120)
 
-        let bare = TrainerLogic.nextPlannedSet(workouts: [], exerciseID: 8, draftSets: [], planTargets: nil)
+        let bare = TrainerLogic.nextPlannedSet(
+            workouts: [], exerciseID: 8, draftSets: [], planTargets: nil)
         XCTAssertEqual(bare.reps, 12)
         XCTAssertEqual(bare.weight, 0)
 
@@ -395,23 +432,25 @@ final class TrainerLogicTests: XCTestCase {
     func testPlanDisplayCardsKeepRecommendedOrderAndAppendExtras() {
         let draft = [
             TestFixtures.draftExercise(id: 8, name: "Жим ногами", sets: [TestFixtures.draftSet()]),
-            TestFixtures.draftExercise(id: 11, name: "Бицепс", sets: [TestFixtures.draftSet()])
+            TestFixtures.draftExercise(id: 11, name: "Бицепс", sets: [TestFixtures.draftSet()]),
         ]
 
         let cards = TrainerLogic.planDisplayCards(plan: samplePlan(), draftExercises: draft)
 
         XCTAssertEqual(cards.map(\.exerciseID), [9, 8, 11])
-        XCTAssertTrue(cards[0].isPreview)       // plan exercise without sets yet
-        XCTAssertFalse(cards[1].isPreview)      // plan exercise with logged sets
-        XCTAssertFalse(cards[2].isPreview)      // off-plan extra appended last
+        XCTAssertTrue(cards[0].isPreview)  // plan exercise without sets yet
+        XCTAssertFalse(cards[1].isPreview)  // plan exercise with logged sets
+        XCTAssertFalse(cards[2].isPreview)  // off-plan extra appended last
     }
 
     func testPlanProgressRatioAveragesAgainstPlanTargets() {
-        let plan = samplePlan() // ex9: 1 target, ex8: 2 targets
+        let plan = samplePlan()  // ex9: 1 target, ex8: 2 targets
 
         XCTAssertEqual(TrainerLogic.planProgressRatio(plan: plan, draftExercises: []), 0)
 
-        let halfLegPress = [TestFixtures.draftExercise(id: 8, name: "Жим ногами", sets: [TestFixtures.draftSet()])]
+        let halfLegPress = [
+            TestFixtures.draftExercise(id: 8, name: "Жим ногами", sets: [TestFixtures.draftSet()])
+        ]
         XCTAssertEqual(
             TrainerLogic.planProgressRatio(plan: plan, draftExercises: halfLegPress),
             0.25,
@@ -419,8 +458,9 @@ final class TrainerLogicTests: XCTestCase {
         )
 
         let done = [
-            TestFixtures.draftExercise(id: 8, name: "Жим ногами", sets: [TestFixtures.draftSet(), TestFixtures.draftSet()]),
-            TestFixtures.draftExercise(id: 9, name: "Тяга верт.", sets: [TestFixtures.draftSet()])
+            TestFixtures.draftExercise(
+                id: 8, name: "Жим ногами", sets: [TestFixtures.draftSet(), TestFixtures.draftSet()]),
+            TestFixtures.draftExercise(id: 9, name: "Тяга верт.", sets: [TestFixtures.draftSet()]),
         ]
         XCTAssertEqual(TrainerLogic.planProgressRatio(plan: plan, draftExercises: done), 1)
     }
@@ -442,7 +482,8 @@ final class TrainerLogicTests: XCTestCase {
             exercises: [TestFixtures.draftExercise(sets: [TestFixtures.draftSet()])]
         )
 
-        let payload = TrainerLogic.workoutPayload(from: draft, recommendation: samplePlan().snapshot)
+        let payload = TrainerLogic.workoutPayload(
+            from: draft, recommendation: samplePlan().snapshot)
         let data = try JSONEncoder().encode(payload)
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let snapshot = (object?["data"] as? [String: Any])?["recommendation"] as? [String: Any]
@@ -450,7 +491,7 @@ final class TrainerLogicTests: XCTestCase {
         XCTAssertNotNil(snapshot)
         XCTAssertEqual(snapshot?["schema"] as? Int, 1)
         XCTAssertEqual(snapshot?["source"] as? String, "coach")
-        XCTAssertEqual(snapshot?["generated_at"] as? Int, 1781200000)
+        XCTAssertEqual(snapshot?["generated_at"] as? Int, 1_781_200_000)
         XCTAssertEqual(snapshot?["load_type"] as? String, "medium")
         let exercises = snapshot?["exercises"] as? [[String: Any]]
         XCTAssertEqual(exercises?.first?["exercise_id"] as? Int, 9)
@@ -470,7 +511,7 @@ final class TrainerLogicTests: XCTestCase {
             (9, "Тяга верт.", 60.0, 12),
             (13, "Дельты", 17.5, 15),
             (11, "Бицепс", 30.0, 12),
-            (12, "Трицепс", 35.0, 12)
+            (12, "Трицепс", 35.0, 12),
         ]
 
         let repeated = ["2026-05-01", "2026-05-03", "2026-05-05"].enumerated().map { offset, date in
@@ -507,12 +548,18 @@ final class TrainerLogicTests: XCTestCase {
     // MARK: - История "next workout" card helpers
 
     func testRecommendationRepsLabelCollapsesUniformReps() {
-        let sets = [RecommendedSet(reps: 12, weight: 90), RecommendedSet(reps: 12, weight: 90), RecommendedSet(reps: 12, weight: 90)]
+        let sets = [
+            RecommendedSet(reps: 12, weight: 90), RecommendedSet(reps: 12, weight: 90),
+            RecommendedSet(reps: 12, weight: 90),
+        ]
         XCTAssertEqual(TrainerLogic.recommendationRepsLabel(sets), "12 × 3")
     }
 
     func testRecommendationRepsLabelListsVaryingReps() {
-        let sets = [RecommendedSet(reps: 12, weight: 60), RecommendedSet(reps: 12, weight: 60), RecommendedSet(reps: 10, weight: 60)]
+        let sets = [
+            RecommendedSet(reps: 12, weight: 60), RecommendedSet(reps: 12, weight: 60),
+            RecommendedSet(reps: 10, weight: 60),
+        ]
         XCTAssertEqual(TrainerLogic.recommendationRepsLabel(sets), "12, 12, 10")
     }
 
@@ -524,13 +571,20 @@ final class TrainerLogicTests: XCTestCase {
         let workouts = [
             TestFixtures.workout(
                 id: 1, clientID: "a", date: "2026-05-01",
-                exercises: [TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [TestFixtures.set(weight: 100)])]
+                exercises: [
+                    TestFixtures.exercise(
+                        id: 8, name: "Жим ногами", sets: [TestFixtures.set(weight: 100)])
+                ]
             ),
             TestFixtures.workout(
                 id: 2, clientID: "b", date: "2026-05-20",
-                exercises: [TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [
-                    TestFixtures.set(weight: 110), TestFixtures.set(weight: 120)
-                ])]
+                exercises: [
+                    TestFixtures.exercise(
+                        id: 8, name: "Жим ногами",
+                        sets: [
+                            TestFixtures.set(weight: 110), TestFixtures.set(weight: 120),
+                        ])
+                ]
             ),
         ]
         XCTAssertEqual(TrainerLogic.latestWorkingWeight(in: workouts, exerciseID: 8), 120)
@@ -540,7 +594,10 @@ final class TrainerLogicTests: XCTestCase {
         let workouts = [
             TestFixtures.workout(
                 id: 1, clientID: "a", date: "2026-05-01",
-                exercises: [TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [TestFixtures.set(weight: 100)])]
+                exercises: [
+                    TestFixtures.exercise(
+                        id: 8, name: "Жим ногами", sets: [TestFixtures.set(weight: 100)])
+                ]
             )
         ]
         XCTAssertNil(TrainerLogic.latestWorkingWeight(in: workouts, exerciseID: 99))
@@ -554,7 +611,10 @@ final class TrainerLogicTests: XCTestCase {
             ),
             TestFixtures.workout(
                 id: 1, clientID: "a", date: "2026-05-01",
-                exercises: [TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [TestFixtures.set(weight: 95)])]
+                exercises: [
+                    TestFixtures.exercise(
+                        id: 8, name: "Жим ногами", sets: [TestFixtures.set(weight: 95)])
+                ]
             ),
         ]
         XCTAssertEqual(TrainerLogic.latestWorkingWeight(in: workouts, exerciseID: 8), 95)
@@ -565,20 +625,29 @@ final class TrainerLogicTests: XCTestCase {
     func testWeeklyVolumeCountsPrimaryMuscleWithinWindow() {
         let today = DateTools.date(from: "2026-06-12")
         let workouts = [
-            TestFixtures.workout(id: 1, clientID: "a", date: "2026-06-10", exercises: [
-                TestFixtures.exercise(id: 18, name: "Жим", sets: [TestFixtures.set(), TestFixtures.set(), TestFixtures.set()])
-            ]),
-            TestFixtures.workout(id: 2, clientID: "b", date: "2026-06-11", exercises: [
-                TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [TestFixtures.set(), TestFixtures.set()])
-            ]),
-            TestFixtures.workout(id: 3, clientID: "c", date: "2026-05-01", exercises: [  // outside 7d window
-                TestFixtures.exercise(id: 18, name: "Жим", sets: [TestFixtures.set()])
-            ]),
+            TestFixtures.workout(
+                id: 1, clientID: "a", date: "2026-06-10",
+                exercises: [
+                    TestFixtures.exercise(
+                        id: 18, name: "Жим",
+                        sets: [TestFixtures.set(), TestFixtures.set(), TestFixtures.set()])
+                ]),
+            TestFixtures.workout(
+                id: 2, clientID: "b", date: "2026-06-11",
+                exercises: [
+                    TestFixtures.exercise(
+                        id: 8, name: "Жим ногами", sets: [TestFixtures.set(), TestFixtures.set()])
+                ]),
+            TestFixtures.workout(
+                id: 3, clientID: "c", date: "2026-05-01",
+                exercises: [  // outside 7d window
+                    TestFixtures.exercise(id: 18, name: "Жим", sets: [TestFixtures.set()])
+                ]),
         ]
         let vol = TrainerLogic.weeklyVolumeByGroup(workouts, today: today, days: 7)
         let chest = vol.first { $0.name == "Грудь" }!
         XCTAssertEqual(chest.count, 3)
-        XCTAssertEqual(chest.status, .under)   // 3 < 10
+        XCTAssertEqual(chest.status, .under)  // 3 < 10
         XCTAssertEqual(vol.first { $0.name == "Квадрицепс/ягод." }?.count, 2)
         XCTAssertEqual(vol.first { $0.name == "Бицепс бедра" }?.count, 0)
     }
@@ -586,8 +655,10 @@ final class TrainerLogicTests: XCTestCase {
     func testVolumeStatusThresholds() {
         var v = MuscleGroupVolume(name: "Бицепс", count: 6, minTarget: 4, maxTarget: 8)
         XCTAssertEqual(v.status, .onTarget)
-        v.count = 2; XCTAssertEqual(v.status, .under)
-        v.count = 10; XCTAssertEqual(v.status, .over)
+        v.count = 2
+        XCTAssertEqual(v.status, .under)
+        v.count = 10
+        XCTAssertEqual(v.status, .over)
     }
 
     // MARK: - Plan-vs-fact adherence
@@ -597,8 +668,12 @@ final class TrainerLogicTests: XCTestCase {
             id: 1, clientID: "a", date: DateTools.localTodayISO(),
             exercises: [
                 // did 4 sets of ex 8 (one extra beyond the planned 3)
-                TestFixtures.exercise(id: 8, name: "Жим ногами",
-                                      sets: [TestFixtures.set(), TestFixtures.set(), TestFixtures.set(), TestFixtures.set()])
+                TestFixtures.exercise(
+                    id: 8, name: "Жим ногами",
+                    sets: [
+                        TestFixtures.set(), TestFixtures.set(), TestFixtures.set(),
+                        TestFixtures.set(),
+                    ])
                 // ex 9 planned but never done → skipped
             ]
         )
@@ -606,16 +681,22 @@ final class TrainerLogicTests: XCTestCase {
             schema: 1, source: "coach", model: nil, generatedAt: nil, appliedAt: nil,
             basedOnWorkoutID: nil, basedOnWorkoutCount: nil, focus: nil, loadType: nil,
             exercises: [
-                RecommendedExercise(exerciseID: 8, name: "Жим ногами", note: nil,
-                                    sets: [RecommendedSet(reps: 10, weight: 100), RecommendedSet(reps: 10, weight: 100), RecommendedSet(reps: 10, weight: 100)]),
-                RecommendedExercise(exerciseID: 9, name: "Тяга", note: nil,
-                                    sets: [RecommendedSet(reps: 10, weight: 60)])
+                RecommendedExercise(
+                    exerciseID: 8, name: "Жим ногами", note: nil,
+                    sets: [
+                        RecommendedSet(reps: 10, weight: 100),
+                        RecommendedSet(reps: 10, weight: 100),
+                        RecommendedSet(reps: 10, weight: 100),
+                    ]),
+                RecommendedExercise(
+                    exerciseID: 9, name: "Тяга", note: nil,
+                    sets: [RecommendedSet(reps: 10, weight: 60)]),
             ]
         )
         let s = TrainerLogic.adherenceSummary([w], range: .all)
         XCTAssertEqual(s.comparedWorkouts, 1)
-        XCTAssertEqual(s.plannedSets, 4)        // 3 + 1
-        XCTAssertEqual(s.doneSets, 3)           // min(4,3) + min(0,1)
+        XCTAssertEqual(s.plannedSets, 4)  // 3 + 1
+        XCTAssertEqual(s.doneSets, 3)  // min(4,3) + min(0,1)
         XCTAssertEqual(s.skippedExercises, 1)
         XCTAssertEqual(Int((s.ratio * 100).rounded()), 75)
         XCTAssertTrue(s.hasData)
@@ -624,7 +705,9 @@ final class TrainerLogicTests: XCTestCase {
     func testAdherenceIgnoresWorkoutsWithoutSnapshot() {
         let w = TestFixtures.workout(
             id: 1, clientID: "a", date: DateTools.localTodayISO(),
-            exercises: [TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [TestFixtures.set()])]
+            exercises: [
+                TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [TestFixtures.set()])
+            ]
         )
         let s = TrainerLogic.adherenceSummary([w], range: .all)
         XCTAssertFalse(s.hasData)

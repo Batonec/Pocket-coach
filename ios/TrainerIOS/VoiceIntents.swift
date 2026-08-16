@@ -61,8 +61,11 @@ struct ExerciseEntityQuery: EntityStringQuery {
         let tokens = VoiceText.tokens(string)
         guard !tokens.isEmpty else { return catalog }
 
-        let ranked = catalog
-            .map { (entity: $0, score: ExerciseVoiceMatcher.score(tokens: tokens, for: $0.catalogName)) }
+        let ranked =
+            catalog
+            .map {
+                (entity: $0, score: ExerciseVoiceMatcher.score(tokens: tokens, for: $0.catalogName))
+            }
             .filter { $0.score >= ExerciseVoiceMatcher.acceptThreshold }
             .sorted { $0.score > $1.score }
         return ranked.isEmpty ? catalog : ranked.map(\.entity)
@@ -96,9 +99,12 @@ enum SetEffortEntity: String, AppEnum {
     static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Как далось")
 
     static var caseDisplayRepresentations: [SetEffortEntity: DisplayRepresentation] = [
-        .easy: DisplayRepresentation(title: "Легко", synonyms: ["легко", "просто", "изи", "easy", "light"]),
-        .ok: DisplayRepresentation(title: "Норм", synonyms: ["нормально", "норм", "средне", "okay", "normal"]),
-        .hard: DisplayRepresentation(title: "Тяжело", synonyms: ["тяжело", "тяжко", "на пределе", "hard", "heavy"])
+        .easy: DisplayRepresentation(
+            title: "Легко", synonyms: ["легко", "просто", "изи", "easy", "light"]),
+        .ok: DisplayRepresentation(
+            title: "Норм", synonyms: ["нормально", "норм", "средне", "okay", "normal"]),
+        .hard: DisplayRepresentation(
+            title: "Тяжело", synonyms: ["тяжело", "тяжко", "на пределе", "hard", "heavy"]),
     ]
 
     var effort: SetEffort { SetEffort(rawValue: rawValue) ?? .ok }
@@ -252,11 +258,13 @@ struct FinishWorkoutIntent: AppIntent {
         let sets = store.draft.exercises.reduce(0) { $0 + $1.sets.count }
         let exercises = store.draft.exercises.filter { !$0.sets.isEmpty }.count
         if #available(iOS 18.0, *) {
-            let body = "\(VoicePhrasing.exercises(exercises, in: language)), \(VoicePhrasing.sets(sets, in: language))"
+            let body =
+                "\(VoicePhrasing.exercises(exercises, in: language)), \(VoicePhrasing.sets(sets, in: language))"
             try await requestConfirmation(
-                dialog: voiceDialog(language == .ru
-                    ? "Сохранить тренировку: \(body)?"
-                    : "Save the workout: \(body)?")
+                dialog: voiceDialog(
+                    language == .ru
+                        ? "Сохранить тренировку: \(body)?"
+                        : "Save the workout: \(body)?")
             )
         }
 
@@ -286,7 +294,7 @@ struct TrainerAppShortcuts: AppShortcutsProvider {
                 "Добавь подход в \(.applicationName)",
                 "Новый подход в \(.applicationName)",
                 "Запиши подход в \(.applicationName)",
-                "\(.applicationName) подход"
+                "\(.applicationName) подход",
             ],
             shortTitle: "Записать подход",
             systemImageName: "plus.circle.fill"
@@ -299,7 +307,7 @@ struct TrainerAppShortcuts: AppShortcutsProvider {
                 "\(.applicationName) \(\.$exercise)",
                 "Засчитай \(\.$exercise) в \(.applicationName)",
                 "Сделал \(\.$exercise) в \(.applicationName)",
-                "Закрой \(\.$exercise) в \(.applicationName)"
+                "Закрой \(\.$exercise) в \(.applicationName)",
             ],
             shortTitle: "Засчитать по плану",
             systemImageName: "checkmark.circle.fill"
@@ -310,7 +318,7 @@ struct TrainerAppShortcuts: AppShortcutsProvider {
                 "Убери последний подход в \(.applicationName)",
                 "Отмени последний подход в \(.applicationName)",
                 "Удали последний подход в \(.applicationName)",
-                "\(.applicationName) отмена"
+                "\(.applicationName) отмена",
             ],
             shortTitle: "Убрать подход",
             systemImageName: "arrow.uturn.backward"
@@ -321,7 +329,7 @@ struct TrainerAppShortcuts: AppShortcutsProvider {
                 "Что дальше в \(.applicationName)",
                 "Следующий подход в \(.applicationName)",
                 "Какой следующий подход в \(.applicationName)",
-                "\(.applicationName) дальше"
+                "\(.applicationName) дальше",
             ],
             shortTitle: "Следующий подход",
             systemImageName: "list.bullet.rectangle"
@@ -332,7 +340,7 @@ struct TrainerAppShortcuts: AppShortcutsProvider {
                 "Заверши тренировку в \(.applicationName)",
                 "Сохрани тренировку в \(.applicationName)",
                 "Закончил тренировку в \(.applicationName)",
-                "\(.applicationName) финиш"
+                "\(.applicationName) финиш",
             ],
             shortTitle: "Завершить тренировку",
             systemImageName: "checkmark.seal.fill"

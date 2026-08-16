@@ -265,12 +265,12 @@ struct APIReasonResponse: Codable {
 /// never discards the whole payload.
 struct RecommendationResponse: Codable {
     var ok: Bool?
-    var status: String?            // none | pending | ready | failed
+    var status: String?  // none | pending | ready | failed
     var stale: Bool?
     var basedOnWorkoutID: Int?
     var basedOnWorkoutCount: Int?
     var model: String?
-    var updatedAt: Int?            // generation identity (the row id is constant per user)
+    var updatedAt: Int?  // generation identity (the row id is constant per user)
     var error: String?
     var recommendation: RecommendationPayload?
 
@@ -311,15 +311,15 @@ struct RecommendationPayload: Codable, Hashable {
 /// recommendation (see backend `recommender._coach_context`). All fields are
 /// optional — older cached payloads predate it.
 struct CoachContext: Codable, Hashable {
-    var phase: String?             // cut_recomp | lean_bulk | maintenance
-    var phaseTitle: String?        // human title, RU
+    var phase: String?  // cut_recomp | lean_bulk | maintenance
+    var phaseTitle: String?  // human title, RU
     var blockWeek: Int?
     var deloadWeek: Bool?
     var returnFromBreak: Bool?
-    var weeklyTarget: [Int]?       // big-group corridor for this block week
+    var weeklyTarget: [Int]?  // big-group corridor for this block week
     var groupTargets: [String: [Int]]?  // backend group name → [min, max]
-    var targetWeightKg: Double?    // phase weight goal (cut target / bulk ceiling)
-    var waistLimitCm: Double?      // hard waist limit, when the athlete set one
+    var targetWeightKg: Double?  // phase weight goal (cut target / bulk ceiling)
+    var waistLimitCm: Double?  // hard waist limit, when the athlete set one
 
     enum CodingKeys: String, CodingKey {
         case phase
@@ -420,13 +420,13 @@ struct WaistMutationResponse: Codable {
 /// client renders the first 1–2 and never invents texts. Unknown ids/severities
 /// must still render as a generic info banner (server-driven taxonomy).
 struct CoachSignal: Codable, Hashable, Identifiable {
-    var signalID: String       // signal type, e.g. "measurements_due"
-    var instanceKey: String    // episode identity — dismiss target
-    var severity: String       // info | accent | warn | critical | positive
+    var signalID: String  // signal type, e.g. "measurements_due"
+    var instanceKey: String  // episode identity — dismiss target
+    var severity: String  // info | accent | warn | critical | positive
     var title: String
     var body: String
-    var note: String?          // optional third line (italic, muted)
-    var glyph: String?         // semantic token mapped to an SF Symbol by the client
+    var note: String?  // optional third line (italic, muted)
+    var glyph: String?  // semantic token mapped to an SF Symbol by the client
     var action: CoachSignalAction?
     var snoozable: Bool?
 
@@ -464,9 +464,11 @@ struct CoachSignal: Codable, Hashable, Identifiable {
 }
 
 struct CoachSignalAction: Codable, Hashable {
-    var type: String           // open_measurements | open_next_workout | refresh_recommendation | open_weekly_report | none
+    // open_measurements | open_next_workout | refresh_recommendation
+    // | open_weekly_report | none
+    var type: String
     var label: String?
-    var target: String?        // e.g. "weight" | "waist" for open_measurements
+    var target: String?  // e.g. "weight" | "waist" for open_measurements
 }
 
 struct CoachSignalsResponse: Codable {
@@ -523,7 +525,8 @@ struct AppliedCoachPlan: Codable, Hashable {
             focus: focus,
             loadType: loadType,
             exercises: exercises.map {
-                RecommendedExercise(exerciseID: $0.exerciseID, name: $0.name, note: nil, sets: $0.sets)
+                RecommendedExercise(
+                    exerciseID: $0.exerciseID, name: $0.name, note: nil, sets: $0.sets)
             }
         )
     }
@@ -584,7 +587,7 @@ struct MuscleGroupVolume: Identifiable {
 struct AdherenceSummary {
     var comparedWorkouts: Int
     var plannedSets: Int
-    var doneSets: Int       // capped at planned per exercise
+    var doneSets: Int  // capped at planned per exercise
     var skippedExercises: Int
     // Exercises skipped OUTRIGHT (planned, zero sets done), most-skipped first —
     // the same signal the coach uses to adapt plans to real behaviour.
@@ -802,11 +805,13 @@ enum DateTools {
     static func periodLabel(endingAt endISO: String, days: Int) -> String {
         guard let end = isoFormatter.date(from: endISO) else { return endISO }
         let safeDays = max(1, days)
-        guard let start = Calendar(identifier: .gregorian).date(
-            byAdding: .day,
-            value: -(safeDays - 1),
-            to: end
-        ) else { return short(endISO) }
+        guard
+            let start = Calendar(identifier: .gregorian).date(
+                byAdding: .day,
+                value: -(safeDays - 1),
+                to: end
+            )
+        else { return short(endISO) }
         return "\(short(iso(from: start))) – \(short(endISO))"
     }
 

@@ -13,6 +13,7 @@ deload_week, weekly_report_ready and the positive week_done. Every signal dies
 on its own (state change, escalation, TTL); dismissal keys are per-episode
 instance keys, so «скрыть навсегда» does not exist.
 """
+
 from __future__ import annotations
 
 import time
@@ -36,7 +37,7 @@ MEASUREMENT_OVERDUE_DAYS = coach_features.STALE_MEASUREMENT_DAYS  # 14: matrix c
 # actually helps. From day 10 the due/overdue ladder takes over.
 TREND_NUDGE_FROM_DAYS = 5
 
-RETURN_SOON_FROM_DAYS = 11          # 1–3 days before the return-protocol threshold
+RETURN_SOON_FROM_DAYS = 11  # 1–3 days before the return-protocol threshold
 RETURN_BREAK_DAYS = coach_state.BREAK_DAYS  # 14
 
 REPORT_FRESH_HOURS = 48
@@ -46,7 +47,7 @@ WEEK_DONE_MIN_PCT = 90
 # фазе. Реальный порог берётся из sessions_per_week текущей фазы — поздравлять
 # с закрытой неделей на половине плана значит обесценить сам баннер.
 WEEK_DONE_MIN_SESSIONS = 2
-WEEK_DONE_SHOW_DAYS = 2             # Monday–Tuesday after the closed week
+WEEK_DONE_SHOW_DAYS = 2  # Monday–Tuesday after the closed week
 
 SEVERITY_RANK = {"critical": 0, "warn": 1, "accent": 2, "info": 3, "positive": 4}
 FAMILY_RANK = {"measurements": 0, "trainings": 1, "deload": 2, "report": 3, "milestone": 4}
@@ -109,8 +110,18 @@ def _signal(
 
 
 _RU_MONTHS_GEN = (
-    "января", "февраля", "марта", "апреля", "мая", "июня",
-    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
 )
 
 
@@ -155,8 +166,7 @@ def _waist_limit_signal(
         return None
 
     points = [
-        point for point in coach_features.waist_points(waists)
-        if phase_start <= point[0] <= today
+        point for point in coach_features.waist_points(waists) if phase_start <= point[0] <= today
     ]
     if len(points) < 2:
         return None
@@ -168,15 +178,19 @@ def _waist_limit_signal(
         return None
 
     return _signal(
-        "waist_limit", "measurements", "critical",
+        "waist_limit",
+        "measurements",
+        "critical",
         _text("waist_limit_title", waist=f"{latest[1]:g}", limit=f"{limit:g}"),
         _text("waist_limit_body"),
         instance_fact=(
             f"pair={previous[0].isoformat()}:{previous[1]:g},"
             f"{latest[0].isoformat()}:{latest[1]:g},limit={limit:g}"
         ),
-        action_type="open_measurements", action_label=_text("action_measurements"),
-        action_target="waist", glyph="tape",
+        action_type="open_measurements",
+        action_label=_text("action_measurements"),
+        action_target="waist",
+        glyph="tape",
     )
 
 
@@ -229,15 +243,16 @@ def _measurements_signal(
             "вес": _text("noun_accusative_weight"),
             "талия": _text("noun_accusative_waist"),
         }
-        parts = _text("joiner_and").join(
-            accusative.get(part, part) for part in overdue
-        )
+        parts = _text("joiner_and").join(accusative.get(part, part) for part in overdue)
         return _signal(
-            "measurements_overdue", "measurements", "warn",
+            "measurements_overdue",
+            "measurements",
+            "warn",
             _text("measurements_overdue_title"),
             _text("measurements_overdue_body", what=parts),
             instance_fact=fact,
-            action_type="open_measurements", action_label=_text("action_measurements"),
+            action_type="open_measurements",
+            action_label=_text("action_measurements"),
             action_target=target,
             glyph="nutrition",
         )
@@ -251,11 +266,17 @@ def _measurements_signal(
         if coach_features.weight_trend_per_week(weight_points, today, since=phase_start) is None:
             note = _text("measurements_due_note")
         return _signal(
-            "measurements_due", "measurements", "info",
-            due_title, body,
+            "measurements_due",
+            "measurements",
+            "info",
+            due_title,
+            body,
             instance_fact=fact,
-            action_type="open_measurements", action_label=_text("action_measurements"),
-            action_target=target, note=note, glyph="scale",
+            action_type="open_measurements",
+            action_label=_text("action_measurements"),
+            action_target=target,
+            note=note,
+            glyph="scale",
         )
 
     # Building phases only: the freshness gate is still green, but the in-phase
@@ -270,11 +291,14 @@ def _measurements_signal(
     ):
         goal = "среза" if phase == "cut_recomp" else "набора"
         return _signal(
-            "weight_trend_stale", "measurements", "info",
+            "weight_trend_stale",
+            "measurements",
+            "info",
             _text("weight_trend_stale_title"),
             _text("weight_trend_stale_body", goal=goal),
             instance_fact=f"weight={last_weight},phase={phase}",
-            action_type="open_measurements", action_label=_text("action_measurements"),
+            action_type="open_measurements",
+            action_label=_text("action_measurements"),
             action_target="weight",
             glyph="scale",
         )
@@ -305,9 +329,7 @@ def _trainings_signal(
     dates = sorted(
         {
             when
-            for when in (
-                coach_features._workout_date(workout) for workout in workouts
-            )
+            for when in (coach_features._workout_date(workout) for workout in workouts)
             if when is not None and when <= today
         }
     )
@@ -319,11 +341,14 @@ def _trainings_signal(
     if RETURN_SOON_FROM_DAYS <= days < RETURN_BREAK_DAYS:
         deadline = last + timedelta(days=RETURN_BREAK_DAYS - 1)
         return _signal(
-            "return_soon", "trainings", "warn",
+            "return_soon",
+            "trainings",
+            "warn",
             _text("return_soon_title", deadline=_ru_date(deadline)),
             _text("return_soon_body"),
             instance_fact=f"last_workout={last.isoformat()}",
-            action_type="open_next_workout", action_label=_text("action_plan"),
+            action_type="open_next_workout",
+            action_label=_text("action_plan"),
             glyph="back",
         )
     if days >= RETURN_BREAK_DAYS:
@@ -345,27 +370,25 @@ def _trainings_signal(
             if plan_state == "failed":
                 body = _text("return_mode_failed_body")
                 action_label = _text("action_retry")
-                recommendation_fact = (
-                    f"failed:{recommendation.get('updated_at') or 'unknown'}"
-                )
+                recommendation_fact = f"failed:{recommendation.get('updated_at') or 'unknown'}"
             elif plan_state == "outdated":
                 body = _text("return_mode_outdated_body")
                 action_label = _text("action_refresh")
-                recommendation_fact = (
-                    f"outdated:{recommendation.get('updated_at') or 'unknown'}"
-                )
+                recommendation_fact = f"outdated:{recommendation.get('updated_at') or 'unknown'}"
             else:
                 body = _text("return_mode_none_body")
                 action_label = _text("action_create")
                 recommendation_fact = "none"
 
         return _signal(
-            "return_mode", "trainings", "accent",
-            title, body,
-            instance_fact=(
-                f"last_workout={last.isoformat()},recommendation={recommendation_fact}"
-            ),
-            action_type=action_type, action_label=action_label,
+            "return_mode",
+            "trainings",
+            "accent",
+            title,
+            body,
+            instance_fact=(f"last_workout={last.isoformat()},recommendation={recommendation_fact}"),
+            action_type=action_type,
+            action_label=action_label,
             glyph="back",
         )
     return None
@@ -383,20 +406,21 @@ def _deload_signal(
     week_start = anchor + timedelta(days=(position["block_week"] - 1) * 7)
     trained_this_week = any(
         week_start <= when <= today
-        for when in (
-            coach_features._workout_date(workout) for workout in workouts
-        )
+        for when in (coach_features._workout_date(workout) for workout in workouts)
         if when is not None
     )
     if trained_this_week:
         # The first deload session closes the banner; the plan card carries on.
         return None
     return _signal(
-        "deload_week", "deload", "accent",
+        "deload_week",
+        "deload",
+        "accent",
         _text("deload_title"),
         _text("deload_body"),
         instance_fact=f"week={week_start.isoformat()}",
-        action_type="open_next_workout", action_label=_text("action_plan"),
+        action_type="open_next_workout",
+        action_label=_text("action_plan"),
         note=_text("deload_note"),
         glyph="wave",
     )
@@ -431,10 +455,14 @@ def _report_signal(
         if stats:
             body += f" · {stats['pct']}% плана"
     return _signal(
-        "weekly_report_ready", "report", "info",
-        _text("report_title"), body,
+        "weekly_report_ready",
+        "report",
+        "info",
+        _text("report_title"),
+        body,
         instance_fact=f"period={report.get('period_end')}",
-        action_type="open_weekly_report", action_label=_text("action_report"),
+        action_type="open_weekly_report",
+        action_label=_text("action_report"),
         glyph="doc",
     )
 
@@ -453,14 +481,12 @@ def _week_done_signal(
         int(planned) if isinstance(planned, (int, float)) and not isinstance(planned, bool) else 0,
     )
     stats = coach_features.adherence_between(workouts, week_start, week_end)
-    if (
-        not stats
-        or stats["sessions"] < needed
-        or stats["pct"] < WEEK_DONE_MIN_PCT
-    ):
+    if not stats or stats["sessions"] < needed or stats["pct"] < WEEK_DONE_MIN_PCT:
         return None
     return _signal(
-        "week_done", "milestone", "positive",
+        "week_done",
+        "milestone",
+        "positive",
         _text("week_done_title", pct=str(stats["pct"])),
         _text("week_done_body"),
         instance_fact=f"week={week_start.isoformat()}",
@@ -502,9 +528,8 @@ def compute_signals(
 
     # One family, one message: the critical waist-limit episode supersedes a
     # routine freshness reminder instead of stacking two measurement banners.
-    measurements = (
-        _waist_limit_signal(waists, state, today)
-        or _measurements_signal(body_weights, waists, state, today)
+    measurements = _waist_limit_signal(waists, state, today) or _measurements_signal(
+        body_weights, waists, state, today
     )
     candidates = [
         measurements,
@@ -519,11 +544,10 @@ def compute_signals(
     active: list[dict[str, Any]] = []
     for signal in signals:
         snooze = snoozes.get(signal["instance_key"], _MISSING)
-        if snooze is not _MISSING:
-            # A row with NULL until = episodic dismiss (hidden while the
-            # episode lasts); a timestamp hides until it passes.
-            if snooze is None or int(snooze) > now_ts:
-                continue
+        # A row with NULL until = episodic dismiss (hidden while the episode
+        # lasts); a timestamp hides until it passes.
+        if snooze is not _MISSING and (snooze is None or int(snooze) > now_ts):
+            continue
         active.append(signal)
 
     # A celebration next to a warning celebrates nothing.
@@ -543,14 +567,8 @@ def compute_signals(
     # of silently losing the nudge, ride it as the muted third line of whatever
     # banner sits on top. Under a critical first the second slot is open, so
     # the nudge keeps its own card.
-    trend = next(
-        (signal for signal in active if signal["id"] == "weight_trend_stale"), None
-    )
-    if (
-        trend is not None
-        and active[0] is not trend
-        and active[0]["severity"] != "critical"
-    ):
+    trend = next((signal for signal in active if signal["id"] == "weight_trend_stale"), None)
+    if trend is not None and active[0] is not trend and active[0]["severity"] != "critical":
         if not active[0].get("note"):
             active[0]["note"] = _text("weight_trend_collapsed_note")
         active.remove(trend)
