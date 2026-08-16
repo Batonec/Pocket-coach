@@ -91,12 +91,23 @@ jobs:
     # тронут iOS. Для публичного репозитория минуты бесплатны, но очередь на
     # macOS длиннее — гонять их на каждый бэкендовый коммит незачем.
     if: needs.changes.outputs.ios == 'true'
-    runs-on: macos-15
+    # macos-26 нужен ради Xcode 26: Views.swift использует glassEffect (Liquid
+    # Glass), которого нет в SDK Xcode 16 с образа macos-15 — там сборка падает
+    # на компиляции, а не на тестах.
+    runs-on: macos-26
     timeout-minutes: 45
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Select the newest Xcode
+        run: |
+          set -eu
+          newest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "Xcode: $newest"
+          sudo xcode-select -s "$newest"
+          xcodebuild -version
 
       - name: Pick an available iPhone simulator
         id: sim
