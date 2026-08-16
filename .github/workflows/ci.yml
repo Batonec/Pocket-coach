@@ -102,17 +102,36 @@ jobs:
         id: sim
         run: |
           set -eu
-          # Имя устройства не хардкодим: состав симуляторов в образах раннера
-          # меняется, и «iPhone 17» отвалится молча в тот день, когда его уберут.
-          name="$(xcrun simctl list devices available \
-            | grep -oE '^ +iPhone [^(]+' | tail -1 | sed 's/^ *//;s/ *$//')"
-          if [ -z "$name" ]; then
-            echo "На раннере нет ни одного доступного симулятора iPhone" >&2
-            xcrun simctl list devices available >&2
-            exit 1
-          fi
-          echo "Симулятор: $name"
-          echo "name=$name" >> "$GITHUB_OUTPUT"
+          # Берём UDID, а не имя: имена вроде «iPhone SE (3rd generation)» ломают
+          # любой разбор скобок, а образы раннера меняют состав устройств —
+          # захардкоженное имя отвалилось бы молча в день замены.
+          cat > /tmp/pick_simulator.py <<'PYEOF'
+          import json
+          import subprocess
+          import sys
+
+          raw = subprocess.check_output(
+              ["xcrun", "simctl", "list", "devices", "available", "--json"]
+          )
+          best = None
+          for runtime, devices in json.loads(raw)["devices"].items():
+              if "iOS" not in runtime:
+                  continue
+              for device in devices:
+                  if not device["name"].startswith("iPhone"):
+                      continue
+                  key = (runtime, device["name"])
+                  if best is None or key > best[0]:
+                      best = (key, device["udid"], device["name"])
+          if best is None:
+              sys.exit("на раннере нет ни одного доступного симулятора iPhone")
+          print(f"{best[1]}\t{best[2]}")
+          PYEOF
+          picked="$(python3 /tmp/pick_simulator.py)"
+          udid="${picked%%$'\t'*}"
+          name="${picked#*$'\t'}"
+          echo "Симулятор: $name ($udid)"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
       - name: Run iOS tests
         working-directory: ios
@@ -121,7 +140,7 @@ jobs:
           xcodebuild \
             -project TrainerIOS.xcodeproj \
             -scheme TrainerIOS \
-            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
             test
 
   deploy-backend:
