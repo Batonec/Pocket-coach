@@ -20,7 +20,7 @@ class PromptTemplateTests(unittest.TestCase):
         """
         self.assertEqual(
             coach_prompts.slots(coach_prompts.load("system")),
-            {"profile", "catalog", "catalog_gaps", "phase_policy"},
+            {"profile", "catalog", "catalog_gaps", "phase_policy", "program"},
         )
 
     def test_missing_slot_raises(self):
@@ -108,6 +108,35 @@ class PromptTemplateTests(unittest.TestCase):
         )
         self.assertEqual(declared - used, set(), "объявлены, но не используются")
         self.assertEqual(used - declared, set(), "используются, но не объявлены")
+
+
+    def test_sections_are_sliced_by_heading_not_by_number(self):
+        """Атлет перенумеровывает разделы, правя документ: срез по «## 4.»
+        начал бы молча отдавать не ту главу."""
+        doc = "## 7. Прогрессия\nтело П\n\n## 8. Тренировочные дни\nтело Т\n"
+        body, missing = coach_prompts.document_sections(
+            doc, ["Тренировочные дни", "Прогрессия"]
+        )
+        self.assertEqual(missing, [])
+        self.assertLess(body.index("тело Т"), body.index("тело П"))  # порядок запроса
+
+    def test_missing_section_is_reported_not_swallowed(self):
+        body, missing = coach_prompts.document_sections(
+            "## 1. Прогрессия\nтело\n", ["Прогрессия", "Тренировочные дни"]
+        )
+        self.assertEqual(missing, ["Тренировочные дни"])
+        self.assertIn("тело", body)
+
+    def test_program_slot_is_empty_without_a_strategy(self):
+        """Секция появляется целиком или не появляется вовсе."""
+        self.assertEqual(recommender._render_program(None), "")
+        self.assertEqual(recommender._render_program(""), "")
+
+    def test_program_warns_about_renamed_sections(self):
+        rendered = recommender._render_program("## 1. Прогрессия\nтело\n")
+        self.assertIn("не найдены разделы", rendered)
+        self.assertIn("Тренировочные дни", rendered)
+        self.assertIn("тело", rendered)
 
 
 class BuiltPromptTests(unittest.TestCase):

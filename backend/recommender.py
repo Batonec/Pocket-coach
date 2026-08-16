@@ -188,6 +188,56 @@ def update_profile_block(
     return raw
 
 
+# Разделы рабочего документа стратегии, которые уходят в системный промпт.
+# Резать по ЗАГОЛОВКУ, а не по номеру: атлет перенумеровывает разделы, правя
+# документ, и срез по «## 4.» начал бы молча отдавать не ту главу.
+# Не берём: «Как это читать» и «С чего начинаем» (мета для человека), «Питание»
+# и «Измерения» (числа уже приходят в КОНТЕКСТЕ, протокол — прозой в профиле),
+# «Расхождения с vision» (честность для атлета, для генерации шум) и раздел
+# следующего этапа — план строится по текущему.
+STRATEGY_SECTIONS = [
+    "Скелет: семь фаз",
+    "Ф0 — возврат (недели 1–4)",
+    "Тренировочные дни",
+    "Прогрессия",
+    "Пробел каталога и зачем в плане ноги",
+    "Если выпала неделя",
+]
+
+
+def load_strategy(path: Path | str | None) -> str | None:
+    """Рабочий документ стратегии из data/ рядом с профилем.
+
+    Личный текст: в репозиторий он не попадает, живёт на VPS вместе с
+    coach_profile.json. Отсутствующий или битый файл — это None и промпт без
+    раздела ПРОГРАММА, а не отказ генерации.
+    """
+    if not path:
+        return None
+    try:
+        text = Path(path).read_text("utf-8")
+    except OSError:
+        return None
+    return text or None
+
+
+def _render_program(strategy: str | None) -> str:
+    """Слот {{program}}: срез стратегии либо пустая строка.
+
+    Пустая строка намеренно: секция появляется целиком или не появляется
+    вовсе — иначе в промпте остался бы заголовок без содержания.
+    """
+    if not strategy:
+        return ""
+    body, missing = coach_prompts.document_sections(strategy, STRATEGY_SECTIONS)
+    parts = [_block("program_header")]
+    if missing:
+        parts.append(_block("program_missing", sections=", ".join(missing)))
+    if body:
+        parts.append(body)
+    return "\n\n".join(parts) + "\n\n"
+
+
 def _render_profile(profile: dict[str, Any] | None) -> str:
     if not profile:
         return (
@@ -399,6 +449,7 @@ def _build_system_prompt(
     catalog: list[dict[str, Any]],
     profile: dict[str, Any] | None = None,
     state: dict[str, Any] | None = None,
+    strategy: str | None = None,
 ) -> str:
     """Assemble the system prompt from the template in ``prompts/system.md``.
 
@@ -417,6 +468,7 @@ def _build_system_prompt(
         catalog=catalog_lines,
         catalog_gaps=CATALOG_GAPS,
         phase_policy=_render_phase_policy(state),
+        program=_render_program(strategy),
     )
 
 
@@ -1023,6 +1075,7 @@ def generate_with_trace(
     *,
     profile: dict[str, Any] | None = None,
     state: dict[str, Any] | None = None,
+    strategy: str | None = None,
     waists: list[dict[str, Any]] | None = None,
     today: date | None = None,
     model: str = DEFAULT_MODEL,
@@ -1045,7 +1098,7 @@ def generate_with_trace(
 
     today = today or date.today()
     state = state if state is not None else coach_state.load_state(None)
-    system = _build_system_prompt(catalog, profile, state)
+    system = _build_system_prompt(catalog, profile, state, strategy)
     user = _build_user_prompt(
         workouts, body_weights, today, history_limit,
         catalog=catalog, state=state, waists=waists,
@@ -1161,6 +1214,7 @@ def generate(
     *,
     profile: dict[str, Any] | None = None,
     state: dict[str, Any] | None = None,
+    strategy: str | None = None,
     waists: list[dict[str, Any]] | None = None,
     today: date | None = None,
     model: str = DEFAULT_MODEL,
@@ -1179,6 +1233,7 @@ def generate(
         catalog,
         profile=profile,
         state=state,
+        strategy=strategy,
         waists=waists,
         today=today,
         model=model,

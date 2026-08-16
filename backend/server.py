@@ -35,6 +35,7 @@ DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(DATA_DIR / "trainer.db")))
 # Athlete profile for the coach prompt: personal/medical context, lives next to
 # the DB on the server only (never in the public repo).
 COACH_PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
+COACH_STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))
 # Mutable coaching state (preparation phase, waist limits) —
 # same location policy as the profile; switched via the Coach MCP tools.
 COACH_STATE_PATH = coach_state.default_state_path(DB_PATH)
@@ -87,6 +88,7 @@ def _generate_and_store_recommendation(user_id: int) -> dict[str, Any] | None:
             body_weights,
             EXERCISE_CATALOG,
             profile=recommender.load_profile(COACH_PROFILE_PATH),
+            strategy=recommender.load_strategy(COACH_STRATEGY_PATH),
             state=coach_state.load_state(COACH_STATE_PATH),
             waists=STORE.list_waists(user_id),
         )

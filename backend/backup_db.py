@@ -26,6 +26,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
 PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
+STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))
 STATE_PATH = Path(os.getenv("COACH_STATE_PATH", str(DB_PATH.parent / "coach_state.json")))
 BACKUP_DIR = Path(os.getenv("BACKUP_DIR", str(DB_PATH.parent / "backups")))
 KEEP = int(os.getenv("BACKUP_KEEP", "14"))
@@ -82,6 +83,7 @@ def main() -> None:
     # next to the DB backup so one directory restores everything.
     for source, prefix, label in (
         (PROFILE_PATH, "coach_profile", "профиль"),
+        (STRATEGY_PATH, "coach_strategy", "стратегия"),
         (STATE_PATH, "coach_state", "состояние"),
     ):
         if source.exists():
