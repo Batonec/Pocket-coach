@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
+      ios: ${{ steps.filter.outputs.ios }}
 
     steps:
       - name: Check out repository
@@ -61,6 +62,10 @@ jobs:
 
           echo "backend=$(has_match '^(backend/server\.py$|backend/backend_store\.py$|backend/recommender\.py$|backend/coach_state\.py$|backend/coach_features\.py$|backend/coach_signals\.py$|backend/coach_prompts\.py$|backend/prompts/.*\.md$|backend/copy/.*\.md$|backend/refresh_recommendation\.py$|backend/weekly_report\.py$|backend/backup_db\.py$|coach_mcp/server\.py$|backend/deploy/trainer-miniapp-backend\.service$|\.github/workflows/deploy-backend\.yml$)')" >> "$GITHUB_OUTPUT"
 
+          # Каталог целиком: в iOS нет списка модулей, который можно забыть
+          # обновить, — любой .swift, ресурс или сам проект требуют пересборки.
+          echo "ios=$(has_match '^(ios/.*|\.github/workflows/ci\.yml$)')" >> "$GITHUB_OUTPUT"
+
   test:
     name: Run test suite
     needs: changes
@@ -78,6 +83,46 @@ jobs:
 
       - name: Run automated tests
         run: python -m unittest discover -s backend/tests -p "test_*.py" -v
+
+  ios:
+    name: Run iOS tests
+    needs: changes
+    # macOS-раннеры дороже линуксовых на порядок, поэтому только когда правда
+    # тронут iOS. Для публичного репозитория минуты бесплатны, но очередь на
+    # macOS длиннее — гонять их на каждый бэкендовый коммит незачем.
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Pick an available iPhone simulator
+        id: sim
+        run: |
+          set -eu
+          # Имя устройства не хардкодим: состав симуляторов в образах раннера
+          # меняется, и «iPhone 17» отвалится молча в тот день, когда его уберут.
+          name="$(xcrun simctl list devices available \
+            | grep -oE '^ +iPhone [^(]+' | tail -1 | sed 's/^ *//;s/ *$//')"
+          if [ -z "$name" ]; then
+            echo "На раннере нет ни одного доступного симулятора iPhone" >&2
+            xcrun simctl list devices available >&2
+            exit 1
+          fi
+          echo "Симулятор: $name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Run iOS tests
+        working-directory: ios
+        run: |
+          set -eu
+          xcodebuild \
+            -project TrainerIOS.xcodeproj \
+            -scheme TrainerIOS \
+            -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.name }}" \
+            test
 
   deploy-backend:
     name: Deploy backend after tests

@@ -42,8 +42,10 @@ xcodebuild -project TrainerIOS.xcodeproj -scheme TrainerIOS -destination 'generi
 xcodebuild -project TrainerIOS.xcodeproj -scheme TrainerIOS -destination 'platform=iOS Simulator,name=iPhone 17' test
 ```
 
-Линтеров и форматтеров в проекте нет — ни для Python, ни для Swift. Единственный автоматический
-гейт — unittest-suite в CI.
+Линтеров и форматтеров в проекте нет — ни для Python, ни для Swift. Автоматических гейта два:
+unittest-suite (всегда) и iOS-тесты на macOS-раннере (только когда тронут `ios/`). Имя симулятора
+в воркфлоу не захардкожено — берётся последний доступный iPhone, иначе смена образа раннера
+уронила бы сборку без причины.
 
 Деплой: пуш в `main` → CI прогоняет тесты → если затронут backend, деплоит его на VPS.
 Ручной вариант — `./backend/deploy/deploy.sh backend` (`web`/`bot` там мёртвые, `coach-mcp` живой).
