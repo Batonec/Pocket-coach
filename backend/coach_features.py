@@ -88,13 +88,33 @@ SMALL_GROUP_TARGETS: dict[str, tuple[int, int]] = {
 def group_volume_targets(
     week_target: tuple[int, int] | None,
     maintenance_sets: tuple[int, int] | None = None,
+    group_targets: dict[str, Any] | None = None,
 ) -> dict[str, tuple[int, int]]:
-    """Per-group weekly set targets for the client's volume screen: big groups
-    follow the current block-week corridor (ramp/deload), small groups keep
-    their policy ranges, maintenance flattens everything to 2–3."""
+    """Per-group weekly set targets for the client's volume screen.
+
+    Without an override: big groups follow the current block-week corridor
+    (ramp/deload), small groups keep their policy ranges, maintenance flattens
+    everything to 2–3. A single corridor for every big group is the default
+    precisely because the default methodology has no per-group priorities.
+
+    ``group_targets`` from the athlete's phase parameters overrides that for the
+    named groups: a programme where back gets 16 sets and quads 9 cannot be
+    expressed by one corridor. The override states the MATURE block; the ramp of
+    the current week comes from the block week and from the programme text, so
+    no scaling rule is invented here.
+    """
+    override = {
+        group: tuple(bounds)
+        for group, bounds in (group_targets or {}).items()
+        if group in MUSCLE_GROUPS
+        and isinstance(bounds, (list, tuple))
+        and len(bounds) == 2
+    }
     targets: dict[str, tuple[int, int]] = {}
     for group in MUSCLE_GROUPS:
-        if maintenance_sets:
+        if group in override:
+            targets[group] = override[group]
+        elif maintenance_sets:
             targets[group] = tuple(maintenance_sets)
         elif group in BIG_GROUPS:
             targets[group] = tuple(week_target) if week_target else (10, 16)
@@ -428,12 +448,27 @@ def render_weekly_volume(
     volume: dict[str, dict[str, float]],
     week_target: tuple[int, int] | None,
     maintenance_sets: tuple[int, int] | None = None,
+    group_targets: dict[str, Any] | None = None,
 ) -> str:
+    targets = (
+        group_volume_targets(week_target, maintenance_sets, group_targets)
+        if group_targets
+        else {}
+    )
     lines = []
     for group, counts in volume.items():
         effective = f"{counts['effective']:g}"
-        lines.append(f"  {group}: {counts['direct']} прямых / {effective} эффективных")
-    if week_target:
+        line = f"  {group}: {counts['direct']} прямых / {effective} эффективных"
+        goal = targets.get(group)
+        if goal:
+            line += f" (цель блока {goal[0]}–{goal[1]})"
+        lines.append(line)
+    if group_targets:
+        lines.append(
+            "  Цели выше — объём ЗРЕЛОГО блока по программе; на неделях разгона "
+            "идём к ним снизу, ориентир недели — в разделе ПРОГРАММА."
+        )
+    elif week_target:
         lines.append(
             f"  Цель этой недели блока для крупных групп: {week_target[0]}–{week_target[1]} "
             "эффективных сетов; малые группы — пропорционально ниже своих потолков."
