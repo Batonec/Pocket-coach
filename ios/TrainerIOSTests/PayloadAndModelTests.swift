@@ -247,7 +247,10 @@ final class PayloadAndModelTests: XCTestCase {
 
         XCTAssertEqual(catalog.exercises.count, 12)
         XCTAssertEqual(catalog.exercises.first?.name, "Жим ногами")
+        // id 1 — исторический дубль id 18: старые записи всё ещё им помечены.
         XCTAssertTrue(catalog.exercises.contains(ExerciseDefinition(id: 1, name: "Жим гор.")))
-        XCTAssertTrue(catalog.exercises.contains(ExerciseDefinition(id: 4, name: "Подтягивания грав.")))
+        XCTAssertTrue(catalog.exercises.contains(ExerciseDefinition(id: 19, name: "Задняя дельта")))
+        // Гравитрон выведен из каталога в августе 2026 — такого тренажёра в зале нет.
+        XCTAssertFalse(catalog.exercises.contains { $0.id == 4 })
     }
 }

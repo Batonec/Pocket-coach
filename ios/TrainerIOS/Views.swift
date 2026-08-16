@@ -1021,13 +1021,23 @@ struct CoachPhaseChip: View {
         if context.deloadWeek == true {
             return CoachPhaseChip(label: "РАЗГРУЗКА", tint: DesignPalette.warn)
         }
-        guard let phase = context.phase else { return nil }
+        // The athlete names the stage in coach_state (phase_params.title) — e.g.
+        // «Ф0 · возврат», where the engine code is still cut_recomp. Rendering
+        // the engine code would print «ДЕФИЦИТ» on a stage whose whole point is
+        // NOT to lose weight. The switch stays as the fallback for a plan
+        // generated before the title existed.
         let name: String
-        switch phase {
-        case "cut_recomp": name = "ДЕФИЦИТ"
-        case "lean_bulk": name = "НАБОР"
-        case "maintenance": name = "ПОДДЕРЖАНИЕ"
-        default: name = phase.uppercased()
+        if let title = context.phaseTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            name = title.uppercased()
+        } else {
+            guard let phase = context.phase else { return nil }
+            switch phase {
+            case "cut_recomp": name = "ДЕФИЦИТ"
+            case "lean_bulk": name = "НАБОР"
+            case "maintenance": name = "ПОДДЕРЖАНИЕ"
+            default: name = phase.uppercased()
+            }
         }
         if let week = context.blockWeek {
             return CoachPhaseChip(label: "\(name) · Н\(week)", tint: DesignPalette.ink3)
