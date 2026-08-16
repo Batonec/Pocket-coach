@@ -45,6 +45,35 @@ def slots(template: str) -> set[str]:
     return set(_SLOT_RE.findall(template))
 
 
+_FRAGMENT_RE = re.compile(r"^## ([a-z_]+)[ \t]*$", re.M)
+
+
+def fragments(name: str) -> dict[str, str]:
+    """Named fragments of a block file: ``## имя`` starts a fragment.
+
+    Prose that arrives interleaved with computed data — block captions, single
+    lines picked by a condition — cannot live in one template with optional
+    slots without weakening the «unfilled slot is a crash» rule. It lives here
+    instead: the text is in the file, the condition stays in Python.
+
+    Only newlines are stripped from a fragment, never spaces: a caption may
+    legitimately start with one (« — плановая разгрузочная неделя.»). Everything
+    before the first heading is a comment.
+    """
+    text = load(name)
+    marks = list(_FRAGMENT_RE.finditer(text))
+    if not marks:
+        raise PromptError(f"в {name!r} нет ни одного фрагмента «## имя»")
+    out: dict[str, str] = {}
+    for i, mark in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        body = text[mark.end():end].strip("\n")
+        if mark.group(1) in out:
+            raise PromptError(f"фрагмент {mark.group(1)!r} в {name!r} объявлен дважды")
+        out[mark.group(1)] = body
+    return out
+
+
 def render(template: str, **values: str) -> str:
     """Fill every ``{{slot}}``; refuse to ship a half-filled prompt."""
     expected = slots(template)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pathlib
 import unittest
 
 import support  # noqa: F401 — adds backend to sys.path
@@ -61,6 +62,39 @@ class PromptTemplateTests(unittest.TestCase):
             recommender.REPORT_SYSTEM_PROMPT, coach_prompts.load("report")
         )
         self.assertNotIn("{{", recommender.REPORT_SYSTEM_PROMPT)
+
+
+    def test_every_declared_block_is_used_by_the_code(self):
+        """Фрагмент, оставшийся в файле без единого вызова _block(), — мёртвый
+        текст: его правят, а в промпт он не едет."""
+        import re
+
+        source = (support.MINIAPP_DIR / "recommender.py").read_text("utf-8")
+        used = set(re.findall(r'_block\(\s*\n?\s*"([a-z_]+)"', source))
+        used |= set(re.findall(r'"(report_deload_(?:yes|no))"', source))
+        declared = set(coach_prompts.fragments("user_blocks"))
+        self.assertEqual(declared - used, set(), "объявлены, но не используются")
+        self.assertEqual(used - declared, set(), "используются, но не объявлены")
+
+    def test_duplicate_fragment_name_raises(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = coach_prompts.PROMPTS_DIR
+            coach_prompts.PROMPTS_DIR = pathlib.Path(tmp)
+            try:
+                (pathlib.Path(tmp) / "dup.md").write_text(
+                    "## one\nA\n\n## one\nB\n", "utf-8"
+                )
+                with self.assertRaises(coach_prompts.PromptError):
+                    coach_prompts.fragments("dup")
+            finally:
+                coach_prompts.PROMPTS_DIR = saved
+
+    def test_fragment_keeps_leading_space(self):
+        blocks = coach_prompts.fragments("user_blocks")
+        self.assertTrue(blocks["deload_week_label"].startswith(" — "))
+        self.assertEqual(blocks["report_deload_no"], ".")
 
 
 class BuiltPromptTests(unittest.TestCase):

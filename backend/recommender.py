@@ -319,8 +319,14 @@ def _days_since_last(workouts: list[dict[str, Any]], today: date) -> int | None:
 
 # Шаблон политики фаз читается один раз: он не зависит от данных, а слоты нужны
 # для сборки — рендерить только то, что шаблон реально просит.
+_BLOCKS = coach_prompts.fragments("user_blocks")
 _PHASE_POLICY_TEMPLATE = coach_prompts.load("phase_policy")
 _PHASE_POLICY_SLOTS = coach_prompts.slots(_PHASE_POLICY_TEMPLATE)
+
+
+def _block(name: str, **values: str) -> str:
+    """Подпись к блоку промпта из prompts/user_blocks.md."""
+    return coach_prompts.render(_BLOCKS[name], **values)
 
 
 def _format_range(bounds: Any, unit: str = "") -> str:
@@ -441,35 +447,39 @@ def _build_user_prompt(
     # --- explicit context block, always the first thing the model reads ------
     week_label = f"неделя блока {week}"
     if position["deload_week"]:
-        week_label += (
-            " — ПЛАНОВАЯ РАЗГРУЗОЧНАЯ НЕДЕЛЯ (каждые "
-            f"{params.get('deload_every_weeks')} недель накопления): объём −30–40%, "
-            "веса рабочие, без отказа; со следующей недели ramp начинается заново"
+        week_label += _block(
+            "deload_week_label", weeks=str(params.get("deload_every_weeks"))
         )
     context_lines = [
-        f"Сегодня: {today.isoformat()} ({_RU_WEEKDAYS[today.weekday()]}).",
-        f"Фаза: {phase} («{params['title']}»), {week_label}. Ориентиры фазы: "
-        f"{_format_range(params['calories'])} ккал, {params['rate_text']}, белок "
-        f"{_format_range(params['protein_g'])} г, сессия "
-        f"{_format_range(params['session_sets'])} рабочих подходов.",
+        _block(
+            "context_today",
+            date=today.isoformat(),
+            weekday=_RU_WEEKDAYS[today.weekday()],
+        ),
+        _block(
+            "context_phase",
+            phase=phase,
+            title=str(params["title"]),
+            week_label=week_label,
+            calories=_format_range(params["calories"]),
+            rate=str(params["rate_text"]),
+            protein=_format_range(params["protein_g"]),
+            session_sets=_format_range(params["session_sets"]),
+        ),
     ]
     if days is None:
-        context_lines.append("Дата последней тренировки неизвестна.")
+        context_lines.append(_block("context_last_unknown"))
     elif returning:
-        context_lines.append(
-            f"Дней с последней тренировки: {days} — ВОЗВРАТ ПОСЛЕ ПЕРЕРЫВА (≥14 дн). "
-            "Методика возврата на тебе; жёсткая граница одна: не выше доперерывных "
-            "рабочих весов (они ниже)."
-        )
+        context_lines.append(_block("context_returning", days=str(days)))
     else:
-        context_lines.append(f"Дней с последней тренировки: {days}.")
+        context_lines.append(_block("context_last", days=str(days)))
     chunks = ["=== КОНТЕКСТ ===\n" + "\n".join(context_lines)]
 
     volume = coach_features.weekly_volume(workouts, today)
     maintenance_sets = params.get("sets_per_group") if phase == "maintenance" else None
     chunks.append(
-        "Объём за последние 7 дней (прямые/эффективные подходы; в эффективных жимы "
-        "уже добирают трицепсу и дельтам, тяги — бицепсу):\n"
+        _block("volume_header")
+        + "\n"
         + coach_features.render_weekly_volume(volume, week_target, maintenance_sets)
     )
 
@@ -478,18 +488,18 @@ def _build_user_prompt(
     nutrition_chunk = list(measurement_lines)
     if matrix["lines"]:
         nutrition_chunk.append(
-            "Матрица питания (вычислено сервером): " + "; ".join(matrix["lines"]) + "."
+            _block("nutrition_matrix", lines="; ".join(matrix["lines"]))
         )
     if matrix["goal"]:
-        nutrition_chunk.append("ЦЕЛЬ ФАЗЫ: " + matrix["goal"] + ".")
+        nutrition_chunk.append(_block("nutrition_goal", goal=matrix["goal"]))
     if nutrition_chunk:
         chunks.append("\n".join(nutrition_chunk))
 
     summaries = coach_features.exercise_summaries(workouts, catalog or [], today)
     if summaries:
         chunks.append(
-            "Сводка по тренажёрам за ВСЮ историю (пики, e1RM по Эпли и даты ПР "
-            "посчитаны сервером — это факты, не пересчитывай):\n"
+            _block("summaries_header")
+            + "\n"
             + coach_features.render_exercise_summaries(summaries)
         )
 
@@ -515,10 +525,7 @@ def _build_user_prompt(
     ramp_lines = coach_features.comeback_ramp(workouts, catalog or [], today)
     if ramp_lines:
         chunks.append(
-            "Ступени разгона к пиковым весам (посчитаны сервером как ориентир — "
-            "темп возврата решаешь ты). Это план на СЛЕДУЮЩИЕ сессии: первая "
-            "ступень может быть выше доперерывного рабочего, а возвратная сессия "
-            "его не превышает:\n" + "\n".join(ramp_lines)
+            _block("comeback_ramp_header") + "\n" + "\n".join(ramp_lines)
         )
 
     discipline_lines: list[str] = []
@@ -534,19 +541,9 @@ def _build_user_prompt(
         chunks.append("\n".join(discipline_lines))
 
     raw_count = min(history_limit, RAW_HISTORY_COUNT)
-    chunks.append(
-        f"Последние {raw_count} тренировок сырыми (от старых к новым; формат "
-        "'дата [нагрузка] упражнение вес×повторы, ...'). Значок после подхода — "
-        "субъективная тяжесть: '-' = легко, '+' = тяжело (это НЕ дополнительные "
-        "повторы), без значка = нормально; '@N' = записанный RIR последнего "
-        "подхода (точнее значков). Более старые тренировки уже учтены в сводке "
-        "выше:"
-    )
+    chunks.append(_block("raw_history_header", count=str(raw_count)))
     chunks.append(_serialize_history(workouts, raw_count, catalog))
-    chunks.append(
-        "Составь план следующей тренировки и тренерский комментарий (когда идти, "
-        "статус недельных объёмов, питание по матрице выше)."
-    )
+    chunks.append(_block("task"))
     return "\n\n".join(chunks)
 
 
@@ -1219,22 +1216,34 @@ def _build_report_prompt(
     ]
 
     chunks = [
-        f"Период отчёта: последние {days} дней, по {today.isoformat()} "
-        f"({_RU_WEEKDAYS[today.weekday()]}).",
-        f"Фаза: {params['phase']} («{params['title']}»), неделя блока "
-        f"{position['block_week']}"
-        + (" — плановая разгрузочная неделя." if position["deload_week"] else ".")
-        + f" Ориентиры фазы: {_format_range(params['calories'])} ккал, "
-        f"{params['rate_text']}, белок {_format_range(params['protein_g'])} г.",
+        _block(
+            "report_period",
+            days=str(days),
+            date=today.isoformat(),
+            weekday=_RU_WEEKDAYS[today.weekday()],
+        ),
+        _block(
+            "report_phase",
+            phase=params["phase"],
+            title=str(params["title"]),
+            week=str(position["block_week"]),
+            deload=_block(
+                "report_deload_yes" if position["deload_week"] else "report_deload_no"
+            ),
+            calories=_format_range(params["calories"]),
+            rate=str(params["rate_text"]),
+            protein=_format_range(params["protein_g"]),
+        ),
     ]
 
     if week_workouts:
         chunks.append(
-            f"Тренировки за период ({len(week_workouts)}):\n"
+            _block("report_workouts_header", count=str(len(week_workouts)))
+            + "\n"
             + _serialize_history(week_workouts, len(week_workouts), catalog)
         )
     else:
-        chunks.append("Тренировок за период: 0.")
+        chunks.append(_block("report_no_workouts"))
 
     week_target = (
         params.get("ramp_start")
@@ -1245,7 +1254,8 @@ def _build_report_prompt(
         params.get("sets_per_group") if params["phase"] == "maintenance" else None
     )
     chunks.append(
-        "Объём за 7 дней (прямые/эффективные подходы):\n"
+        _block("report_volume_header")
+        + "\n"
         + coach_features.render_weekly_volume(
             coach_features.weekly_volume(workouts, today), week_target, maintenance_sets
         )
@@ -1258,7 +1268,9 @@ def _build_report_prompt(
         if s["days_since_pr"] < days
     ]
     chunks.append(
-        "Новые ПР за период:\n" + "\n".join(prs) if prs else "Новых ПР за период нет."
+        _block("report_prs_header") + "\n" + "\n".join(prs)
+        if prs
+        else _block("report_no_prs")
     )
 
     matrix = coach_features.nutrition_matrix(state, params, body_weights, waists, today)
@@ -1277,11 +1289,9 @@ def _build_report_prompt(
     measurements = coach_features.render_measurements(body_weights, waists, today)
     nutrition = list(measurements)
     if matrix["lines"]:
-        nutrition.append(
-            "Матрица питания (вычислено сервером): " + "; ".join(matrix["lines"]) + "."
-        )
+        nutrition.append(_block("nutrition_matrix", lines="; ".join(matrix["lines"])))
     if matrix["goal"]:
-        nutrition.append("ЦЕЛЬ ФАЗЫ: " + matrix["goal"] + ".")
+        nutrition.append(_block("nutrition_goal", goal=matrix["goal"]))
     if nutrition:
         chunks.append("\n".join(nutrition))
 
@@ -1295,25 +1305,27 @@ def _build_report_prompt(
     every = params.get("deload_every_weeks")
     if position["deload_week"]:
         next_bits.append(
-            "Эта неделя разгрузочная — со следующей ramp начинается заново с "
-            f"{_format_range(params.get('ramp_start'))} сетов/группа."
+            _block(
+                "report_next_deload_now",
+                ramp_start=_format_range(params.get("ramp_start")),
+            )
         )
     elif every and position["cycle_week"] >= int(every):
-        next_bits.append(
-            "Следующая неделя по циклу — плановая разгрузка (−30–40% объёма), "
-            "если объём блока реально набран."
-        )
+        next_bits.append(_block("report_next_deload_soon"))
     else:
         next_week = coach_state.weekly_volume_target(state, position["cycle_week"] + 1)
         if next_week:
             next_bits.append(
-                f"Цель следующей недели блока: {next_week[0]}–{next_week[1]} "
-                "эффективных сетов на крупную группу."
+                _block(
+                    "report_next_target",
+                    low=str(next_week[0]),
+                    high=str(next_week[1]),
+                )
             )
     if next_bits:
         chunks.append("\n".join(next_bits))
 
-    chunks.append("Напиши недельный отчёт по формату из системного промпта.")
+    chunks.append(_block("report_task"))
     return "\n\n".join(chunks)
 
 
