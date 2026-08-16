@@ -34,6 +34,7 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
         "rate_text": "−0.25…−0.35 кг/нед по недельной средней",
         "rate_kg_per_week": (-0.35, -0.25),
         "frequency_text": "3 тренировки в неделю (2–4 допустимо)",
+        "sessions_per_week": 3,
         "session_sets": (14, 20),
         "ramp_start": (6, 8),
         "ramp_cap": (10, 14),
@@ -48,6 +49,7 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
         "calories": (2400, 2500),
         "rate_text": "+0.5–0.8 кг/мес",
         "frequency_text": "3 тренировки в неделю (2–4 допустимо)",
+        "sessions_per_week": 3,
         "session_sets": (14, 20),
         "ramp_start": (6, 8),
         "ramp_cap": (10, 16),
@@ -61,6 +63,7 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
         "calories": (2300, 2400),
         "rate_text": "±0 кг (вес держим)",
         "frequency_text": "1 тренировка в неделю, fullbody heavy",
+        "sessions_per_week": 1,
         "session_sets": (8, 12),
         # No volume ramp: a fixed 2–3 sets per group per week keeps strength;
         # weights are NOT reduced — intensity is the retention signal.
@@ -153,6 +156,7 @@ def save_state(path: Path | str, state: dict[str, Any]) -> None:
 _OVERRIDABLE_PARAM_KEYS = {
     "calories", "rate_text", "rate_kg_per_week", "frequency_text",
     "session_sets", "ramp_start", "ramp_cap", "sets_per_group", "protein_g",
+    "sessions_per_week",
     "target_weight_kg", "ceiling_weight_kg", "deload_every_weeks", "title",
     "group_targets",
 }

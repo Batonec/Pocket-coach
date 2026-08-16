@@ -250,18 +250,26 @@ class WeekDoneSignalTests(unittest.TestCase):
         }
         return workout
 
+    def _state(self, sessions_per_week: int | None = None) -> dict:
+        state = dict(coach_state.DEFAULT_STATE, phase="cut_recomp")
+        if sessions_per_week is not None:
+            state["phase_params"] = {
+                "cut_recomp": {"sessions_per_week": sessions_per_week}
+            }
+        return state
+
     def test_ninety_percent_week_earns_the_milestone(self) -> None:
         monday = date(2026, 8, 10)  # понедельник после закрытой недели 3–9 авг
         workouts = [
             self._planned_workout("2026-08-04", done=5, planned=5),
             self._planned_workout("2026-08-07", done=5, planned=5),
         ]
-        signal = coach_signals._week_done_signal(workouts, monday)
+        signal = coach_signals._week_done_signal(workouts, self._state(2), monday)
         self.assertIsNotNone(signal)
         self.assertEqual(signal["severity"], "positive")
         self.assertIn("100%", signal["title"])
         # По средам сигнал уже мёртв.
-        self.assertIsNone(coach_signals._week_done_signal(workouts, date(2026, 8, 13)))
+        self.assertIsNone(coach_signals._week_done_signal(workouts, self._state(2), date(2026, 8, 13)))
 
     def test_low_adherence_week_is_not_celebrated(self) -> None:
         monday = date(2026, 8, 10)
@@ -269,7 +277,30 @@ class WeekDoneSignalTests(unittest.TestCase):
             self._planned_workout("2026-08-04", done=2, planned=5),
             self._planned_workout("2026-08-07", done=2, planned=5),
         ]
-        self.assertIsNone(coach_signals._week_done_signal(workouts, monday))
+        self.assertIsNone(coach_signals._week_done_signal(workouts, self._state(2), monday))
+
+    def test_week_is_not_closed_below_the_phase_frequency(self) -> None:
+        """Две идеальные сессии на фазе, которая просит четыре, — это половина
+        плана. Поздравлять с ней значит обесценить сам баннер."""
+        monday = date(2026, 8, 10)
+        workouts = [
+            self._planned_workout("2026-08-04", done=5, planned=5),
+            self._planned_workout("2026-08-07", done=5, planned=5),
+        ]
+        self.assertIsNone(
+            coach_signals._week_done_signal(workouts, self._state(4), monday)
+        )
+        self.assertIsNotNone(
+            coach_signals._week_done_signal(workouts, self._state(2), monday)
+        )
+
+    def test_single_session_week_is_never_closed(self) -> None:
+        """Нижняя граница держится, даже если фаза просит одну тренировку."""
+        monday = date(2026, 8, 10)
+        workouts = [self._planned_workout("2026-08-04", done=5, planned=5)]
+        self.assertIsNone(
+            coach_signals._week_done_signal(workouts, self._state(1), monday)
+        )
 
 
 class ComputeSignalsIntegrationTests(unittest.TestCase):

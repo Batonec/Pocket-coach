@@ -955,14 +955,34 @@ def nutrition_matrix(
             "калории пока не корректируй"
         )
         if phase == "cut_recomp":
+            # Целевой темп фазы, а не зашитый «−0.5…−0.1»: этап может просить
+            # ДЕРЖАТЬ вес (возврат, разгон объёма), и тогда «вес стоит» — это
+            # выполненная задача, а не повод срезать калории. Захардкоженный
+            # коридор советовал бы дефицит ровно за правильное поведение.
+            rate = params.get("rate_kg_per_week")
+            if isinstance(rate, (list, tuple)) and len(rate) == 2:
+                rate_low, rate_high = float(rate[0]), float(rate[1])
+            else:
+                rate_low, rate_high = -0.5, -0.1
+            holding = rate_low <= 0.0 <= rate_high
+
             target = params.get("target_weight_kg")
-            if target and ma_now is not None and ma_now <= float(target):
+            if (
+                not holding
+                and target
+                and ma_now is not None
+                and ma_now <= float(target)
+            ):
                 goal = (
                     f"цель фазы достигнута (средний вес {ma_now:.1f} ≤ {target:g} кг) — "
                     "предложи в rationale переход в lean_bulk; фазу переключает атлет"
                 )
             if trend is None:
                 lines.append(trend_missing_line)
+            elif stalled_2w and holding:
+                lines.append(
+                    "вес стоит ≥2 недель — это и есть задача этапа, калории НЕ трогай"
+                )
             elif stalled_2w and fresh_waist and waist_down:
                 lines.append(
                     "вес стоит ≥2 недель, но талия идёт вниз — это рекомп-бонус, калории НЕ снижай"
@@ -970,8 +990,9 @@ def nutrition_matrix(
             elif stalled_2w:
                 lines.append("вес стоит ≥2 недель — посоветуй −100–150 ккал")
             else:
+                in_plan = rate_low - 0.15 <= trend <= rate_high + 0.15
                 lines.append(f"тренд веса {trend:+.2f} кг/нед — в рамках плана, калории не трогай"
-                             if -0.5 <= trend <= -0.1
+                             if in_plan
                              else f"тренд веса {trend:+.2f} кг/нед — сверь с целевым темпом")
         elif phase == "lean_bulk":
             ceiling = params.get("ceiling_weight_kg")
