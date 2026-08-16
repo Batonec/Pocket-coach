@@ -241,6 +241,39 @@ class ProfileTests(unittest.TestCase):
         prompt = recommender._build_system_prompt(CATALOG)
         self.assertIn("Профиль атлета не настроен", prompt)
 
+    def test_active_phase_policy_uses_athlete_overrides(self):
+        """The active phase must be rendered from phase_params, not defaults:
+        otherwise the policy block and the КОНТЕКСТ block carry different
+        numbers and the model gets two contradicting methodologies."""
+        import coach_state
+
+        state = coach_state.load_state(None)
+        state["phase"] = "cut_recomp"
+        state["phase_params"] = {
+            "cut_recomp": {"title": "Ф0 · возврат", "calories": [2450, 2550]}
+        }
+        prompt = recommender._build_system_prompt(CATALOG, None, state)
+        self.assertIn("Ф0 · возврат", prompt)
+        self.assertIn("2450–2550", prompt)
+        self.assertNotIn("2100–2200", prompt)
+        # the two inactive phases keep the stock text
+        self.assertIn("lean_bulk", prompt)
+        self.assertIn("maintenance", prompt)
+
+    def test_phase_policy_survives_a_malformed_override(self):
+        """A range key overridden with a scalar must not crash prompt building:
+        generation never fails over methodology."""
+        import coach_state
+
+        state = coach_state.load_state(None)
+        state["phase"] = "maintenance"
+        state["phase_params"] = {
+            "maintenance": {"protein_g": 150, "session_sets": "восемь"}
+        }
+        prompt = recommender._build_system_prompt(CATALOG, None, state)
+        self.assertIn("~150+ г", prompt)
+        self.assertIn("восемь", prompt)
+
     def test_user_prompt_contains_context_volumes_and_weekday(self) -> None:
         from datetime import date
 

@@ -128,6 +128,7 @@ BACKEND_MODULES=(
   coach_state.py
   coach_features.py
   coach_signals.py
+  coach_prompts.py
   refresh_recommendation.py
   weekly_report.py
   backup_db.py
@@ -153,6 +154,10 @@ deploy_backend() {
   for module in "${BACKEND_MODULES[@]}"; do
     scp "$MINIAPP_DIR/$module" "${TARGET_HOST}:${REMOTE_BASE}/app/$module" >/dev/null
   done
+  # Проза промптов едет каталогом: поимённый список .md пришлось бы держать
+  # в синхроне так же, как список модулей, и он бы так же протух.
+  sync_dir "$MINIAPP_DIR/prompts" "$REMOTE_BASE/app/prompts"
+  sync_dir "$MINIAPP_DIR/copy" "$REMOTE_BASE/app/copy"
   scp "$SCRIPT_DIR/trainer-miniapp-backend.service" "${TARGET_HOST}:/etc/systemd/system/${BACKEND_SERVICE}" >/dev/null
 
   local remote_paths=""

@@ -20,6 +20,7 @@ from datetime import date, timedelta
 from typing import Any
 
 import coach_features
+import coach_prompts
 import coach_state
 
 # Stage thresholds for the measurements family. Due starts on day 10, not 7:
@@ -57,6 +58,15 @@ SNOOZE_DEFAULT_HOURS: dict[str, int | None] = {
 }
 
 _RU_WEEKDAYS_SHORT = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+
+# Тексты баннеров живут в copy/signals.md: пороги и жизненный цикл — здесь,
+# копирайт — там. Ключ эпизода строится из фактов, поэтому правка текста не
+# трогает ни схлопывание, ни дисмиссы.
+_COPY = coach_prompts.fragments("signals", directory=coach_prompts.COPY_DIR)
+
+
+def _text(name: str, **values: str) -> str:
+    return coach_prompts.render(_COPY[name], **values)
 
 
 def _signal(
@@ -156,14 +166,14 @@ def _waist_limit_signal(
 
     return _signal(
         "waist_limit", "measurements", "critical",
-        f"Талия {latest[1]:g} см — у лимита {limit:g}",
-        "Тренер предлагает мини-кат",
+        _text("waist_limit_title", waist=f"{latest[1]:g}", limit=f"{limit:g}"),
+        _text("waist_limit_body"),
         instance_fact=(
             f"pair={previous[0].isoformat()}:{previous[1]:g},"
             f"{latest[0].isoformat()}:{latest[1]:g},limit={limit:g}"
         ),
-        action_type="open_measurements", action_label="Замеры", action_target="waist",
-        glyph="tape",
+        action_type="open_measurements", action_label=_text("action_measurements"),
+        action_target="waist", glyph="tape",
     )
 
 
@@ -205,38 +215,44 @@ def _measurements_signal(
 
     # Mockup titles name exactly what is stale — «Обнови талию — вес свежий».
     if set(stale) == {"вес", "талия"}:
-        due_title = "Обнови замеры: вес и талия"
+        due_title = _text("measurements_due_title_both")
     elif stale == ["талия"]:
-        due_title = "Обнови талию — вес свежий"
+        due_title = _text("measurements_due_title_waist")
     else:
-        due_title = "Обнови вес — талия свежая"
+        due_title = _text("measurements_due_title_weight")
 
     if overdue:
-        accusative = {"вес": "вес", "талия": "талию"}
-        parts = " и ".join(accusative.get(part, part) for part in overdue)
+        accusative = {
+            "вес": _text("noun_accusative_weight"),
+            "талия": _text("noun_accusative_waist"),
+        }
+        parts = _text("joiner_and").join(
+            accusative.get(part, part) for part in overdue
+        )
         return _signal(
             "measurements_overdue", "measurements", "warn",
-            "Советы по калориям на паузе",
-            f"Внеси {parts} — вернутся",
+            _text("measurements_overdue_title"),
+            _text("measurements_overdue_body", what=parts),
             instance_fact=fact,
-            action_type="open_measurements", action_label="Замеры", action_target=target,
+            action_type="open_measurements", action_label=_text("action_measurements"),
+            action_target=target,
             glyph="nutrition",
         )
     if due:
         worst = max(d for d in (weight_age, waist_age) if d is not None)
         days_left = max(1, MEASUREMENT_OVERDUE_DAYS + 1 - worst)
-        body = f"Через {_plural_days(days_left)} советы по калориям встанут на паузу"
+        body = _text("measurements_due_body", days=_plural_days(days_left))
         # When fresh-ish data exists but the in-phase trend is still starving,
         # say why one more point matters instead of a separate nagging banner.
         note = None
         if coach_features.weight_trend_per_week(weight_points, today, since=phase_start) is None:
-            note = "ещё пара точек — тренд оживёт"
+            note = _text("measurements_due_note")
         return _signal(
             "measurements_due", "measurements", "info",
             due_title, body,
             instance_fact=fact,
-            action_type="open_measurements", action_label="Замеры", action_target=target,
-            note=note, glyph="scale",
+            action_type="open_measurements", action_label=_text("action_measurements"),
+            action_target=target, note=note, glyph="scale",
         )
 
     # Building phases only: the freshness gate is still green, but the in-phase
@@ -252,10 +268,11 @@ def _measurements_signal(
         goal = "среза" if phase == "cut_recomp" else "набора"
         return _signal(
             "weight_trend_stale", "measurements", "info",
-            "Взвесься — тренд веса не считается",
-            f"Фаза {goal} рулит калориями по тренду: нужен замер каждые 3–4 дня",
+            _text("weight_trend_stale_title"),
+            _text("weight_trend_stale_body", goal=goal),
             instance_fact=f"weight={last_weight},phase={phase}",
-            action_type="open_measurements", action_label="Замеры", action_target="weight",
+            action_type="open_measurements", action_label=_text("action_measurements"),
+            action_target="weight",
             glyph="scale",
         )
     return None
@@ -300,10 +317,10 @@ def _trainings_signal(
         deadline = last + timedelta(days=RETURN_BREAK_DAYS - 1)
         return _signal(
             "return_soon", "trainings", "warn",
-            f"Потренируйся до {_ru_date(deadline)}",
-            "Иначе следующая сессия — возвратная, с облегчёнными весами",
+            _text("return_soon_title", deadline=_ru_date(deadline)),
+            _text("return_soon_body"),
             instance_fact=f"last_workout={last.isoformat()}",
-            action_type="open_next_workout", action_label="План",
+            action_type="open_next_workout", action_label=_text("action_plan"),
             glyph="back",
         )
     if days >= RETURN_BREAK_DAYS:
@@ -314,29 +331,29 @@ def _trainings_signal(
             return None
 
         if plan_state == "ready":
-            title = "Возвратная тренировка готова, облегчённый вход"
+            title = _text("return_mode_ready_title")
             body = ""
             action_type = "open_next_workout"
-            action_label = "План"
+            action_label = _text("action_plan")
             recommendation_fact = "ready"
         else:
-            title = "После перерыва нужен облегчённый старт"
+            title = _text("return_mode_pending_title")
             action_type = "refresh_recommendation"
             if plan_state == "failed":
-                body = "План пока не готов — повтори генерацию"
-                action_label = "Повторить"
+                body = _text("return_mode_failed_body")
+                action_label = _text("action_retry")
                 recommendation_fact = (
                     f"failed:{recommendation.get('updated_at') or 'unknown'}"
                 )
             elif plan_state == "outdated":
-                body = "Текущий план не учитывает перерыв — обнови его"
-                action_label = "Обновить"
+                body = _text("return_mode_outdated_body")
+                action_label = _text("action_refresh")
                 recommendation_fact = (
                     f"outdated:{recommendation.get('updated_at') or 'unknown'}"
                 )
             else:
-                body = "План пока не готов — сгенерируй его"
-                action_label = "Создать"
+                body = _text("return_mode_none_body")
+                action_label = _text("action_create")
                 recommendation_fact = "none"
 
         return _signal(
@@ -373,11 +390,11 @@ def _deload_signal(
         return None
     return _signal(
         "deload_week", "deload", "accent",
-        "Разгрузочная неделя",
-        "−30–40% объёма, веса рабочие",
+        _text("deload_title"),
+        _text("deload_body"),
         instance_fact=f"week={week_start.isoformat()}",
-        action_type="open_next_workout", action_label="План",
-        note="со следующей недели набор объёма заново",
+        action_type="open_next_workout", action_label=_text("action_plan"),
+        note=_text("deload_note"),
         glyph="wave",
     )
 
@@ -399,7 +416,7 @@ def _report_signal(
         period_end = date.fromisoformat(str(report.get("period_end")))
     except (TypeError, ValueError):
         period_end = None
-    body = "Итоги, ПР, вес и питание"
+    body = _text("report_body_default")
     if period_end is not None:
         days = int(report.get("days") or 7)
         period_start = period_end - timedelta(days=days - 1)
@@ -412,9 +429,9 @@ def _report_signal(
             body += f" · {stats['pct']}% плана"
     return _signal(
         "weekly_report_ready", "report", "info",
-        "Готов отчёт недели", body,
+        _text("report_title"), body,
         instance_fact=f"period={report.get('period_end')}",
-        action_type="open_weekly_report", action_label="Отчёт",
+        action_type="open_weekly_report", action_label=_text("action_report"),
         glyph="doc",
     )
 
@@ -436,8 +453,8 @@ def _week_done_signal(
         return None
     return _signal(
         "week_done", "milestone", "positive",
-        f"Неделя закрыта: {stats['pct']}% плана",
-        "Так держать",
+        _text("week_done_title", pct=str(stats["pct"])),
+        _text("week_done_body"),
         instance_fact=f"week={week_start.isoformat()}",
         action_type=None,
         glyph="check",
@@ -527,7 +544,7 @@ def compute_signals(
         and active[0]["severity"] != "critical"
     ):
         if not active[0].get("note"):
-            active[0]["note"] = "И взвесься: тренд веса не считается"
+            active[0]["note"] = _text("weight_trend_collapsed_note")
         active.remove(trend)
     return active
 

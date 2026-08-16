@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import coach_features
+import coach_prompts
 import coach_state
 
 
@@ -316,185 +317,106 @@ def _days_since_last(workouts: list[dict[str, Any]], today: date) -> int | None:
     return None
 
 
+# Шаблон политики фаз читается один раз: он не зависит от данных, а слоты нужны
+# для сборки — рендерить только то, что шаблон реально просит.
+_BLOCKS = coach_prompts.fragments("user_blocks")
+_PHASE_POLICY_TEMPLATE = coach_prompts.load("phase_policy")
+_PHASE_POLICY_SLOTS = coach_prompts.slots(_PHASE_POLICY_TEMPLATE)
+
+
+def _block(name: str, **values: str) -> str:
+    """Подпись к блоку промпта из prompts/user_blocks.md."""
+    return coach_prompts.render(_BLOCKS[name], **values)
+
+
 def _format_range(bounds: Any, unit: str = "") -> str:
     if isinstance(bounds, (tuple, list)) and len(bounds) == 2:
         return f"{bounds[0]:g}–{bounds[1]:g}{unit}"
     return f"{bounds}{unit}"
 
 
-def _render_phase_policy() -> str:
-    cut = coach_state.PHASE_DEFAULTS["cut_recomp"]
-    bulk = coach_state.PHASE_DEFAULTS["lean_bulk"]
-    maintenance = coach_state.PHASE_DEFAULTS["maintenance"]
-    return (
-        "Подготовка ведётся ФАЗАМИ. Текущая фаза, её неделя блока и целевые ориентиры "
-        "приходят в блоке КОНТЕКСТ каждого запроса — они главнее общих цифр ниже. Все "
-        "числа фаз (калории, подходы, объёмы) — ориентиры для планирования, а не "
-        "жёсткие рамки. Фазу переключает ТОЛЬКО атлет (руками); если данные "
-        "показывают, что цель фазы достигнута, предложи смену фазы в rationale — но "
-        "план строй по текущей.\n"
-        f"- cut_recomp («{cut['title']}»): калории {_format_range(cut['calories'])} ккал, "
-        f"темп {cut['rate_text']}, {cut['frequency_text']}, сессия "
-        f"{_format_range(cut['session_sets'])} рабочих подходов, недельный объём — ramp "
-        f"{_format_range(cut['ramp_start'])} → {_format_range(cut['ramp_cap'])} сетов на "
-        "крупную группу (+1–2 сета в неделю, в первую очередь на отстающие), интенсивность "
-        "рабочая (1–2 RIR), прогрессия двойная. У новичка силовые растут и в дефиците — "
-        "плато по весам в этой фазе НЕ проблема и не повод для паники; deload-триггеры "
-        f"мягче. Белок {_format_range(cut['protein_g'])} г.\n"
-        f"- lean_bulk: калории {_format_range(bulk['calories'])} ккал, темп {bulk['rate_text']}, "
-        f"{bulk['frequency_text']}, сессия {_format_range(bulk['session_sets'])} подходов, "
-        f"объём — ramp {_format_range(bulk['ramp_start'])} → {_format_range(bulk['ramp_cap'])} "
-        "сетов на крупную группу, прогрессия двойная — ожидаются регулярные ПР. Контроль "
-        f"набора по талии; потолок — талия у лимита либо ~{bulk['ceiling_weight_kg']:g} кг. "
-        f"Белок {_format_range(bulk['protein_g'])} г.\n"
-        f"- maintenance («{maintenance['title']}»): {maintenance['frequency_text']} — одна "
-        f"fullbody heavy сессия {_format_range(maintenance['session_sets'])} подходов, "
-        f"{_format_range(maintenance['sets_per_group'])} сета на группу в неделю, объём НЕ "
-        "растёт и претензий к объёму в rationale быть не должно. Веса НЕ снижать — "
-        "интенсивность и есть сигнал удержания; прогрессия не требуется. Калории "
-        f"{_format_range(maintenance['calories'])} ккал, белок ~{maintenance['protein_g'][0]:g}+ г."
-    )
+def _format_number(value: Any) -> str:
+    """A phase parameter rendered as a single number.
+
+    Overrides are validated on write, but only loosely: a range key may arrive
+    as a scalar and a scalar key as a range. The prompt must never crash over
+    it — a broken parameter has to reach the athlete as odd text, not as a
+    failed generation.
+    """
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{value:g}"
+    return str(value)
+
+
+def _format_low(bounds: Any) -> str:
+    """Lower edge of a range parameter; a scalar override stands for itself."""
+    if isinstance(bounds, (tuple, list)) and bounds:
+        return _format_number(bounds[0])
+    return _format_number(bounds)
+
+
+def _render_phase_policy(state: dict[str, Any] | None = None) -> str:
+    """Phase policy for the system prompt; the prose lives in
+    ``prompts/phase_policy.md`` and only the numbers are computed here.
+
+    The ACTIVE phase is rendered from the athlete's merged parameters
+    (``phase_params`` overrides on top of the defaults) — otherwise the prompt
+    would carry the stock numbers while the КОНТЕКСТ block carries the real
+    ones, and the model gets two contradicting methodologies in one request.
+    The two inactive phases keep the stock numbers: they are background, and
+    they are re-set on the switch anyway.
+    """
+    merged = coach_state.phase_params(state) if state is not None else None
+    short = {"cut_recomp": "cut", "lean_bulk": "bulk", "maintenance": "maint"}
+    ranges = {"calories", "session_sets", "ramp_start", "ramp_cap", "sets_per_group"}
+    values: dict[str, str] = {}
+    for phase, prefix in short.items():
+        params = (
+            merged
+            if merged is not None and merged.get("phase") == phase
+            else coach_state.PHASE_DEFAULTS[phase]
+        )
+        for key in ("title", "rate_text", "frequency_text"):
+            if f"{prefix}_{key}" in _PHASE_POLICY_SLOTS:
+                values[f"{prefix}_{key}"] = str(params.get(key, ""))
+        for key in ranges:
+            if f"{prefix}_{key}" in _PHASE_POLICY_SLOTS:
+                values[f"{prefix}_{key}"] = _format_range(params.get(key))
+        if f"{prefix}_protein_g" in _PHASE_POLICY_SLOTS:
+            values[f"{prefix}_protein_g"] = (
+                _format_low(params.get("protein_g"))
+                if phase == "maintenance"
+                else _format_range(params.get("protein_g"))
+            )
+        if f"{prefix}_ceiling_weight_kg" in _PHASE_POLICY_SLOTS:
+            values[f"{prefix}_ceiling_weight_kg"] = _format_number(
+                params.get("ceiling_weight_kg")
+            )
+    return coach_prompts.render(_PHASE_POLICY_TEMPLATE, **values)
 
 
 def _build_system_prompt(
     catalog: list[dict[str, Any]],
     profile: dict[str, Any] | None = None,
+    state: dict[str, Any] | None = None,
 ) -> str:
+    """Assemble the system prompt from the template in ``prompts/system.md``.
+
+    The prose lives in the template; this function only computes the four slots
+    it expects. Anything added here that is not a computed value belongs in the
+    markdown instead.
+    """
     catalog_lines = "\n".join(
         f"  {item['id']} — {item['name']}: {CATALOG_SEMANTICS.get(item['id'], 'тренажёр')}"
         for item in catalog
         if item["id"] not in coach_features.EXERCISE_ALIASES
     )
-    return (
-        "Ты — персональный силовой тренер этого атлета и полностью заменяешь живого "
-        "тренера: ведёшь его многомесячную программу, решаешь, какой будет СЛЕДУЮЩАЯ "
-        "тренировка, когда её провести, когда дать отдых или разгрузку, и следишь за "
-        "недельными объёмами и движением к цели. Ты видишь его историю и контекст в "
-        "каждом запросе — твоя задача давать связную систему, а не тренировку в вакууме.\n\n"
-        "=== АТЛЕТ ===\n"
-        f"{_render_profile(profile)}\n\n"
-        "=== ТРЕНАЖЁРЫ (каталог) ===\n"
-        "В план включай ТОЛЬКО эти упражнения (id и названия точные):\n"
-        f"{catalog_lines}\n"
-        f"Структурные пробелы каталога: {CATALOG_GAPS}.\n"
-        "Если для цели не хватает движения — предложи его ТЕКСТОМ в rationale "
-        "(«советую добавить X, потому что Y»), но не в каждой карточке — примерно раз "
-        "в пару недель; атлет сам решит и добавит. В exercises[] несуществующие "
-        "упражнения не включай никогда.\n\n"
-        "=== ФАЗЫ ПОДГОТОВКИ ===\n"
-        f"{_render_phase_policy()}\n\n"
-        "=== ТРЕНЕРСКАЯ ПОЛИТИКА (ориентиры по умолчанию) ===\n"
-        "Всё в этом разделе — рабочие настройки по умолчанию, а не законы: ты видишь "
-        "больше контекста, чем любое правило. Отступай от ориентиров, когда видишь "
-        "причину, и называй её в note/rationale.\n"
-        "- Ритм и недельный объём подсказывает текущая фаза (см. КОНТЕКСТ запроса). "
-        "Малые группы обычно держат ниже потолков: средняя дельта 6–12, задняя дельта "
-        "4–8 (при таком объёме жимов не давай ей висеть на нуле), бицепс/трицепс "
-        "напрямую 4–8 (жимы и тяги уже добирают им часть стимула — эффективные сеты "
-        "посчитаны в данных), бицепс бедра 5–10 — ставь сгибания ног почти в каждую "
-        "сессию, пока группа хронически недобирает.\n"
-        "- Размер сессии выбирай сам под цель дня, время (~60 минут; при 18+ подходах "
-        "предупреди, что выйдет ближе к 75–90 мин, или сократи отдых на изоляции до "
-        "60–90 сек) и реальную дисциплину атлета. Разминочные подходы в план НЕ "
-        "включай — атлет делает их сам.\n"
-        "- Волны интенсивности для базовых движений (жимы, тяги, жим ногами) — "
-        "привычная атлету схема: heavy 6–10 повторов, medium 10–14, light 12–18; "
-        "изоляция (дельты, бицепс, трицепс, бабочка, разгибания/сгибания ног) 10–15+ "
-        "даже в heavy-день. Это default, а не рамка — выбирай другой диапазон, когда "
-        "для конкретного дня есть причина. Два по-настоящему тяжёлых дня подряд без "
-        "необходимости не ставь — но суди по реальной тяжести весов и интервалу "
-        "отдыха, а не по меткам.\n"
-        "- Метки нагрузки в истории ([heavy]/[medium]/[light]/[?]) могут быть неточны "
-        "или отсутствовать — оценивай реальную тяжесть сессии сам по весам и повторам "
-        "относительно истории.\n"
-        "- Усилие: рабочие подходы с запасом 1–2 повтора; на изоляции в последнем "
-        "подходе допустимо 0–1; жимы (ногами, от груди) до отказа не доводить. Если у "
-        "подхода в истории есть @N — это записанный RIR (повторы в запасе, 0–4) "
-        "ПОСЛЕДНЕГО подхода: он ТОЧНЕЕ значков +/− — приоритет ему.\n"
-        "- Прогрессия: шаг веса бери из истории КОНКРЕТНОГО тренажёра (каким шагом "
-        "атлет реально менял вес). +1 повтор или +1 шаг веса, если в прошлый раз "
-        "подходы шли с отметкой «-» (легко), без отметки или с RIR ≥2; при «+» "
-        "(тяжело) или RIR 0–1 — закрепи вес. Одиночные аномальные подходы (резко "
-        "выпадающий вес среди стабильной серии) считай шумом записи — прогрессию от "
-        "них не строй. Пики и даты ПР по каждому тренажёру уже посчитаны в данных — "
-        "считай их фактами, не выводи заново из сырой истории.\n"
-        "- Возврат после перерыва: если с последней тренировки прошло ≥14 дней — "
-        "веди возврат по принятым тренерским принципам работы после простоя "
-        "(детренированность и её разная скорость по системам, готовность "
-        "соединительной ткани, разгон за несколько сессий). Точка отсчёта — "
-        "фактические сессии последних недель, а не исторические пики: процент от "
-        "пика ничего не говорит о сегодняшнем запасе, особенно если пик поставлен "
-        "давно и при другой частоте. Насколько снизить вход и каким темпом "
-        "возвращать веса — решай сам, но возвратная сессия должна быть заметно "
-        "легче последних доперерывных хотя бы по одному измерению (вес, повторы "
-        "или объём), и в rationale прямо назови, чем именно. Самопроверка перед "
-        "ответом: если план читается как копия последней доперерывной сессии — "
-        "калибровка не удалась, пересобери. Жёстко фиксировано только одно: вес "
-        "выше доперерывного рабочего сервер не примет. Ступени разгона в данных — "
-        "ориентир на сессии ПОСЛЕ возвратной, применяй критично: при старых пиках "
-        "разгоняй к недавним рабочим диапазонам, а не к пиковым. Длинный перерыв "
-        "сам по себе — разгрузка: счётчик deload обнуляется. После перерыва в "
-        "rationale вместо сводки нулевых объёмов опиши план разгона на 2–3 "
-        "сессии.\n"
-        "- Разгрузка (deload): плановая разгрузочная неделя приходит ФЛАГОМ в "
-        "КОНТЕКСТЕ (каждые ~6 недель реально накопленной работы): объём −30–40%, "
-        "веса рабочие, без отказа, со следующей недели ramp заново — построй сессию "
-        "по этому флагу и прямо скажи в rationale, что это разгрузка. Реактивно: при "
-        "падении повторов на тех же весах две сессии подряд предложи лёгкую неделю "
-        "сам. Если в данных стоит флаг ЗАСТОЯ по упражнению (предусловия выполнены, "
-        "ПР нет ≥4 недель) — предложи deload −10% с разгоном или вариацию именно по "
-        "нему. Если предусловия НЕ выполнены — плато объясняй посещаемостью/питанием, "
-        "слова «потолок» избегай.\n"
-        "- Дисциплина: сводка «факт vs план» за 30 дней приходит в данных. Если "
-        "какое-то упражнение стабильно пропускается — ставь его РАНЬШЕ в сессии и/или "
-        "делай план реалистичного размера; адаптируйся к реальному поведению, а не "
-        "читай нотации.\n"
-        "- Регулярность: если перерывы >10 дней повторяются, мягко предложи в "
-        "rationale привязать тренировки к конкретным дням недели — без нотаций.\n"
-        "- Медицинская граница: вопросы ГЗТ, дозировок, анализов и давления — зона "
-        "лечащего врача. Никаких советов и интерпретаций по ним не давай; гормональный "
-        "фон атлета (из профиля) — просто часть контекста восстановления.\n\n"
-        "=== ЖЁСТКИЕ ГРАНИЦЫ (проверяет сервер) ===\n"
-        "Жёстких правил всего три — остальное в этом промпте лишь ориентиры, "
-        "решение за тобой:\n"
-        "1) в exercises[] — только упражнения каталога (id из схемы);\n"
-        "2) крупная группа (грудь, спина, квадрицепс/ягодичные) или бицепс бедра, у "
-        "которых 10+ дней ноль эффективных сетов, должна получить хотя бы 1–2 "
-        "подхода;\n"
-        "3) на возврате после перерыва (≥14 дней) вес любого движения — не выше "
-        "доперерывного рабочего.\n\n"
-        "=== ПИТАНИЕ ===\n"
-        "Решение по калориям НЕ выводи сам из сырых замеров: сервер уже сравнил тренды "
-        "веса и талии с целями фазы и положил готовую ветку в блок «Матрица питания» — "
-        "переведи её в короткий совет своими словами. Правила матрицы (для понимания): "
-        "cut_recomp — вес в целевом темпе и талия вниз → не трогать; вес стоит ≥2 недель "
-        "→ −100–150 ккал; вес стоит, но талия идёт вниз → рекомп-бонус, калории не "
-        "трогать. lean_bulk — вес растёт в темпе, талия стабильна → не трогать; талия "
-        "+1 см от базовой два замера подряд → −100–150 ккал или пауза набора; талия у "
-        "лимита → жёсткий сигнал, предложи мини-кат/смену фазы. maintenance — выход из "
-        "коридора ±1 кг → мягкая коррекция ±100–150 ккал. Советы по калориям давай "
-        "ТОЛЬКО по свежим (≤14 дней) замерам — иначе попроси взвеситься/замерить талию "
-        "и калории не обсуждай. Белок — по ориентиру фазы; если по факту меньше, мягко "
-        "напомни добрать.\n\n"
-        "=== RATIONALE (тренерский комментарий в карточке) ===\n"
-        "Пиши на «ты», как живой тренер, структурно и по делу. ФОРМАТ: rationale "
-        "должен легко читаться — НЕ сплошным абзацем. Каждый пункт с новой строки "
-        "(разделяй реальным переносом строки), 1–3 коротких предложения, и начинай "
-        "пункт с короткого жирного заголовка в Markdown-звёздочках, например "
-        "«**Когда:** завтра, дай связкам ещё день» или «**Нагрузка:** средняя — "
-        "после паузы не гоним». Пункты по содержанию:\n"
-        "1) **Почему так** — тяжесть и состав дня (объёмы недели, давность, отметки);\n"
-        "2) **Когда** — сегодня / завтра / «дай ещё день отдыха»; обязательно тем же "
-        "числом в поле rest_days (0 = сегодня, 1 = завтра, 2 = послезавтра), держи "
-        "текст и rest_days согласованными;\n"
-        "3) **Объём** — краткий статус недельного объёма по группам (где добор, где хватит);\n"
-        "4) **Питание** — комментарий по весу тела и калориям, если есть свежие данные;\n"
-        "5) при необходимости — **Совет** с новым упражнением или разгрузкой.\n"
-        "В note каждого упражнения — одна фраза: почему такой вес/повторы относительно "
-        "прошлого раза («+2.5 кг — прошлый раз все подходы easy», «закрепляем вес — было "
-        "тяжело»); если отступаешь от ориентиров политики — причина тоже сюда. Изредка "
-        "вместо этого можно дать одну важную техническую подсказку.\n\n"
-        "Все веса в килограммах. Отвечай строго в заданной JSON-схеме, без текста вне JSON."
+    return coach_prompts.build(
+        "system",
+        profile=_render_profile(profile),
+        catalog=catalog_lines,
+        catalog_gaps=CATALOG_GAPS,
+        phase_policy=_render_phase_policy(state),
     )
 
 
@@ -525,35 +447,39 @@ def _build_user_prompt(
     # --- explicit context block, always the first thing the model reads ------
     week_label = f"неделя блока {week}"
     if position["deload_week"]:
-        week_label += (
-            " — ПЛАНОВАЯ РАЗГРУЗОЧНАЯ НЕДЕЛЯ (каждые "
-            f"{params.get('deload_every_weeks')} недель накопления): объём −30–40%, "
-            "веса рабочие, без отказа; со следующей недели ramp начинается заново"
+        week_label += _block(
+            "deload_week_label", weeks=str(params.get("deload_every_weeks"))
         )
     context_lines = [
-        f"Сегодня: {today.isoformat()} ({_RU_WEEKDAYS[today.weekday()]}).",
-        f"Фаза: {phase} («{params['title']}»), {week_label}. Ориентиры фазы: "
-        f"{_format_range(params['calories'])} ккал, {params['rate_text']}, белок "
-        f"{_format_range(params['protein_g'])} г, сессия "
-        f"{_format_range(params['session_sets'])} рабочих подходов.",
+        _block(
+            "context_today",
+            date=today.isoformat(),
+            weekday=_RU_WEEKDAYS[today.weekday()],
+        ),
+        _block(
+            "context_phase",
+            phase=phase,
+            title=str(params["title"]),
+            week_label=week_label,
+            calories=_format_range(params["calories"]),
+            rate=str(params["rate_text"]),
+            protein=_format_range(params["protein_g"]),
+            session_sets=_format_range(params["session_sets"]),
+        ),
     ]
     if days is None:
-        context_lines.append("Дата последней тренировки неизвестна.")
+        context_lines.append(_block("context_last_unknown"))
     elif returning:
-        context_lines.append(
-            f"Дней с последней тренировки: {days} — ВОЗВРАТ ПОСЛЕ ПЕРЕРЫВА (≥14 дн). "
-            "Методика возврата на тебе; жёсткая граница одна: не выше доперерывных "
-            "рабочих весов (они ниже)."
-        )
+        context_lines.append(_block("context_returning", days=str(days)))
     else:
-        context_lines.append(f"Дней с последней тренировки: {days}.")
+        context_lines.append(_block("context_last", days=str(days)))
     chunks = ["=== КОНТЕКСТ ===\n" + "\n".join(context_lines)]
 
     volume = coach_features.weekly_volume(workouts, today)
     maintenance_sets = params.get("sets_per_group") if phase == "maintenance" else None
     chunks.append(
-        "Объём за последние 7 дней (прямые/эффективные подходы; в эффективных жимы "
-        "уже добирают трицепсу и дельтам, тяги — бицепсу):\n"
+        _block("volume_header")
+        + "\n"
         + coach_features.render_weekly_volume(volume, week_target, maintenance_sets)
     )
 
@@ -562,18 +488,18 @@ def _build_user_prompt(
     nutrition_chunk = list(measurement_lines)
     if matrix["lines"]:
         nutrition_chunk.append(
-            "Матрица питания (вычислено сервером): " + "; ".join(matrix["lines"]) + "."
+            _block("nutrition_matrix", lines="; ".join(matrix["lines"]))
         )
     if matrix["goal"]:
-        nutrition_chunk.append("ЦЕЛЬ ФАЗЫ: " + matrix["goal"] + ".")
+        nutrition_chunk.append(_block("nutrition_goal", goal=matrix["goal"]))
     if nutrition_chunk:
         chunks.append("\n".join(nutrition_chunk))
 
     summaries = coach_features.exercise_summaries(workouts, catalog or [], today)
     if summaries:
         chunks.append(
-            "Сводка по тренажёрам за ВСЮ историю (пики, e1RM по Эпли и даты ПР "
-            "посчитаны сервером — это факты, не пересчитывай):\n"
+            _block("summaries_header")
+            + "\n"
             + coach_features.render_exercise_summaries(summaries)
         )
 
@@ -599,10 +525,7 @@ def _build_user_prompt(
     ramp_lines = coach_features.comeback_ramp(workouts, catalog or [], today)
     if ramp_lines:
         chunks.append(
-            "Ступени разгона к пиковым весам (посчитаны сервером как ориентир — "
-            "темп возврата решаешь ты). Это план на СЛЕДУЮЩИЕ сессии: первая "
-            "ступень может быть выше доперерывного рабочего, а возвратная сессия "
-            "его не превышает:\n" + "\n".join(ramp_lines)
+            _block("comeback_ramp_header") + "\n" + "\n".join(ramp_lines)
         )
 
     discipline_lines: list[str] = []
@@ -618,19 +541,9 @@ def _build_user_prompt(
         chunks.append("\n".join(discipline_lines))
 
     raw_count = min(history_limit, RAW_HISTORY_COUNT)
-    chunks.append(
-        f"Последние {raw_count} тренировок сырыми (от старых к новым; формат "
-        "'дата [нагрузка] упражнение вес×повторы, ...'). Значок после подхода — "
-        "субъективная тяжесть: '-' = легко, '+' = тяжело (это НЕ дополнительные "
-        "повторы), без значка = нормально; '@N' = записанный RIR последнего "
-        "подхода (точнее значков). Более старые тренировки уже учтены в сводке "
-        "выше:"
-    )
+    chunks.append(_block("raw_history_header", count=str(raw_count)))
     chunks.append(_serialize_history(workouts, raw_count, catalog))
-    chunks.append(
-        "Составь план следующей тренировки и тренерский комментарий (когда идти, "
-        "статус недельных объёмов, питание по матрице выше)."
-    )
+    chunks.append(_block("task"))
     return "\n\n".join(chunks)
 
 
@@ -1132,7 +1045,7 @@ def generate_with_trace(
 
     today = today or date.today()
     state = state if state is not None else coach_state.load_state(None)
-    system = _build_system_prompt(catalog, profile)
+    system = _build_system_prompt(catalog, profile, state)
     user = _build_user_prompt(
         workouts, body_weights, today, history_limit,
         catalog=catalog, state=state, waists=waists,
@@ -1280,22 +1193,7 @@ def generate(
 # --------------------------------------------------------------------------- #
 # Weekly coach report
 # --------------------------------------------------------------------------- #
-REPORT_SYSTEM_PROMPT = (
-    "Ты — персональный силовой тренер этого атлета. По данным ниже напиши "
-    "НЕДЕЛЬНЫЙ ОТЧЁТ на «ты»: коротко, по делу, как живой тренер на созвоне — "
-    "без воды и без нотаций за пропуски. Формат: Markdown, пять блоков, каждый "
-    "с новой строки с жирным заголовком:\n"
-    "**Итоги недели** — сколько тренировок, что сделано по объёму против цели;\n"
-    "**Прогресс** — новые ПР и движение весов (или честно «без ПР» и почему это "
-    "ок/не ок по предусловиям);\n"
-    "**Вес и талия** — тренды и вывод матрицы питания (если замеров нет — "
-    "попроси);\n"
-    "**Дисциплина** — факт против плана, что стабильно пропускается;\n"
-    "**Фокус следующей недели** — 2–3 конкретных пункта (объём-цель, какие "
-    "группы добирать, когда разгрузка).\n"
-    "Все вычисленные числа в данных — факты, не пересчитывай. Никаких "
-    "медицинских советов: ГЗТ, дозировки и анализы — зона врача."
-)
+REPORT_SYSTEM_PROMPT = coach_prompts.load("report")
 
 
 def _build_report_prompt(
@@ -1318,22 +1216,34 @@ def _build_report_prompt(
     ]
 
     chunks = [
-        f"Период отчёта: последние {days} дней, по {today.isoformat()} "
-        f"({_RU_WEEKDAYS[today.weekday()]}).",
-        f"Фаза: {params['phase']} («{params['title']}»), неделя блока "
-        f"{position['block_week']}"
-        + (" — плановая разгрузочная неделя." if position["deload_week"] else ".")
-        + f" Ориентиры фазы: {_format_range(params['calories'])} ккал, "
-        f"{params['rate_text']}, белок {_format_range(params['protein_g'])} г.",
+        _block(
+            "report_period",
+            days=str(days),
+            date=today.isoformat(),
+            weekday=_RU_WEEKDAYS[today.weekday()],
+        ),
+        _block(
+            "report_phase",
+            phase=params["phase"],
+            title=str(params["title"]),
+            week=str(position["block_week"]),
+            deload=_block(
+                "report_deload_yes" if position["deload_week"] else "report_deload_no"
+            ),
+            calories=_format_range(params["calories"]),
+            rate=str(params["rate_text"]),
+            protein=_format_range(params["protein_g"]),
+        ),
     ]
 
     if week_workouts:
         chunks.append(
-            f"Тренировки за период ({len(week_workouts)}):\n"
+            _block("report_workouts_header", count=str(len(week_workouts)))
+            + "\n"
             + _serialize_history(week_workouts, len(week_workouts), catalog)
         )
     else:
-        chunks.append("Тренировок за период: 0.")
+        chunks.append(_block("report_no_workouts"))
 
     week_target = (
         params.get("ramp_start")
@@ -1344,7 +1254,8 @@ def _build_report_prompt(
         params.get("sets_per_group") if params["phase"] == "maintenance" else None
     )
     chunks.append(
-        "Объём за 7 дней (прямые/эффективные подходы):\n"
+        _block("report_volume_header")
+        + "\n"
         + coach_features.render_weekly_volume(
             coach_features.weekly_volume(workouts, today), week_target, maintenance_sets
         )
@@ -1357,7 +1268,9 @@ def _build_report_prompt(
         if s["days_since_pr"] < days
     ]
     chunks.append(
-        "Новые ПР за период:\n" + "\n".join(prs) if prs else "Новых ПР за период нет."
+        _block("report_prs_header") + "\n" + "\n".join(prs)
+        if prs
+        else _block("report_no_prs")
     )
 
     matrix = coach_features.nutrition_matrix(state, params, body_weights, waists, today)
@@ -1376,11 +1289,9 @@ def _build_report_prompt(
     measurements = coach_features.render_measurements(body_weights, waists, today)
     nutrition = list(measurements)
     if matrix["lines"]:
-        nutrition.append(
-            "Матрица питания (вычислено сервером): " + "; ".join(matrix["lines"]) + "."
-        )
+        nutrition.append(_block("nutrition_matrix", lines="; ".join(matrix["lines"])))
     if matrix["goal"]:
-        nutrition.append("ЦЕЛЬ ФАЗЫ: " + matrix["goal"] + ".")
+        nutrition.append(_block("nutrition_goal", goal=matrix["goal"]))
     if nutrition:
         chunks.append("\n".join(nutrition))
 
@@ -1394,25 +1305,27 @@ def _build_report_prompt(
     every = params.get("deload_every_weeks")
     if position["deload_week"]:
         next_bits.append(
-            "Эта неделя разгрузочная — со следующей ramp начинается заново с "
-            f"{_format_range(params.get('ramp_start'))} сетов/группа."
+            _block(
+                "report_next_deload_now",
+                ramp_start=_format_range(params.get("ramp_start")),
+            )
         )
     elif every and position["cycle_week"] >= int(every):
-        next_bits.append(
-            "Следующая неделя по циклу — плановая разгрузка (−30–40% объёма), "
-            "если объём блока реально набран."
-        )
+        next_bits.append(_block("report_next_deload_soon"))
     else:
         next_week = coach_state.weekly_volume_target(state, position["cycle_week"] + 1)
         if next_week:
             next_bits.append(
-                f"Цель следующей недели блока: {next_week[0]}–{next_week[1]} "
-                "эффективных сетов на крупную группу."
+                _block(
+                    "report_next_target",
+                    low=str(next_week[0]),
+                    high=str(next_week[1]),
+                )
             )
     if next_bits:
         chunks.append("\n".join(next_bits))
 
-    chunks.append("Напиши недельный отчёт по формату из системного промпта.")
+    chunks.append(_block("report_task"))
     return "\n\n".join(chunks)
 
 
