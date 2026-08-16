@@ -154,7 +154,38 @@ _OVERRIDABLE_PARAM_KEYS = {
     "calories", "rate_text", "rate_kg_per_week", "frequency_text",
     "session_sets", "ramp_start", "ramp_cap", "sets_per_group", "protein_g",
     "target_weight_kg", "ceiling_weight_kg", "deload_every_weeks", "title",
+    "group_targets",
 }
+
+# Единственный параметр не-скалярной формы: {группа: [min, max]}. Ключи должны
+# быть ровно из coach_features.MUSCLE_GROUPS — опечатка в названии группы иначе
+# молча не применилась бы, а экран объёма и промпт продолжили бы показывать
+# дефолтный коридор.
+_GROUP_TARGET_KEY = "group_targets"
+
+
+def _normalize_group_targets(value: Any) -> dict[str, tuple[float, float]]:
+    import coach_features
+
+    if not isinstance(value, dict):
+        raise ValueError("group_targets должен быть объектом {группа: [min, max]}")
+    clean: dict[str, tuple[float, float]] = {}
+    for group, bounds in value.items():
+        if group not in coach_features.MUSCLE_GROUPS:
+            raise ValueError(
+                f"Неизвестная группа {group!r}; допустимые: "
+                f"{', '.join(coach_features.MUSCLE_GROUPS)}"
+            )
+        if not (
+            isinstance(bounds, (list, tuple))
+            and len(bounds) == 2
+            and all(
+                isinstance(x, (int, float)) and not isinstance(x, bool) for x in bounds
+            )
+        ):
+            raise ValueError(f"Цель группы {group!r} должна быть парой чисел [min, max]")
+        clean[group] = (bounds[0], bounds[1])
+    return clean
 
 
 def _normalize_param_value(value: Any) -> Any:
@@ -210,7 +241,11 @@ def set_phase(
                     f"Неизвестный параметр {key!r}; допустимые: "
                     f"{', '.join(sorted(_OVERRIDABLE_PARAM_KEYS))}"
                 )
-            clean[key] = _normalize_param_value(value)
+            clean[key] = (
+                _normalize_group_targets(value)
+                if key == _GROUP_TARGET_KEY
+                else _normalize_param_value(value)
+            )
         phase_params = dict(state.get("phase_params") or {})
         phase_params[phase] = clean
         state["phase_params"] = phase_params
@@ -224,7 +259,13 @@ def phase_params(state: dict[str, Any]) -> dict[str, Any]:
     merged = dict(PHASE_DEFAULTS[phase])
     overrides = (state.get("phase_params") or {}).get(phase) or {}
     for key, value in overrides.items():
-        if key in _OVERRIDABLE_PARAM_KEYS:
+        if key not in _OVERRIDABLE_PARAM_KEYS:
+            continue
+        if key == _GROUP_TARGET_KEY:
+            merged[key] = {
+                group: tuple(bounds) for group, bounds in (value or {}).items()
+            }
+        else:
             merged[key] = tuple(value) if isinstance(value, list) else value
     merged["phase"] = phase
     return merged

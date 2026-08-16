@@ -8,6 +8,8 @@ from pathlib import Path
 
 import support  # noqa: F401 — adds backend to sys.path
 
+import pathlib
+import coach_features
 import coach_state
 
 
@@ -182,3 +184,61 @@ class CyclePositionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GroupTargetOverrideTests(unittest.TestCase):
+    """Программа с приоритетами (спина 16, квадрицепс 9) не выражается одним
+    коридором на все крупные группы — для этого и заведён group_targets."""
+
+    def _path(self, tmp):
+        return pathlib.Path(tmp) / "state.json"
+
+    def test_group_targets_override_the_uniform_corridor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._path(tmp)
+            coach_state.set_phase(
+                path,
+                "cut_recomp",
+                {"group_targets": {"спина": [16, 16], "квадрицепс/ягодичные": [9, 9]}},
+                today=date(2026, 8, 16),
+            )
+            params = coach_state.phase_params(coach_state.load_state(path))
+            targets = coach_features.group_volume_targets(
+                (6, 9), None, params.get("group_targets")
+            )
+            self.assertEqual(targets["спина"], (16, 16))
+            self.assertEqual(targets["квадрицепс/ягодичные"], (9, 9))
+            # неупомянутая крупная группа остаётся на общем коридоре
+            self.assertEqual(targets["грудь"], (6, 9))
+            # малая группа — на своём потолке политики
+            self.assertEqual(targets["бицепс"], coach_features.SMALL_GROUP_TARGETS["бицепс"])
+
+    def test_unknown_group_is_rejected_on_write(self):
+        """Опечатка в названии группы иначе молча не применилась бы."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError) as ctx:
+                coach_state.set_phase(
+                    self._path(tmp),
+                    "cut_recomp",
+                    {"group_targets": {"спинв": [16, 16]}},
+                    today=date(2026, 8, 16),
+                )
+            self.assertIn("Неизвестная группа", str(ctx.exception))
+
+    def test_malformed_bounds_are_rejected_on_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                coach_state.set_phase(
+                    self._path(tmp),
+                    "cut_recomp",
+                    {"group_targets": {"спина": 16}},
+                    today=date(2026, 8, 16),
+                )
+
+    def test_render_prints_the_group_goal_inline(self):
+        volume = coach_features.weekly_volume([], date(2026, 8, 16))
+        text = coach_features.render_weekly_volume(
+            volume, (6, 9), None, {"спина": (16, 16)}
+        )
+        self.assertIn("спина: 0 прямых / 0 эффективных (цель блока 16–16)", text)
+        self.assertIn("ЗРЕЛОГО блока", text)

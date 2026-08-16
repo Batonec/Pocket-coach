@@ -532,7 +532,9 @@ def _build_user_prompt(
     chunks.append(
         _block("volume_header")
         + "\n"
-        + coach_features.render_weekly_volume(volume, week_target, maintenance_sets)
+        + coach_features.render_weekly_volume(
+            volume, week_target, maintenance_sets, params.get("group_targets")
+        )
     )
 
     measurement_lines = coach_features.render_measurements(body_weights, waists, today)
@@ -1197,7 +1199,7 @@ def _coach_context(
         "group_targets": {
             group: list(target)
             for group, target in coach_features.group_volume_targets(
-                week_target, maintenance_sets
+                week_target, maintenance_sets, params.get("group_targets")
             ).items()
         },
         # Reference lines for the Замеры charts: the phase's weight goal
@@ -1330,7 +1332,10 @@ def _build_report_prompt(
         _block("report_volume_header")
         + "\n"
         + coach_features.render_weekly_volume(
-            coach_features.weekly_volume(workouts, today), week_target, maintenance_sets
+            coach_features.weekly_volume(workouts, today),
+            week_target,
+            maintenance_sets,
+            params.get("group_targets"),
         )
     )
 
