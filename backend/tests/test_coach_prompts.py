@@ -43,6 +43,26 @@ class PromptTemplateTests(unittest.TestCase):
         )
 
 
+    def test_phase_policy_template_slots_match_the_renderer(self):
+        """Every slot in phase_policy.md must be filled by _render_phase_policy
+        for any phase — a new number in the prose must not ship as «{{...}}»."""
+        import coach_state
+
+        expected = coach_prompts.slots(coach_prompts.load("phase_policy"))
+        self.assertEqual(expected, recommender._PHASE_POLICY_SLOTS)
+        for phase in coach_state.PHASES:
+            state = coach_state.load_state(None)
+            state["phase"] = phase
+            rendered = recommender._render_phase_policy(state)
+            self.assertNotIn("{{", rendered, phase)
+
+    def test_report_prompt_is_loaded_from_the_template(self):
+        self.assertEqual(
+            recommender.REPORT_SYSTEM_PROMPT, coach_prompts.load("report")
+        )
+        self.assertNotIn("{{", recommender.REPORT_SYSTEM_PROMPT)
+
+
 class BuiltPromptTests(unittest.TestCase):
     def test_built_system_prompt_has_no_unfilled_slots(self):
         catalog = recommender.load_catalog(STATIC_DIR)

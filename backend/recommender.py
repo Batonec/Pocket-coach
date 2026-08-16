@@ -317,6 +317,12 @@ def _days_since_last(workouts: list[dict[str, Any]], today: date) -> int | None:
     return None
 
 
+# Шаблон политики фаз читается один раз: он не зависит от данных, а слоты нужны
+# для сборки — рендерить только то, что шаблон реально просит.
+_PHASE_POLICY_TEMPLATE = coach_prompts.load("phase_policy")
+_PHASE_POLICY_SLOTS = coach_prompts.slots(_PHASE_POLICY_TEMPLATE)
+
+
 def _format_range(bounds: Any, unit: str = "") -> str:
     if isinstance(bounds, (tuple, list)) and len(bounds) == 2:
         return f"{bounds[0]:g}–{bounds[1]:g}{unit}"
@@ -344,55 +350,43 @@ def _format_low(bounds: Any) -> str:
 
 
 def _render_phase_policy(state: dict[str, Any] | None = None) -> str:
-    """Phase policy for the system prompt.
+    """Phase policy for the system prompt; the prose lives in
+    ``prompts/phase_policy.md`` and only the numbers are computed here.
 
     The ACTIVE phase is rendered from the athlete's merged parameters
     (``phase_params`` overrides on top of the defaults) — otherwise the prompt
     would carry the stock numbers while the КОНТЕКСТ block carries the real
     ones, and the model gets two contradicting methodologies in one request.
-    The two inactive phases keep the stock text: they are background, and their
-    numbers are re-set on the switch anyway.
+    The two inactive phases keep the stock numbers: they are background, and
+    they are re-set on the switch anyway.
     """
     merged = coach_state.phase_params(state) if state is not None else None
-    defaults = {
-        phase: (
+    short = {"cut_recomp": "cut", "lean_bulk": "bulk", "maintenance": "maint"}
+    ranges = {"calories", "session_sets", "ramp_start", "ramp_cap", "sets_per_group"}
+    values: dict[str, str] = {}
+    for phase, prefix in short.items():
+        params = (
             merged
             if merged is not None and merged.get("phase") == phase
             else coach_state.PHASE_DEFAULTS[phase]
         )
-        for phase in coach_state.PHASES
-    }
-    cut = defaults["cut_recomp"]
-    bulk = defaults["lean_bulk"]
-    maintenance = defaults["maintenance"]
-    return (
-        "Подготовка ведётся ФАЗАМИ. Текущая фаза, её неделя блока и целевые ориентиры "
-        "приходят в блоке КОНТЕКСТ каждого запроса — они главнее общих цифр ниже. Все "
-        "числа фаз (калории, подходы, объёмы) — ориентиры для планирования, а не "
-        "жёсткие рамки. Фазу переключает ТОЛЬКО атлет (руками); если данные "
-        "показывают, что цель фазы достигнута, предложи смену фазы в rationale — но "
-        "план строй по текущей.\n"
-        f"- cut_recomp («{cut['title']}»): калории {_format_range(cut['calories'])} ккал, "
-        f"темп {cut['rate_text']}, {cut['frequency_text']}, сессия "
-        f"{_format_range(cut['session_sets'])} рабочих подходов, недельный объём — ramp "
-        f"{_format_range(cut['ramp_start'])} → {_format_range(cut['ramp_cap'])} сетов на "
-        "крупную группу (+1–2 сета в неделю, в первую очередь на отстающие), интенсивность "
-        "рабочая (1–2 RIR), прогрессия двойная. У новичка силовые растут и в дефиците — "
-        "плато по весам в этой фазе НЕ проблема и не повод для паники; deload-триггеры "
-        f"мягче. Белок {_format_range(cut['protein_g'])} г.\n"
-        f"- lean_bulk: калории {_format_range(bulk['calories'])} ккал, темп {bulk['rate_text']}, "
-        f"{bulk['frequency_text']}, сессия {_format_range(bulk['session_sets'])} подходов, "
-        f"объём — ramp {_format_range(bulk['ramp_start'])} → {_format_range(bulk['ramp_cap'])} "
-        "сетов на крупную группу, прогрессия двойная — ожидаются регулярные ПР. Контроль "
-        f"набора по талии; потолок — талия у лимита либо ~{_format_number(bulk.get('ceiling_weight_kg'))} кг. "
-        f"Белок {_format_range(bulk['protein_g'])} г.\n"
-        f"- maintenance («{maintenance['title']}»): {maintenance['frequency_text']} — одна "
-        f"fullbody heavy сессия {_format_range(maintenance['session_sets'])} подходов, "
-        f"{_format_range(maintenance['sets_per_group'])} сета на группу в неделю, объём НЕ "
-        "растёт и претензий к объёму в rationale быть не должно. Веса НЕ снижать — "
-        "интенсивность и есть сигнал удержания; прогрессия не требуется. Калории "
-        f"{_format_range(maintenance['calories'])} ккал, белок ~{_format_low(maintenance.get('protein_g'))}+ г."
-    )
+        for key in ("title", "rate_text", "frequency_text"):
+            if f"{prefix}_{key}" in _PHASE_POLICY_SLOTS:
+                values[f"{prefix}_{key}"] = str(params.get(key, ""))
+        for key in ranges:
+            if f"{prefix}_{key}" in _PHASE_POLICY_SLOTS:
+                values[f"{prefix}_{key}"] = _format_range(params.get(key))
+        if f"{prefix}_protein_g" in _PHASE_POLICY_SLOTS:
+            values[f"{prefix}_protein_g"] = (
+                _format_low(params.get("protein_g"))
+                if phase == "maintenance"
+                else _format_range(params.get("protein_g"))
+            )
+        if f"{prefix}_ceiling_weight_kg" in _PHASE_POLICY_SLOTS:
+            values[f"{prefix}_ceiling_weight_kg"] = _format_number(
+                params.get("ceiling_weight_kg")
+            )
+    return coach_prompts.render(_PHASE_POLICY_TEMPLATE, **values)
 
 
 def _build_system_prompt(
@@ -1202,22 +1196,7 @@ def generate(
 # --------------------------------------------------------------------------- #
 # Weekly coach report
 # --------------------------------------------------------------------------- #
-REPORT_SYSTEM_PROMPT = (
-    "Ты — персональный силовой тренер этого атлета. По данным ниже напиши "
-    "НЕДЕЛЬНЫЙ ОТЧЁТ на «ты»: коротко, по делу, как живой тренер на созвоне — "
-    "без воды и без нотаций за пропуски. Формат: Markdown, пять блоков, каждый "
-    "с новой строки с жирным заголовком:\n"
-    "**Итоги недели** — сколько тренировок, что сделано по объёму против цели;\n"
-    "**Прогресс** — новые ПР и движение весов (или честно «без ПР» и почему это "
-    "ок/не ок по предусловиям);\n"
-    "**Вес и талия** — тренды и вывод матрицы питания (если замеров нет — "
-    "попроси);\n"
-    "**Дисциплина** — факт против плана, что стабильно пропускается;\n"
-    "**Фокус следующей недели** — 2–3 конкретных пункта (объём-цель, какие "
-    "группы добирать, когда разгрузка).\n"
-    "Все вычисленные числа в данных — факты, не пересчитывай. Никаких "
-    "медицинских советов: ГЗТ, дозировки и анализы — зона врача."
-)
+REPORT_SYSTEM_PROMPT = coach_prompts.load("report")
 
 
 def _build_report_prompt(
