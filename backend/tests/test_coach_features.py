@@ -555,3 +555,39 @@ class WeightRangeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HoldingPhaseMatrixTests(unittest.TestCase):
+    """Этап может просить ДЕРЖАТЬ вес. Тогда «вес стоит» — выполненная задача,
+    а не повод срезать калории; захардкоженный коридор советовал бы дефицит
+    ровно за правильное поведение."""
+
+    def _points(self, *pairs):
+        return [{"entry_date": d, "weight": w} for d, w in pairs]
+
+    def _matrix(self, rate):
+        state = dict(coach_state.DEFAULT_STATE, phase="cut_recomp", phase_started="2026-06-01")
+        params = dict(coach_state.PHASE_DEFAULTS["cut_recomp"], rate_kg_per_week=rate)
+        params["phase"] = "cut_recomp"
+        weights = self._points(
+            ("2026-07-25", 79.0), ("2026-07-28", 79.1), ("2026-08-01", 78.9),
+            ("2026-08-05", 79.0), ("2026-08-09", 79.1), ("2026-08-13", 79.0),
+            ("2026-08-15", 79.0),
+        )
+        return coach_features.nutrition_matrix(
+            state, params, weights, [], date(2026, 8, 16)
+        )
+
+    def test_holding_phase_does_not_ask_to_cut_calories(self):
+        lines = " ".join(self._matrix((-0.10, 0.10))["lines"])
+        self.assertIn("это и есть задача этапа", lines)
+        self.assertNotIn("−100–150 ккал", lines)
+
+    def test_cutting_phase_still_asks_to_cut_on_a_stall(self):
+        lines = " ".join(self._matrix((-0.35, -0.25))["lines"])
+        self.assertIn("−100–150 ккал", lines)
+
+    def test_goal_reached_is_not_announced_while_holding(self):
+        """target_weight_kg остаётся дефолтным на этапе удержания — объявлять
+        «цель фазы достигнута» на нём нельзя."""
+        self.assertIsNone(self._matrix((-0.10, 0.10))["goal"])

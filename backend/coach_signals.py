@@ -42,6 +42,9 @@ RETURN_BREAK_DAYS = coach_state.BREAK_DAYS  # 14
 REPORT_FRESH_HOURS = 48
 
 WEEK_DONE_MIN_PCT = 90
+# Нижняя граница: неделя с одной тренировкой закрытой не считается ни при какой
+# фазе. Реальный порог берётся из sessions_per_week текущей фазы — поздравлять
+# с закрытой неделей на половине плана значит обесценить сам баннер.
 WEEK_DONE_MIN_SESSIONS = 2
 WEEK_DONE_SHOW_DAYS = 2             # Monday–Tuesday after the closed week
 
@@ -437,17 +440,22 @@ def _report_signal(
 
 
 def _week_done_signal(
-    workouts: list[dict[str, Any]], today: date
+    workouts: list[dict[str, Any]], state: dict[str, Any], today: date
 ) -> dict[str, Any] | None:
     # The last CLOSED calendar week (Mon–Sun); shown Monday–Tuesday after it.
     week_start = today - timedelta(days=today.weekday() + 7)
     week_end = week_start + timedelta(days=6)
     if (today - week_end).days > WEEK_DONE_SHOW_DAYS:
         return None
+    planned = coach_state.phase_params(state).get("sessions_per_week")
+    needed = max(
+        WEEK_DONE_MIN_SESSIONS,
+        int(planned) if isinstance(planned, (int, float)) and not isinstance(planned, bool) else 0,
+    )
     stats = coach_features.adherence_between(workouts, week_start, week_end)
     if (
         not stats
-        or stats["sessions"] < WEEK_DONE_MIN_SESSIONS
+        or stats["sessions"] < needed
         or stats["pct"] < WEEK_DONE_MIN_PCT
     ):
         return None
@@ -503,7 +511,7 @@ def compute_signals(
         _trainings_signal(workouts, today, recommendation),
         _deload_signal(state, workouts, today),
         _report_signal(store, user_id, workouts, now_ts),
-        _week_done_signal(workouts, today),
+        _week_done_signal(workouts, state, today),
     ]
     signals = [signal for signal in candidates if signal is not None]
 
