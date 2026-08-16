@@ -42,10 +42,44 @@ xcodebuild -project TrainerIOS.xcodeproj -scheme TrainerIOS -destination 'generi
 xcodebuild -project TrainerIOS.xcodeproj -scheme TrainerIOS -destination 'platform=iOS Simulator,name=iPhone 17' test
 ```
 
-Линтеров и форматтеров в проекте нет — ни для Python, ни для Swift. Автоматических гейта два:
-unittest-suite (всегда) и iOS-тесты на macOS-раннере (только когда тронут `ios/`). Имя симулятора
+Линтеры и форматтеры (конфиги в корне — `ruff.toml` и `.swift-format`):
+
+```bash
+ruff check .            # Python: линт          (brew install ruff)
+ruff format .           # Python: формат
+git ls-files -z '*.swift' | xargs -0 xcrun swift-format lint --strict --parallel
+git ls-files -z '*.swift' | xargs -0 xcrun swift-format format --in-place --parallel
+shellcheck backend/deploy/deploy.sh .claude/hooks/claude-md-reminder.sh
+actionlint              # .github/workflows/*.yml (brew install actionlint)
+```
+
+`swift-format` ставить не надо — он идёт в тулчейне Xcode, `xcrun` находит его сам.
+**Версия ruff закреплена в двух местах**: строка `pip install ruff==X` в `ci.yml` и упоминание
+в шапке `ruff.toml`. Новый ruff умеет находить новые замечания, поэтому его подъём — отдельный
+осознанный коммит, а не сюрприз на чужом PR.
+
+Два порога длины строки не совпадают намеренно: форматтер укладывает **код** в 100 символов сам,
+а `E501` включается только со 120 — это ловушка для того, что форматтер разбить не может
+(семантика каталога в `recommender.py`, описания MCP-инструментов, SQL). Рвать такие тексты
+руками ровно по сотне вредно: их читают модель и человек.
+
+Автоматических гейта четыре: `lint` (всегда, ubuntu — ruff + shellcheck + actionlint),
+unittest-suite (всегда), `swift-format lint --strict` и iOS-тесты (оба в macOS-джобе, только
+когда тронут `ios/`). Swift-линт стоит **до** тестов: он занимает секунды, и незачем держать
+дорогой macOS-раннер 15 минут, если человек просто забыл прогнать форматтер. Имя симулятора
 в воркфлоу не захардкожено — берётся последний доступный iPhone, иначе смена образа раннера
 уронила бы сборку без причины.
+
+`ruff.toml` держит несколько отключений, и каждое — решение, а не умолчание: `RUF001-003`
+(рабочий язык русский, кириллические `с`/`а`/`е` для линтера «неоднозначны» — 330+ ложных
+замечаний), `DTZ011` (тренировочный день — локальный день атлета, не UTC) и правила про
+неиспользуемые аргументы в `backend/tests/*` (фейки обязаны повторять сигнатуру настоящих
+функций). Прежде чем глушить новое правило, дописывай туда же почему.
+
+`BLE` (blind-except), наоборот, включён специально: в коде уже стояли 23 пометки
+`# noqa: BLE001` — ровно по числу мест с `except Exception`. Правило было нужно автору,
+просто не было включено; без него пометки превращаются в мусор, ruff их сносит, а новый
+blind-except проезжает молча.
 
 Деплой: пуш в `main` → CI прогоняет тесты → если затронут backend, деплоит его на VPS.
 Ручной вариант — `./backend/deploy/deploy.sh backend` (`web`/`bot` там мёртвые, `coach-mcp` живой).
@@ -165,6 +199,18 @@ UI. Отсюда два следствия: стор стал синглтоно
 1. `.github/workflows/ci.yml` — регексп фильтра изменённых файлов (job `changes`);
 2. `.github/workflows/deploy-backend.yml` — списки в `scp` **и** в `chmod`;
 3. `backend/deploy/deploy.sh` — массив `BACKEND_MODULES`.
+
+**Порядок импортов в тестах держится настройкой `src` в `ruff.toml`, и ломается тихо.**
+`backend/tests/support.py` при импорте кладёт `backend/` в `sys.path` — без него ни один
+backend-модуль в тестах не импортируется. Значит `support` обязан идти **выше** них, а не по
+алфавиту. Держит это одна строка: `src = ["backend", "coach_mcp"]`. Оттуда ruff считает
+backend-модули своими и кладёт в секцию ниже, а `support` в неё не попадает и оказывается выше.
+Уберёшь `src` — isort отсортирует всё в одну кучу, `import coach_prompts` уедет над
+`import support`, и **весь suite останется зелёным**: `discover` импортирует файлы по алфавиту,
+и `support` успевает отработать в чужом файле раньше. Развалится только запуск одного файла —
+тот самый сценарий из «Команд». Проверка: `python3 -m unittest discover -s backend/tests -p "test_coach_prompts.py"`.
+Сделано так специально, чтобы не заводить **четвёртый** список backend-модулей вручную:
+`src` — это два каталога, а не перечисление файлов.
 
 **Xcode-проект держит файлы явными ссылками** (`objectVersion = 56`, без
 `PBXFileSystemSynchronizedRootGroup`). Новый `.swift` в `ios/TrainerIOS/` не попадёт в сборку,

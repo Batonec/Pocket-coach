@@ -51,7 +51,9 @@ class ServerApiTest(unittest.TestCase):
 
             self.assertEqual(first_response.status, 200)
             self.assertEqual(second_response.status, 200)
-            self.assertEqual(first_response.payload["user"]["id"], second_response.payload["user"]["id"])
+            self.assertEqual(
+                first_response.payload["user"]["id"], second_response.payload["user"]["id"]
+            )
             self.assertNotIn("auth_mode", second_response.payload)
 
     def test_session_resolve_ios_can_bind_to_fixed_native_user_id(self) -> None:
@@ -167,7 +169,9 @@ class ServerApiTest(unittest.TestCase):
             self.assertEqual(first_response.status, 201)
             self.assertEqual(second_response.status, 200)
             self.assertFalse(second_response.payload["created"])
-            self.assertEqual(first_response.payload["workout"]["id"], second_response.payload["workout"]["id"])
+            self.assertEqual(
+                first_response.payload["workout"]["id"], second_response.payload["workout"]["id"]
+            )
             self.assertEqual(len(workouts_response.payload["workouts"]), 1)
 
     def test_workouts_endpoint_updates_existing_workout_via_put(self) -> None:
@@ -206,12 +210,23 @@ class ServerApiTest(unittest.TestCase):
             workouts_response = client.request_json("GET", "/api/workouts")
 
             self.assertEqual(updated_response.status, 200)
-            self.assertEqual(updated_response.payload["workout"]["client_id"], "editable-api-workout")
-            self.assertEqual(updated_response.payload["workout"]["workout_date"], "2026-03-27")
-            self.assertEqual(updated_response.payload["workout"]["data"]["notes"], "Updated pull-up day")
-            self.assertEqual(workouts_response.payload["workouts"][0]["data"]["exercises"][0]["sets"][0]["weight"], 20)
             self.assertEqual(
-                workouts_response.payload["workouts"][0]["data"]["exercises"][0]["sets"][0]["effort"],
+                updated_response.payload["workout"]["client_id"], "editable-api-workout"
+            )
+            self.assertEqual(updated_response.payload["workout"]["workout_date"], "2026-03-27")
+            self.assertEqual(
+                updated_response.payload["workout"]["data"]["notes"], "Updated pull-up day"
+            )
+            self.assertEqual(
+                workouts_response.payload["workouts"][0]["data"]["exercises"][0]["sets"][0][
+                    "weight"
+                ],
+                20,
+            )
+            self.assertEqual(
+                workouts_response.payload["workouts"][0]["data"]["exercises"][0]["sets"][0][
+                    "effort"
+                ],
                 "hard",
             )
 
@@ -271,7 +286,9 @@ class ServerApiTest(unittest.TestCase):
 
             self.assertEqual(delete_response.status, 200)
             self.assertTrue(delete_response.payload["deleted"])
-            self.assertEqual(delete_response.payload["workout"]["id"], created_response.payload["workout"]["id"])
+            self.assertEqual(
+                delete_response.payload["workout"]["id"], created_response.payload["workout"]["id"]
+            )
             self.assertEqual(workouts_response.payload["workouts"], [])
 
     def test_workouts_endpoint_returns_not_found_for_missing_delete(self) -> None:
@@ -386,7 +403,10 @@ class ServerApiTest(unittest.TestCase):
             self.assertEqual(second_save.status, 201)
             self.assertEqual(workouts_response.status, 200)
             self.assertEqual(
-                [workout["data"]["exercises"][0]["name"] for workout in workouts_response.payload["workouts"]],
+                [
+                    workout["data"]["exercises"][0]["name"]
+                    for workout in workouts_response.payload["workouts"]
+                ],
                 ["Pull Up", "Squat"],
             )
 

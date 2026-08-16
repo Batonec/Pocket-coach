@@ -17,6 +17,7 @@ rendered with a missing or unknown slot raises: a prompt that silently ships
 
 Stdlib-only, like the rest of the backend.
 """
+
 from __future__ import annotations
 
 import re
@@ -70,7 +71,7 @@ def fragments(name: str, *, directory: Path | None = None) -> dict[str, str]:
     out: dict[str, str] = {}
     for i, mark in enumerate(marks):
         end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
-        body = text[mark.end():end].strip("\n")
+        body = text[mark.end() : end].strip("\n")
         if mark.group(1) in out:
             raise PromptError(f"фрагмент {mark.group(1)!r} в {name!r} объявлен дважды")
         out[mark.group(1)] = body
@@ -95,7 +96,7 @@ def document_sections(text: str, wanted: list[str]) -> tuple[str, list[str]]:
     found: dict[str, str] = {}
     for i, mark in enumerate(marks):
         end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
-        found[mark.group(1).lower()] = text[mark.start():end].strip("\n")
+        found[mark.group(1).lower()] = text[mark.start() : end].strip("\n")
     picked, missing = [], []
     for heading in wanted:
         body = found.get(heading.lower())

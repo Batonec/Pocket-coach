@@ -10,7 +10,6 @@ from support import STATIC_DIR
 
 import recommender
 
-
 CATALOG = [
     {"id": 8, "name": "Жим ногами"},
     {"id": 9, "name": "Тяга верт."},
@@ -46,8 +45,8 @@ class RecommenderTests(unittest.TestCase):
                     "note": "+вес",
                     "sets": [
                         {"reps": 11, "weight": 120},
-                        {"reps": 0, "weight": 50},        # reps < 1 → dropped
-                        {"reps": 10, "weight": 99999},    # weight clamped
+                        {"reps": 0, "weight": 50},  # reps < 1 → dropped
+                        {"reps": 10, "weight": 99999},  # weight clamped
                     ],
                 },
                 {  # hallucinated id → dropped
@@ -98,7 +97,10 @@ class RecommenderTests(unittest.TestCase):
                 "data": {
                     "load_type": "heavy",
                     "exercises": [
-                        {"name": "Жим ногами", "sets": [{"reps": 10, "weight": 120, "effort": "hard"}]}
+                        {
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 10, "weight": 120, "effort": "hard"}],
+                        }
                     ],
                 },
             },
@@ -115,7 +117,7 @@ class RecommenderTests(unittest.TestCase):
         text = recommender._serialize_history(workouts, 20)
         self.assertTrue(text.splitlines()[0].startswith("2026-05-26"))
         self.assertIn("120кг×10+", text)  # hard → '+'
-        self.assertIn("50кг×8-", text)    # easy → '-'
+        self.assertIn("50кг×8-", text)  # easy → '-'
 
     def test_generate_requires_history(self) -> None:
         with self.assertRaises(recommender.RecommendationError):
@@ -141,8 +143,16 @@ class CoachContextTests(unittest.TestCase):
             workout["data"]["recommendation"] = {
                 "schema": 1,
                 "exercises": [
-                    {"exercise_id": exercise_id, "name": "X", "sets": [{"reps": 10, "weight": 50}] * 3},
-                    {"exercise_id": 15, "name": "Сгибания ног", "sets": [{"reps": 12, "weight": 40}] * 2},
+                    {
+                        "exercise_id": exercise_id,
+                        "name": "X",
+                        "sets": [{"reps": 10, "weight": 50}] * 3,
+                    },
+                    {
+                        "exercise_id": 15,
+                        "name": "Сгибания ног",
+                        "sets": [{"reps": 12, "weight": 40}] * 2,
+                    },
                 ],
             }
         return workout
@@ -150,8 +160,8 @@ class CoachContextTests(unittest.TestCase):
     def test_plan_adherence_report_compares_fact_vs_plan(self) -> None:
         workouts = [self._workout("2026-06-10", 18, 3, with_snapshot=True)]
         report = recommender._plan_adherence_report(workouts)
-        self.assertIn("3/5", report)            # 3 of 5 planned sets done
-        self.assertIn("пропущено", report)      # hamstring exercise skipped
+        self.assertIn("3/5", report)  # 3 of 5 planned sets done
+        self.assertIn("пропущено", report)  # hamstring exercise skipped
 
     def test_plan_adherence_none_without_snapshots(self) -> None:
         self.assertIsNone(recommender._plan_adherence_report([self._workout("2026-06-10", 18, 3)]))
@@ -164,9 +174,7 @@ class ProfileTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "coach_profile.json"
-            path.write_text(
-                '{"schema":1,"blocks":{"Цель":"lean bulk до 84"}}', "utf-8"
-            )
+            path.write_text('{"schema":1,"blocks":{"Цель":"lean bulk до 84"}}', "utf-8")
             profile = recommender.load_profile(path)
             self.assertIsNotNone(profile)
             self.assertIn("Цель", profile["blocks"])
@@ -191,8 +199,7 @@ class ProfileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "coach_profile.json"
             path.write_text(
-                '{"schema":1,"updated":"2026-01-01",'
-                '"blocks":{"Цель":"старый текст","Атлет":"а"}}',
+                '{"schema":1,"updated":"2026-01-01","blocks":{"Цель":"старый текст","Атлет":"а"}}',
                 "utf-8",
             )
             updated = recommender.update_profile_block(path, "Цель", "новый текст")
@@ -226,7 +233,7 @@ class ProfileTests(unittest.TestCase):
         profile = {"schema": 1, "blocks": {"Цель": "lean bulk, потолок 84 кг"}}
         prompt = recommender._build_system_prompt(CATALOG, profile)
         self.assertIn("lean bulk, потолок 84 кг", prompt)
-        self.assertIn("широчайшие", prompt)              # catalog semantics
+        self.assertIn("широчайшие", prompt)  # catalog semantics
         self.assertIn("ТРЕНЕРСКАЯ ПОЛИТИКА", prompt)
         self.assertIn("rationale", prompt)
         # The policy is explicitly defaults; the hard bounds are named apart.
@@ -249,9 +256,7 @@ class ProfileTests(unittest.TestCase):
 
         state = coach_state.load_state(None)
         state["phase"] = "cut_recomp"
-        state["phase_params"] = {
-            "cut_recomp": {"title": "Ф0 · возврат", "calories": [2450, 2550]}
-        }
+        state["phase_params"] = {"cut_recomp": {"title": "Ф0 · возврат", "calories": [2450, 2550]}}
         prompt = recommender._build_system_prompt(CATALOG, None, state)
         self.assertIn("Ф0 · возврат", prompt)
         self.assertIn("2450–2550", prompt)
@@ -267,9 +272,7 @@ class ProfileTests(unittest.TestCase):
 
         state = coach_state.load_state(None)
         state["phase"] = "maintenance"
-        state["phase_params"] = {
-            "maintenance": {"protein_g": 150, "session_sets": "восемь"}
-        }
+        state["phase_params"] = {"maintenance": {"protein_g": 150, "session_sets": "восемь"}}
         prompt = recommender._build_system_prompt(CATALOG, None, state)
         self.assertIn("~150+ г", prompt)
         self.assertIn("восемь", prompt)
@@ -283,7 +286,11 @@ class ProfileTests(unittest.TestCase):
                 "data": {
                     "load_type": "heavy",
                     "exercises": [
-                        {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 10, "weight": 100}]}
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 10, "weight": 100}],
+                        }
                     ],
                 },
             }
@@ -303,9 +310,16 @@ class ProfileTests(unittest.TestCase):
         workouts = [
             {
                 "workout_date": "2026-05-01",
-                "data": {"load_type": "medium", "exercises": [
-                    {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 10, "weight": 100}]}
-                ]},
+                "data": {
+                    "load_type": "medium",
+                    "exercises": [
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 10, "weight": 100}],
+                        }
+                    ],
+                },
             }
         ]
         prompt = recommender._build_user_prompt(workouts, [], date(2026, 6, 12), 20)
@@ -325,7 +339,12 @@ class RestDaysTests(unittest.TestCase):
             "load_type": "medium",
             "rationale": "r",
             "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "note": "n", "sets": [{"reps": 10, "weight": 100}]}
+                {
+                    "exercise_id": 8,
+                    "name": "Жим ногами",
+                    "note": "n",
+                    "sets": [{"reps": 10, "weight": 100}],
+                }
             ],
         }
         base.update(extra)
@@ -335,7 +354,10 @@ class RestDaysTests(unittest.TestCase):
         self.assertEqual(recommender._validate(self._raw(), CATALOG)["rest_days"], 1)
 
     def test_validate_clamps_and_coerces_rest_days(self) -> None:
-        self.assertEqual(recommender._validate(self._raw(rest_days=99), CATALOG)["rest_days"], recommender.MAX_REST_DAYS)
+        self.assertEqual(
+            recommender._validate(self._raw(rest_days=99), CATALOG)["rest_days"],
+            recommender.MAX_REST_DAYS,
+        )
         self.assertEqual(recommender._validate(self._raw(rest_days=-3), CATALOG)["rest_days"], 0)
         self.assertEqual(recommender._validate(self._raw(rest_days="2"), CATALOG)["rest_days"], 2)
 
@@ -356,24 +378,52 @@ class RestDaysTests(unittest.TestCase):
         raw = self._raw(
             rest_days=2,
             exercises=[
-                {"exercise_id": 8, "name": "Жим ногами", "note": "n",
-                 "sets": [{"reps": 10, "weight": 100}] * 7},
-                {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
-                 "sets": [{"reps": 12, "weight": 60}] * 7},
+                {
+                    "exercise_id": 8,
+                    "name": "Жим ногами",
+                    "note": "n",
+                    "sets": [{"reps": 10, "weight": 100}] * 7,
+                },
+                {
+                    "exercise_id": 9,
+                    "name": "Тяга верт.",
+                    "note": "n",
+                    "sets": [{"reps": 12, "weight": 60}] * 7,
+                },
             ],
         )
         recommender._call_anthropic = lambda *a, **k: (raw, {"input_tokens": 1, "output_tokens": 1})
 
         # Recent history touches every coverage group, so the plan above is clean.
-        history = [{
-            "workout_date": "2026-06-05",
-            "data": {"exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 10, "weight": 100}] * 2},
-                {"exercise_id": 9, "name": "Тяга верт.", "sets": [{"reps": 12, "weight": 60}] * 2},
-                {"exercise_id": 18, "name": "Жим в тренажере", "sets": [{"reps": 12, "weight": 50}] * 2},
-                {"exercise_id": 15, "name": "Сгибания ног", "sets": [{"reps": 12, "weight": 30}] * 2},
-            ]},
-        }]
+        history = [
+            {
+                "workout_date": "2026-06-05",
+                "data": {
+                    "exercises": [
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 10, "weight": 100}] * 2,
+                        },
+                        {
+                            "exercise_id": 9,
+                            "name": "Тяга верт.",
+                            "sets": [{"reps": 12, "weight": 60}] * 2,
+                        },
+                        {
+                            "exercise_id": 18,
+                            "name": "Жим в тренажере",
+                            "sets": [{"reps": 12, "weight": 50}] * 2,
+                        },
+                        {
+                            "exercise_id": 15,
+                            "name": "Сгибания ног",
+                            "sets": [{"reps": 12, "weight": 30}] * 2,
+                        },
+                    ]
+                },
+            }
+        ]
         rec, _usage, _model = recommender.generate(
             history,
             [],
@@ -413,17 +463,23 @@ class SerializationTests(unittest.TestCase):
             }
         ]
         text = recommender._serialize_history(workouts, 20, catalog)
-        self.assertIn("Жим в тренажере", text)   # renamed onto the canonical id
+        self.assertIn("Жим в тренажере", text)  # renamed onto the canonical id
         self.assertNotIn("Жим гор.", text)
-        self.assertIn("50кг×10@2", text)          # RIR shown as @N
+        self.assertIn("50кг×10@2", text)  # RIR shown as @N
 
     def test_validate_remaps_duplicate_id_to_canonical(self) -> None:
         catalog = [{"id": 18, "name": "Жим в тренажере"}, {"id": 1, "name": "Жим гор."}]
         raw = {
-            "focus": "x", "load_type": "medium", "rationale": "r",
+            "focus": "x",
+            "load_type": "medium",
+            "rationale": "r",
             "exercises": [
-                {"exercise_id": 1, "name": "Жим гор.", "note": "n",
-                 "sets": [{"reps": 10, "weight": 50}]}
+                {
+                    "exercise_id": 1,
+                    "name": "Жим гор.",
+                    "note": "n",
+                    "sets": [{"reps": 10, "weight": 50}],
+                }
             ],
         }
         out = recommender._validate(raw, catalog)
@@ -453,21 +509,41 @@ class SemanticValidatorTests(unittest.TestCase):
                 "data": {
                     "load_type": load_type,
                     "exercises": [
-                        {"exercise_id": 8, "name": "Жим ногами",
-                         "sets": [{"reps": 10, "weight": 100}] * 3},
-                        {"exercise_id": 9, "name": "Тяга верт.",
-                         "sets": [{"reps": 12, "weight": 60}] * 3},
-                        {"exercise_id": 18, "name": "Жим в тренажере",
-                         "sets": [{"reps": 12, "weight": 50}] * 2},
-                        {"exercise_id": 15, "name": "Сгибания ног",
-                         "sets": [{"reps": 12, "weight": 30}] * 2},
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 10, "weight": 100}] * 3,
+                        },
+                        {
+                            "exercise_id": 9,
+                            "name": "Тяга верт.",
+                            "sets": [{"reps": 12, "weight": 60}] * 3,
+                        },
+                        {
+                            "exercise_id": 18,
+                            "name": "Жим в тренажере",
+                            "sets": [{"reps": 12, "weight": 50}] * 2,
+                        },
+                        {
+                            "exercise_id": 15,
+                            "name": "Сгибания ног",
+                            "sets": [{"reps": 12, "weight": 30}] * 2,
+                        },
                     ],
                 },
             }
         ]
 
-    def _rec(self, weight: float = 100.0, sets: int = 14, load_type: str = "medium",
-             rest_days: int = 1, reps: int = 10, focus: str = "f", rationale: str = "r"):
+    def _rec(
+        self,
+        weight: float = 100.0,
+        sets: int = 14,
+        load_type: str = "medium",
+        rest_days: int = 1,
+        reps: int = 10,
+        focus: str = "f",
+        rationale: str = "r",
+    ):
         first = sets - sets // 2
         return {
             "focus": focus,
@@ -475,10 +551,18 @@ class SemanticValidatorTests(unittest.TestCase):
             "rest_days": rest_days,
             "rationale": rationale,
             "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "note": "n",
-                 "sets": [{"reps": reps, "weight": weight}] * first},
-                {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
-                 "sets": [{"reps": 12, "weight": 60}] * (sets // 2)},
+                {
+                    "exercise_id": 8,
+                    "name": "Жим ногами",
+                    "note": "n",
+                    "sets": [{"reps": reps, "weight": weight}] * first,
+                },
+                {
+                    "exercise_id": 9,
+                    "name": "Тяга верт.",
+                    "note": "n",
+                    "sets": [{"reps": 12, "weight": 60}] * (sets // 2),
+                },
             ],
         }
 
@@ -514,9 +598,7 @@ class SemanticValidatorTests(unittest.TestCase):
         pump_heavy = recommender._validate(
             self._rec(sets=14, load_type="heavy", reps=14), self.CATALOG
         )
-        violations = self._violations(
-            pump_heavy, workouts=self._history(load_type="heavy")
-        )
+        violations = self._violations(pump_heavy, workouts=self._history(load_type="heavy"))
         self.assertEqual(violations, [])
 
     def test_rest_days_are_clamped_not_flagged(self) -> None:
@@ -536,21 +618,33 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
     def _fullbody(self, when: str, sets_each: int = 2):
         return {
             "workout_date": when,
-            "data": {"load_type": "medium", "exercises": [
-                {"exercise_id": eid, "name": f"#{eid}",
-                 "sets": [{"reps": 10, "weight": 60}] * sets_each}
-                for eid in (8, 9, 18, 15)
-            ]},
+            "data": {
+                "load_type": "medium",
+                "exercises": [
+                    {
+                        "exercise_id": eid,
+                        "name": f"#{eid}",
+                        "sets": [{"reps": 10, "weight": 60}] * sets_each,
+                    }
+                    for eid in (8, 9, 18, 15)
+                ],
+            },
         }
 
     def _plan(self, ids_sets: list[tuple[int, int]], rationale: str = "r"):
         names = {item["id"]: item["name"] for item in self.CATALOG}
         return {
-            "focus": "f", "load_type": "medium", "rest_days": 1,
+            "focus": "f",
+            "load_type": "medium",
+            "rest_days": 1,
             "rationale": rationale,
             "exercises": [
-                {"exercise_id": eid, "name": names[eid], "note": "n",
-                 "sets": [{"reps": 10, "weight": 60}] * count}
+                {
+                    "exercise_id": eid,
+                    "name": names[eid],
+                    "note": "n",
+                    "sets": [{"reps": 10, "weight": 60}] * count,
+                }
                 for eid, count in ids_sets
             ],
         }
@@ -561,10 +655,19 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
         # Hamstrings (id 15) last trained 12 days ago → dry; the plan skips them.
         workouts = [
             self._fullbody("2026-06-10", sets_each=2),
-            {"workout_date": "2026-05-31", "data": {"load_type": "medium", "exercises": [
-                {"exercise_id": 15, "name": "Сгибания ног",
-                 "sets": [{"reps": 10, "weight": 60}] * 2},
-            ]}},
+            {
+                "workout_date": "2026-05-31",
+                "data": {
+                    "load_type": "medium",
+                    "exercises": [
+                        {
+                            "exercise_id": 15,
+                            "name": "Сгибания ног",
+                            "sets": [{"reps": 10, "weight": 60}] * 2,
+                        },
+                    ],
+                },
+            },
         ]
         workouts[0]["data"]["exercises"] = [
             ex for ex in workouts[0]["data"]["exercises"] if ex["exercise_id"] != 15
@@ -584,15 +687,15 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
         self.assertEqual(violations, [])
 
     def test_planned_deload_week_no_longer_constrains_the_plan(self) -> None:
-        from datetime import date as _date, timedelta as _timedelta
+        from datetime import date as _date
+        from datetime import timedelta as _timedelta
 
         import coach_state
 
         start = _date(2026, 5, 1)
         state = dict(coach_state.DEFAULT_STATE, phase_started=start.isoformat())
         workouts = [
-            self._fullbody((start + _timedelta(days=index * 3)).isoformat())
-            for index in range(15)
+            self._fullbody((start + _timedelta(days=index * 3)).isoformat()) for index in range(15)
         ]
         today = start + _timedelta(days=42)  # block week 7 → planned deload
         # The flag still reaches the prompt via the context block…
@@ -602,9 +705,7 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
         # to build the light week is the model's call.
         heavy_volume = self._plan([(8, 5), (9, 5), (18, 4), (15, 2)])  # 16 sets
         rec = recommender._validate(heavy_volume, self.CATALOG)
-        violations = recommender._semantic_violations(
-            rec, self.CATALOG, workouts, today
-        )
+        violations = recommender._semantic_violations(rec, self.CATALOG, workouts, today)
         self.assertEqual(violations, [])
 
 
@@ -614,43 +715,118 @@ class ReturnLadderIsDataOnlyTests(unittest.TestCase):
     movement is the pre-break working weight; the ladder in the prompt guides
     the sessions after it."""
 
-    CATALOG = [{"id": 8, "name": "Жим ногами"}, {"id": 9, "name": "Тяга верт."},
-               {"id": 18, "name": "Жим в тренажере"}, {"id": 15, "name": "Сгибания ног"}]
+    CATALOG = [
+        {"id": 8, "name": "Жим ногами"},
+        {"id": 9, "name": "Тяга верт."},
+        {"id": 18, "name": "Жим в тренажере"},
+        {"id": 15, "name": "Сгибания ног"},
+    ]
 
     def _history(self):
         # 40-day break; leg-press peak 120, last working weight 80 → the ladder
         # (90 → 100 → 110 → 120) exists as prompt data, but the return session
         # itself is capped at the pre-break 80.
         return [
-            {"workout_date": "2026-05-03", "data": {"load_type": "medium", "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 12, "weight": 80}] * 3},
-                {"exercise_id": 9, "name": "Тяга верт.", "sets": [{"reps": 12, "weight": 60}] * 3},
-                {"exercise_id": 18, "name": "Жим в тренажере", "sets": [{"reps": 12, "weight": 50}] * 2},
-                {"exercise_id": 15, "name": "Сгибания ног", "sets": [{"reps": 12, "weight": 30}] * 2},
-            ]}},
-            {"workout_date": "2026-04-15", "data": {"load_type": "medium", "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 12, "weight": 120}] * 3},
-            ]}},
-            {"workout_date": "2026-04-08", "data": {"load_type": "medium", "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 12, "weight": 110}] * 3},
-            ]}},
-            {"workout_date": "2026-04-01", "data": {"load_type": "medium", "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 12, "weight": 100}] * 3},
-            ]}},
+            {
+                "workout_date": "2026-05-03",
+                "data": {
+                    "load_type": "medium",
+                    "exercises": [
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 12, "weight": 80}] * 3,
+                        },
+                        {
+                            "exercise_id": 9,
+                            "name": "Тяга верт.",
+                            "sets": [{"reps": 12, "weight": 60}] * 3,
+                        },
+                        {
+                            "exercise_id": 18,
+                            "name": "Жим в тренажере",
+                            "sets": [{"reps": 12, "weight": 50}] * 2,
+                        },
+                        {
+                            "exercise_id": 15,
+                            "name": "Сгибания ног",
+                            "sets": [{"reps": 12, "weight": 30}] * 2,
+                        },
+                    ],
+                },
+            },
+            {
+                "workout_date": "2026-04-15",
+                "data": {
+                    "load_type": "medium",
+                    "exercises": [
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 12, "weight": 120}] * 3,
+                        },
+                    ],
+                },
+            },
+            {
+                "workout_date": "2026-04-08",
+                "data": {
+                    "load_type": "medium",
+                    "exercises": [
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 12, "weight": 110}] * 3,
+                        },
+                    ],
+                },
+            },
+            {
+                "workout_date": "2026-04-01",
+                "data": {
+                    "load_type": "medium",
+                    "exercises": [
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 12, "weight": 100}] * 3,
+                        },
+                    ],
+                },
+            },
         ]
 
     def _plan(self, leg_press_weight: float):
         return {
-            "focus": "возврат", "load_type": "medium", "rest_days": 0, "rationale": "r",
+            "focus": "возврат",
+            "load_type": "medium",
+            "rest_days": 0,
+            "rationale": "r",
             "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "note": "n",
-                 "sets": [{"reps": 12, "weight": leg_press_weight}] * 4},
-                {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
-                 "sets": [{"reps": 12, "weight": 47.5}] * 4},
-                {"exercise_id": 18, "name": "Жим в тренажере", "note": "n",
-                 "sets": [{"reps": 12, "weight": 40}] * 2},
-                {"exercise_id": 15, "name": "Сгибания ног", "note": "n",
-                 "sets": [{"reps": 12, "weight": 22.5}] * 2},
+                {
+                    "exercise_id": 8,
+                    "name": "Жим ногами",
+                    "note": "n",
+                    "sets": [{"reps": 12, "weight": leg_press_weight}] * 4,
+                },
+                {
+                    "exercise_id": 9,
+                    "name": "Тяга верт.",
+                    "note": "n",
+                    "sets": [{"reps": 12, "weight": 47.5}] * 4,
+                },
+                {
+                    "exercise_id": 18,
+                    "name": "Жим в тренажере",
+                    "note": "n",
+                    "sets": [{"reps": 12, "weight": 40}] * 2,
+                },
+                {
+                    "exercise_id": 15,
+                    "name": "Сгибания ног",
+                    "note": "n",
+                    "sets": [{"reps": 12, "weight": 22.5}] * 2,
+                },
             ],
         }
 
@@ -677,47 +853,112 @@ class ReturnCeilingTests(unittest.TestCase):
     """After a break EVERY exercise is capped at its pre-break working weight
     — including the ones the athlete left at their peak."""
 
-    CATALOG = [{"id": 8, "name": "Жим ногами"}, {"id": 9, "name": "Тяга верт."},
-               {"id": 18, "name": "Жим в тренажере"}, {"id": 15, "name": "Сгибания ног"}]
+    CATALOG = [
+        {"id": 8, "name": "Жим ногами"},
+        {"id": 9, "name": "Тяга верт."},
+        {"id": 18, "name": "Жим в тренажере"},
+        {"id": 15, "name": "Сгибания ног"},
+    ]
 
     def _history(self, last: str = "2026-05-22"):
         # Two identical sessions at the same weights: nothing is below peak,
         # so comeback_ramp_steps yields NO ladder for any movement.
         return [
-            {"workout_date": last, "data": {"load_type": "medium", "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 12, "weight": 100}] * 3},
-                {"exercise_id": 9, "name": "Тяга верт.", "sets": [{"reps": 12, "weight": 60}] * 3},
-                {"exercise_id": 18, "name": "Жим в тренажере", "sets": [{"reps": 12, "weight": 50}] * 2},
-                {"exercise_id": 15, "name": "Сгибания ног", "sets": [{"reps": 12, "weight": 30}] * 2},
-            ]}},
-            {"workout_date": "2026-05-19", "data": {"load_type": "medium", "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 12, "weight": 100}] * 3},
-                {"exercise_id": 9, "name": "Тяга верт.", "sets": [{"reps": 12, "weight": 60}] * 3},
-                {"exercise_id": 18, "name": "Жим в тренажере", "sets": [{"reps": 12, "weight": 50}] * 2},
-                {"exercise_id": 15, "name": "Сгибания ног", "sets": [{"reps": 12, "weight": 30}] * 2},
-            ]}},
+            {
+                "workout_date": last,
+                "data": {
+                    "load_type": "medium",
+                    "exercises": [
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 12, "weight": 100}] * 3,
+                        },
+                        {
+                            "exercise_id": 9,
+                            "name": "Тяга верт.",
+                            "sets": [{"reps": 12, "weight": 60}] * 3,
+                        },
+                        {
+                            "exercise_id": 18,
+                            "name": "Жим в тренажере",
+                            "sets": [{"reps": 12, "weight": 50}] * 2,
+                        },
+                        {
+                            "exercise_id": 15,
+                            "name": "Сгибания ног",
+                            "sets": [{"reps": 12, "weight": 30}] * 2,
+                        },
+                    ],
+                },
+            },
+            {
+                "workout_date": "2026-05-19",
+                "data": {
+                    "load_type": "medium",
+                    "exercises": [
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 12, "weight": 100}] * 3,
+                        },
+                        {
+                            "exercise_id": 9,
+                            "name": "Тяга верт.",
+                            "sets": [{"reps": 12, "weight": 60}] * 3,
+                        },
+                        {
+                            "exercise_id": 18,
+                            "name": "Жим в тренажере",
+                            "sets": [{"reps": 12, "weight": 50}] * 2,
+                        },
+                        {
+                            "exercise_id": 15,
+                            "name": "Сгибания ног",
+                            "sets": [{"reps": 12, "weight": 30}] * 2,
+                        },
+                    ],
+                },
+            },
         ]
 
     def _plan(self, leg_press: float):
         return {
-            "focus": "возврат", "load_type": "medium", "rest_days": 0, "rationale": "r",
+            "focus": "возврат",
+            "load_type": "medium",
+            "rest_days": 0,
+            "rationale": "r",
             "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "note": "n",
-                 "sets": [{"reps": 12, "weight": leg_press}] * 4},
-                {"exercise_id": 9, "name": "Тяга верт.", "note": "n",
-                 "sets": [{"reps": 12, "weight": 50}] * 4},
-                {"exercise_id": 18, "name": "Жим в тренажере", "note": "n",
-                 "sets": [{"reps": 12, "weight": 42.5}] * 2},
-                {"exercise_id": 15, "name": "Сгибания ног", "note": "n",
-                 "sets": [{"reps": 12, "weight": 25}] * 2},
+                {
+                    "exercise_id": 8,
+                    "name": "Жим ногами",
+                    "note": "n",
+                    "sets": [{"reps": 12, "weight": leg_press}] * 4,
+                },
+                {
+                    "exercise_id": 9,
+                    "name": "Тяга верт.",
+                    "note": "n",
+                    "sets": [{"reps": 12, "weight": 50}] * 4,
+                },
+                {
+                    "exercise_id": 18,
+                    "name": "Жим в тренажере",
+                    "note": "n",
+                    "sets": [{"reps": 12, "weight": 42.5}] * 2,
+                },
+                {
+                    "exercise_id": 15,
+                    "name": "Сгибания ног",
+                    "note": "n",
+                    "sets": [{"reps": 12, "weight": 25}] * 2,
+                },
             ],
         }
 
     def _violations(self, plan, today):
         rec = recommender._validate(plan, self.CATALOG)
-        return recommender._semantic_violations(
-            rec, self.CATALOG, self._history(), today
-        )
+        return recommender._semantic_violations(rec, self.CATALOG, self._history(), today)
 
     def test_progression_after_a_break_is_rejected(self) -> None:
         from datetime import date as _date
@@ -770,10 +1011,12 @@ class RequestModelCachingTests(unittest.TestCase):
                 return False
 
             def read(self):
-                return json.dumps({
-                    "content": [{"type": "text", "text": "привет"}],
-                    "usage": {"input_tokens": 1, "output_tokens": 2},
-                }).encode("utf-8")
+                return json.dumps(
+                    {
+                        "content": [{"type": "text", "text": "привет"}],
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    }
+                ).encode("utf-8")
 
         def fake_urlopen(request, timeout=None):
             captured["body"] = json.loads(request.data.decode("utf-8"))
@@ -783,9 +1026,14 @@ class RequestModelCachingTests(unittest.TestCase):
         self.addCleanup(lambda: setattr(recommender.urllib.request, "urlopen", orig))
         recommender.urllib.request.urlopen = fake_urlopen
 
-        text, usage = recommender._request_model(
-            "system text", "user text", schema=None,
-            model="m", max_tokens=10, api_key="k", timeout=1,
+        text, _usage = recommender._request_model(
+            "system text",
+            "user text",
+            schema=None,
+            model="m",
+            max_tokens=10,
+            api_key="k",
+            timeout=1,
         )
         self.assertEqual(text, "привет")
         body = captured["body"]
@@ -797,8 +1045,13 @@ class RequestModelCachingTests(unittest.TestCase):
         self.assertNotIn("format", body.get("output_config", {}))
 
         recommender._request_model(
-            "system text", "user text", schema={"type": "object"},
-            model="m", max_tokens=10, api_key="k", timeout=1,
+            "system text",
+            "user text",
+            schema={"type": "object"},
+            model="m",
+            max_tokens=10,
+            api_key="k",
+            timeout=1,
         )
         self.assertIn("format", captured["body"]["output_config"])
 
@@ -813,10 +1066,12 @@ class RequestModelCachingTests(unittest.TestCase):
                 return False
 
             def read(self):
-                return json.dumps({
-                    "content": [{"type": "text", "text": "ок"}],
-                    "usage": {},
-                }).encode("utf-8")
+                return json.dumps(
+                    {
+                        "content": [{"type": "text", "text": "ок"}],
+                        "usage": {},
+                    }
+                ).encode("utf-8")
 
         def fake_urlopen(request, timeout=None):
             captured["body"] = json.loads(request.data.decode("utf-8"))
@@ -831,7 +1086,13 @@ class RequestModelCachingTests(unittest.TestCase):
 
         recommender.DEFAULT_EFFORT = "medium"
         recommender._request_model(
-            "s", "u", schema=None, model="m", max_tokens=10, api_key="k", timeout=1,
+            "s",
+            "u",
+            schema=None,
+            model="m",
+            max_tokens=10,
+            api_key="k",
+            timeout=1,
         )
         self.assertEqual(captured["body"]["output_config"]["effort"], "medium")
 
@@ -839,7 +1100,13 @@ class RequestModelCachingTests(unittest.TestCase):
         # где уровень недоступен).
         recommender.DEFAULT_EFFORT = ""
         recommender._request_model(
-            "s", "u", schema=None, model="m", max_tokens=10, api_key="k", timeout=1,
+            "s",
+            "u",
+            schema=None,
+            model="m",
+            max_tokens=10,
+            api_key="k",
+            timeout=1,
         )
         self.assertNotIn("output_config", captured["body"])
 
@@ -855,11 +1122,13 @@ class RequestModelCachingTests(unittest.TestCase):
                 return False
 
             def read(self):
-                return json.dumps({
-                    "stop_reason": "max_tokens",
-                    "content": [{"type": "text", "text": '{"focus": "нез'}],
-                    "usage": {},
-                }).encode("utf-8")
+                return json.dumps(
+                    {
+                        "stop_reason": "max_tokens",
+                        "content": [{"type": "text", "text": '{"focus": "нез'}],
+                        "usage": {},
+                    }
+                ).encode("utf-8")
 
         orig = recommender.urllib.request.urlopen
         self.addCleanup(lambda: setattr(recommender.urllib.request, "urlopen", orig))
@@ -867,8 +1136,13 @@ class RequestModelCachingTests(unittest.TestCase):
 
         with self.assertRaises(recommender.RecommendationError) as ctx:
             recommender._request_model(
-                "s", "u", schema={"type": "object"},
-                model="m", max_tokens=777, api_key="k", timeout=1,
+                "s",
+                "u",
+                schema={"type": "object"},
+                model="m",
+                max_tokens=777,
+                api_key="k",
+                timeout=1,
             )
         self.assertIn("777", str(ctx.exception))
         self.assertIn("ANTHROPIC_MAX_TOKENS", str(ctx.exception))
@@ -891,13 +1165,22 @@ class WeeklyReportTests(unittest.TestCase):
         self.addCleanup(lambda: setattr(recommender, "_request_model", orig))
         recommender._request_model = fake_request
 
-        workouts = [{
-            "workout_date": "2026-06-10",
-            "data": {"load_type": "medium", "exercises": [
-                {"exercise_id": 8, "name": "Жим ногами", "sets": [{"reps": 10, "weight": 100}] * 3},
-            ]},
-        }]
-        report, usage, model = recommender.generate_weekly_report(
+        workouts = [
+            {
+                "workout_date": "2026-06-10",
+                "data": {
+                    "load_type": "medium",
+                    "exercises": [
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 10, "weight": 100}] * 3,
+                        },
+                    ],
+                },
+            }
+        ]
+        report, usage, _model = recommender.generate_weekly_report(
             workouts, [], [], CATALOG, today=_date(2026, 6, 12)
         )
         self.assertIn("Итоги недели", report)
@@ -939,35 +1222,49 @@ class GenerateRepromptTests(unittest.TestCase):
         return [
             {
                 "workout_date": when,
-                "data": {"load_type": "medium", "exercises": [
-                    {"exercise_id": 8, "name": "Жим ногами",
-                     "sets": [{"reps": 10, "weight": 100}] * 3},
-                    {"exercise_id": 9, "name": "Тяга верт.",
-                     "sets": [{"reps": 12, "weight": 60}] * 3},
-                    {"exercise_id": 18, "name": "Жим в тренажере",
-                     "sets": [{"reps": 12, "weight": 50}] * 2},
-                    {"exercise_id": 15, "name": "Сгибания ног",
-                     "sets": [{"reps": 12, "weight": 30}] * 2},
-                ]},
+                "data": {
+                    "load_type": "medium",
+                    "exercises": [
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 10, "weight": 100}] * 3,
+                        },
+                        {
+                            "exercise_id": 9,
+                            "name": "Тяга верт.",
+                            "sets": [{"reps": 12, "weight": 60}] * 3,
+                        },
+                        {
+                            "exercise_id": 18,
+                            "name": "Жим в тренажере",
+                            "sets": [{"reps": 12, "weight": 50}] * 2,
+                        },
+                        {
+                            "exercise_id": 15,
+                            "name": "Сгибания ног",
+                            "sets": [{"reps": 12, "weight": 30}] * 2,
+                        },
+                    ],
+                },
             }
         ]
 
     def _fullbody_raw(self, leg_press: float = 100.0, with_hamstrings: bool = True):
         exercises = [
-            {"exercise_id": 8, "note": "n",
-             "sets": [{"reps": 10, "weight": leg_press}] * 4},
-            {"exercise_id": 9, "note": "n",
-             "sets": [{"reps": 12, "weight": 60}] * 4},
-            {"exercise_id": 18, "note": "n",
-             "sets": [{"reps": 12, "weight": 50}] * 3},
+            {"exercise_id": 8, "note": "n", "sets": [{"reps": 10, "weight": leg_press}] * 4},
+            {"exercise_id": 9, "note": "n", "sets": [{"reps": 12, "weight": 60}] * 4},
+            {"exercise_id": 18, "note": "n", "sets": [{"reps": 12, "weight": 50}] * 3},
         ]
         if with_hamstrings:
             exercises.append(
-                {"exercise_id": 15, "note": "n",
-                 "sets": [{"reps": 12, "weight": 30}] * 2}
+                {"exercise_id": 15, "note": "n", "sets": [{"reps": 12, "weight": 30}] * 2}
             )
         return {
-            "focus": "f", "load_type": "medium", "rest_days": 1, "rationale": "r",
+            "focus": "f",
+            "load_type": "medium",
+            "rest_days": 1,
+            "rationale": "r",
             "exercises": exercises,
         }
 
@@ -977,13 +1274,21 @@ class GenerateRepromptTests(unittest.TestCase):
         workouts[0]["data"]["exercises"] = [
             ex for ex in workouts[0]["data"]["exercises"] if ex["exercise_id"] != 15
         ]
-        workouts.append({
-            "workout_date": "2026-05-31",
-            "data": {"load_type": "medium", "exercises": [
-                {"exercise_id": 15, "name": "Сгибания ног",
-                 "sets": [{"reps": 12, "weight": 30}] * 2},
-            ]},
-        })
+        workouts.append(
+            {
+                "workout_date": "2026-05-31",
+                "data": {
+                    "load_type": "medium",
+                    "exercises": [
+                        {
+                            "exercise_id": 15,
+                            "name": "Сгибания ног",
+                            "sets": [{"reps": 12, "weight": 30}] * 2,
+                        },
+                    ],
+                },
+            }
+        )
         return workouts
 
     def test_violating_answer_triggers_one_reprompt_then_succeeds(self) -> None:
@@ -991,7 +1296,7 @@ class GenerateRepromptTests(unittest.TestCase):
 
         answers = [
             self._fullbody_raw(with_hamstrings=False),  # dry group missing
-            self._fullbody_raw(with_hamstrings=True),   # fixed on retry
+            self._fullbody_raw(with_hamstrings=True),  # fixed on retry
         ]
         calls: list[list[dict]] = []
 
@@ -1019,7 +1324,7 @@ class GenerateRepromptTests(unittest.TestCase):
 
         calls = 0
 
-        def fake_call(*args, **kwargs):  # noqa: ANN002, ANN003
+        def fake_call(*args, **kwargs):
             nonlocal calls
             calls += 1
             return self._fullbody_raw(), {"input_tokens": 10, "output_tokens": 5}
@@ -1029,8 +1334,11 @@ class GenerateRepromptTests(unittest.TestCase):
         # session size is the model's call now.
         state = dict(coach_state.load_state(None), phase="maintenance")
         rec, _usage, _model, trace = recommender.generate_with_trace(
-            self._history(), [], self.CATALOG,
-            today=_date(2026, 6, 12), state=state,
+            self._history(),
+            [],
+            self.CATALOG,
+            today=_date(2026, 6, 12),
+            state=state,
         )
 
         self.assertEqual(calls, 1)

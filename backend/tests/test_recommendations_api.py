@@ -3,11 +3,11 @@ from __future__ import annotations
 import tempfile
 import time
 import unittest
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
-import backend_store  # support (imported below) puts backend on sys.path
 from support import (
     JsonHttpClient,
     RunningMiniApp,
@@ -16,6 +16,7 @@ from support import (
     temporary_env,
 )
 
+import backend_store  # support (imported below) puts backend on sys.path
 
 FAKE_REC: dict[str, Any] = {
     "focus": "Тест",
@@ -27,7 +28,7 @@ FAKE_REC: dict[str, Any] = {
 }
 
 
-def _fake_generate(workouts, body_weights, catalog, **kwargs):  # noqa: ANN001
+def _fake_generate(workouts, body_weights, catalog, **kwargs):
     return FAKE_REC, {"input_tokens": 100, "output_tokens": 50}, "claude-test"
 
 
@@ -41,24 +42,28 @@ class RecommendationsAPITests(unittest.TestCase):
         raises: str | None = None,
     ) -> Iterator[RunningMiniApp]:
         # Drop the manual-refresh debounce so sequential calls in a test don't race it.
-        with temporary_env({"RECOMMENDATION_REFRESH_MIN_INTERVAL": "0"}):
-            with running_miniapp_server() as running:
-                module = running.module
-                orig_generate = module.recommender.generate
-                orig_trigger = module.trigger_recommendation_async
-                try:
-                    if not auto_trigger:
-                        module.trigger_recommendation_async = lambda *a, **k: None
-                    if raises is not None:
-                        def boom(*a, **k):  # noqa: ANN001, ANN202
-                            raise module.recommender.RecommendationError(raises)
-                        module.recommender.generate = boom
-                    else:
-                        module.recommender.generate = generate or _fake_generate
-                    yield running
-                finally:
-                    module.recommender.generate = orig_generate
-                    module.trigger_recommendation_async = orig_trigger
+        with (
+            temporary_env({"RECOMMENDATION_REFRESH_MIN_INTERVAL": "0"}),
+            running_miniapp_server() as running,
+        ):
+            module = running.module
+            orig_generate = module.recommender.generate
+            orig_trigger = module.trigger_recommendation_async
+            try:
+                if not auto_trigger:
+                    module.trigger_recommendation_async = lambda *a, **k: None
+                if raises is not None:
+
+                    def boom(*a, **k):
+                        raise module.recommender.RecommendationError(raises)
+
+                    module.recommender.generate = boom
+                else:
+                    module.recommender.generate = generate or _fake_generate
+                yield running
+            finally:
+                module.recommender.generate = orig_generate
+                module.trigger_recommendation_async = orig_trigger
 
     def test_next_returns_none_without_recommendation(self) -> None:
         with self._server() as running:
@@ -89,11 +94,15 @@ class RecommendationsAPITests(unittest.TestCase):
         with self._server() as running:  # auto_trigger off → recommendation won't regenerate
             client = JsonHttpClient(running.base_url)
             client.request_json(
-                "POST", "/api/workouts", sample_workout_payload(client_id="w1", workout_date="2026-03-20")
+                "POST",
+                "/api/workouts",
+                sample_workout_payload(client_id="w1", workout_date="2026-03-20"),
             )
             client.request_json("POST", "/api/recommendations/refresh")
             client.request_json(
-                "POST", "/api/workouts", sample_workout_payload(client_id="w2", workout_date="2026-03-28")
+                "POST",
+                "/api/workouts",
+                sample_workout_payload(client_id="w2", workout_date="2026-03-28"),
             )
 
             nxt = client.request_json("GET", "/api/recommendations/next")
@@ -112,7 +121,7 @@ class RecommendationsAPITests(unittest.TestCase):
     def test_failed_manual_refresh_can_be_retried_immediately(self) -> None:
         calls = 0
 
-        def flaky_generate(*args, **kwargs):  # noqa: ANN002, ANN003
+        def flaky_generate(*args, **kwargs):
             nonlocal calls
             calls += 1
             if calls == 1:
@@ -140,14 +149,16 @@ class RecommendationsAPITests(unittest.TestCase):
             status = None
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
-                status = client.request_json("GET", "/api/recommendations/next").payload.get("status")
+                status = client.request_json("GET", "/api/recommendations/next").payload.get(
+                    "status"
+                )
                 if status == "ready":
                     break
                 time.sleep(0.1)
             self.assertEqual(status, "ready")
 
     def test_workout_delete_regenerates_from_remaining_history(self) -> None:
-        def history_generate(workouts, body_weights, catalog, **kwargs):  # noqa: ANN001
+        def history_generate(workouts, body_weights, catalog, **kwargs):
             recommendation = dict(FAKE_REC)
             recommendation["focus"] = f"workouts={len(workouts)}"
             return recommendation, {"input_tokens": 10, "output_tokens": 5}, "claude-test"
@@ -200,16 +211,16 @@ class RecommendationsAPITests(unittest.TestCase):
             status = None
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
-                status = client.request_json(
-                    "GET", "/api/recommendations/next"
-                ).payload.get("status")
+                status = client.request_json("GET", "/api/recommendations/next").payload.get(
+                    "status"
+                )
                 if status == "none":
                     break
                 time.sleep(0.05)
             self.assertEqual(status, "none")
 
     def test_measurements_regenerate_once_more_with_latest_weight_and_waist(self) -> None:
-        def measurement_generate(workouts, body_weights, catalog, **kwargs):  # noqa: ANN001
+        def measurement_generate(workouts, body_weights, catalog, **kwargs):
             # Keep the first measurement generation in flight long enough for
             # the waist mutation to request a coalesced follow-up pass.
             time.sleep(0.15)
@@ -231,11 +242,13 @@ class RecommendationsAPITests(unittest.TestCase):
                 time.sleep(0.05)
 
             client.request_json(
-                "POST", "/api/body-weights",
+                "POST",
+                "/api/body-weights",
                 {"entry_date": "2026-08-14", "weight": 79.0},
             )
             client.request_json(
-                "POST", "/api/waists",
+                "POST",
+                "/api/waists",
                 {"entry_date": "2026-08-14", "waist": 84.0},
             )
 

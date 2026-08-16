@@ -66,6 +66,54 @@ jobs:
           # обновить, — любой .swift, ресурс или сам проект требуют пересборки.
           echo "ios=$(has_match '^(ios/.*|\.github/workflows/ci\.yml$)')" >> "$GITHUB_OUTPUT"
 
+  lint:
+    name: Lint
+    # Не под `needs: changes`: джоба дешёвая (ubuntu, меньше минуты) и проверяет
+    # в том числе сами воркфлоу — гейт, который сам себя не линтует, бесполезен.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      # Версия закреплена намеренно: свежий ruff умеет находить новые
+      # замечания, и обновление должно быть отдельным коммитом, а не
+      # сюрпризом на чужом PR. Поднимать вместе со строкой в ruff.toml.
+      - name: Install ruff
+        run: pip install ruff==0.16.3
+
+      - name: Lint Python
+        run: ruff check --output-format github .
+
+      - name: Check Python formatting
+        run: ruff format --check --diff .
+
+      # shellcheck предустановлен на ubuntu-раннерах, actionlint — нет.
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          set -eu
+          url="https://github.com/rhysd/actionlint/releases/download"
+          url="$url/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "$url" | tar -xz -C "$HOME/.local/bin" actionlint
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/actionlint" --version
+
+      - name: Lint shell scripts
+        run: shellcheck backend/deploy/deploy.sh .claude/hooks/claude-md-reminder.sh
+
+      # actionlint сам прогоняет shellcheck по инлайновым `run:`.
+      - name: Lint GitHub Actions workflows
+        run: actionlint
+
   test:
     name: Run test suite
     needs: changes
@@ -104,10 +152,19 @@ jobs:
       - name: Select the newest Xcode
         run: |
           set -eu
-          newest="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          newest="$(printf '%s\n' /Applications/Xcode*.app | sort -V | tail -1)"
           echo "Xcode: $newest"
           sudo xcode-select -s "$newest"
           xcodebuild -version
+
+      # swift-format идёт в тулчейне Xcode — ставить нечего. Стоит секунды, и
+      # выполняется ДО тестов: незачем занимать дорогой macOS-раннер на 15
+      # минут, если человек просто забыл прогнать форматтер. --strict делает
+      # ошибкой и расхождение с форматтером, а не только нарушение правил.
+      - name: Lint Swift
+        run: |
+          set -eu
+          git ls-files -z '*.swift' | xargs -0 xcrun swift-format lint --strict --parallel
 
       - name: Pick an available iPhone simulator
         id: sim
@@ -158,6 +215,7 @@ jobs:
     name: Deploy backend after tests
     needs:
       - changes
+      - lint
       - test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.backend == 'true'
     uses: ./.github/workflows/deploy-backend.yml

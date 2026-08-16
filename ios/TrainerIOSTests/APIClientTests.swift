@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import TrainerIOS
 
 final class APIClientTests: XCTestCase {
@@ -17,7 +18,10 @@ final class APIClientTests: XCTestCase {
     func testAPIClientUsesAllREADMEEndpointPathsAndHTTPMethods() async throws {
         let client = makeClient()
 
-        protocolType.enqueue(json: #"{"ok":true,"user":{"id":1,"auth_source":"debug","telegram_user_id":null,"username":null,"first_name":"Browser","last_name":"Debug","debug_alias":"browser-default","is_default_debug_user":true,"display_name":"Browser Debug"},"auth_mode":"debug"}"#)
+        protocolType.enqueue(
+            json:
+                #"{"ok":true,"user":{"id":1,"auth_source":"debug","telegram_user_id":null,"username":null,"first_name":"Browser","last_name":"Debug","debug_alias":"browser-default","is_default_debug_user":true,"display_name":"Browser Debug"},"auth_mode":"debug"}"#
+        )
         _ = try await client.resolveSession()
 
         protocolType.enqueue(json: #"{"exercises":[]}"#)
@@ -53,7 +57,8 @@ final class APIClientTests: XCTestCase {
         protocolType.enqueue(json: bodyWeightMutationJSON(id: 3, deleted: true))
         _ = try await client.deleteBodyWeight(id: 3)
 
-        protocolType.enqueue(json: #"{"ok":true,"status":"none","recommendation":null,"stale":false}"#)
+        protocolType.enqueue(
+            json: #"{"ok":true,"status":"none","recommendation":null,"stale":false}"#)
         _ = try await client.fetchRecommendation()
 
         protocolType.enqueue(json: recommendationJSON())
@@ -62,34 +67,38 @@ final class APIClientTests: XCTestCase {
         protocolType.enqueue(json: #"{"ok":true}"#)
         _ = try await client.logout()
 
-        XCTAssertEqual(protocolType.requests.map(\.httpMethod), [
-            "POST",
-            "GET",
-            "GET",
-            "GET",
-            "POST",
-            "PUT",
-            "DELETE",
-            "POST",
-            "DELETE",
-            "GET",
-            "POST",
-            "POST"
-        ])
-        XCTAssertEqual(protocolType.requests.compactMap(\.url?.path), [
-            "/api/session/resolve",
-            "/data/exercises.json",
-            "/api/workouts",
-            "/api/body-weights",
-            "/api/workouts",
-            "/api/workouts/10",
-            "/api/workouts/10",
-            "/api/body-weights",
-            "/api/body-weights/3",
-            "/api/recommendations/next",
-            "/api/recommendations/refresh",
-            "/api/session/logout"
-        ])
+        XCTAssertEqual(
+            protocolType.requests.map(\.httpMethod),
+            [
+                "POST",
+                "GET",
+                "GET",
+                "GET",
+                "POST",
+                "PUT",
+                "DELETE",
+                "POST",
+                "DELETE",
+                "GET",
+                "POST",
+                "POST",
+            ])
+        XCTAssertEqual(
+            protocolType.requests.compactMap(\.url?.path),
+            [
+                "/api/session/resolve",
+                "/data/exercises.json",
+                "/api/workouts",
+                "/api/body-weights",
+                "/api/workouts",
+                "/api/workouts/10",
+                "/api/workouts/10",
+                "/api/body-weights",
+                "/api/body-weights/3",
+                "/api/recommendations/next",
+                "/api/recommendations/refresh",
+                "/api/session/logout",
+            ])
     }
 
     func testRefreshRecommendationDecodesReadyPayload() async throws {
@@ -131,7 +140,8 @@ final class APIClientTests: XCTestCase {
 
     func testAPIClientSurfacesBackendReasonOnFailure() async throws {
         let client = makeClient()
-        protocolType.enqueue(status: 400, json: #"{"ok":false,"reason":"Set effort must be one of easy, ok, hard"}"#)
+        protocolType.enqueue(
+            status: 400, json: #"{"ok":false,"reason":"Set effort must be one of easy, ok, hard"}"#)
 
         do {
             _ = try await client.fetchWorkouts() as WorkoutsResponse
@@ -148,7 +158,8 @@ final class APIClientTests: XCTestCase {
         return APIClient(baseURLString: "https://trainer.test", session: session)
     }
 
-    private func workoutMutationJSON(id: Int, created: Bool? = nil, deleted: Bool? = nil) -> String {
+    private func workoutMutationJSON(id: Int, created: Bool? = nil, deleted: Bool? = nil) -> String
+    {
         var fields = [#""ok":true"#]
         if let created {
             fields.append(#""created":\#(created)"#)
@@ -205,7 +216,9 @@ final class APIClientTests: XCTestCase {
         """#
     }
 
-    private func bodyWeightMutationJSON(id: Int, created: Bool? = nil, deleted: Bool? = nil) -> String {
+    private func bodyWeightMutationJSON(id: Int, created: Bool? = nil, deleted: Bool? = nil)
+        -> String
+    {
         var fields = [#""ok":true"#]
         if let created {
             fields.append(#""created":\#(created)"#)
@@ -262,7 +275,8 @@ private final class MockURLProtocol: URLProtocol {
             capturedRequest.httpBody = Self.bodyData(from: request)
         }
         Self.requests.append(capturedRequest)
-        let response = Self.queuedResponses.isEmpty
+        let response =
+            Self.queuedResponses.isEmpty
             ? Response(status: 500, data: Data(#"{"ok":false,"reason":"No mock response"}"#.utf8))
             : Self.queuedResponses.removeFirst()
         let http = HTTPURLResponse(

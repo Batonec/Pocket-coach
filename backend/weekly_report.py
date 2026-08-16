@@ -9,6 +9,7 @@ the Claude API directly.
     python3 weekly_report.py            # generate unless today's is cached
     python3 weekly_report.py --force    # regenerate unconditionally
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,9 +20,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import backend_store  # noqa: E402
-import coach_state  # noqa: E402
-import recommender  # noqa: E402
+import backend_store
+import coach_state
+import recommender
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))

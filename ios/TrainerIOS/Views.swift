@@ -93,20 +93,20 @@ extension View {
 
 enum DesignPalette {
     // Ink ramp — cooler, graphite
-    static let ink = Color(red: 0.055, green: 0.059, blue: 0.071)        // #0E0F12
-    static let ink2 = Color(red: 0.180, green: 0.192, blue: 0.220)       // #2E3138
-    static let ink3 = Color(red: 0.431, green: 0.447, blue: 0.482)       // #6E727B
-    static let ink4 = Color(red: 0.659, green: 0.675, blue: 0.706)       // #A8ACB4
-    static let ink5 = Color(red: 0.839, green: 0.847, blue: 0.867)       // #D6D8DD
+    static let ink = Color(red: 0.055, green: 0.059, blue: 0.071)  // #0E0F12
+    static let ink2 = Color(red: 0.180, green: 0.192, blue: 0.220)  // #2E3138
+    static let ink3 = Color(red: 0.431, green: 0.447, blue: 0.482)  // #6E727B
+    static let ink4 = Color(red: 0.659, green: 0.675, blue: 0.706)  // #A8ACB4
+    static let ink5 = Color(red: 0.839, green: 0.847, blue: 0.867)  // #D6D8DD
 
     // Paper — cool off-white
-    static let paper = Color(red: 0.949, green: 0.937, blue: 0.910)      // #F2F0EC
-    static let paper2 = Color(red: 0.910, green: 0.902, blue: 0.882)     // #E8E6E1
+    static let paper = Color(red: 0.949, green: 0.937, blue: 0.910)  // #F2F0EC
+    static let paper2 = Color(red: 0.910, green: 0.902, blue: 0.882)  // #E8E6E1
 
     // Signals
-    static let ok = Color(red: 0.122, green: 0.616, blue: 0.420)         // #1F9D6B
-    static let warn = Color(red: 0.847, green: 0.576, blue: 0.141)       // #D89324
-    static let bad = Color(red: 0.863, green: 0.282, blue: 0.282)        // #DC4848
+    static let ok = Color(red: 0.122, green: 0.616, blue: 0.420)  // #1F9D6B
+    static let warn = Color(red: 0.847, green: 0.576, blue: 0.141)  // #D89324
+    static let bad = Color(red: 0.863, green: 0.282, blue: 0.282)  // #DC4848
     static let sep = Color.black.opacity(0.08)
 
     static let effortEasy = Color(red: 0.851, green: 0.957, blue: 0.871)
@@ -114,9 +114,9 @@ enum DesignPalette {
     static let effortHard = Color(red: 0.980, green: 0.839, blue: 0.839)
 
     // Accent (slightly deeper than before)
-    static let accent = Color(red: 1.0, green: 0.302, blue: 0.122)       // #FF4D1F
-    static let accentSoft = Color(red: 1.0, green: 0.910, blue: 0.871)   // #FFE8DE
-    static let accentDeep = Color(red: 0.784, green: 0.212, blue: 0.039) // #C8360A
+    static let accent = Color(red: 1.0, green: 0.302, blue: 0.122)  // #FF4D1F
+    static let accentSoft = Color(red: 1.0, green: 0.910, blue: 0.871)  // #FFE8DE
+    static let accentDeep = Color(red: 0.784, green: 0.212, blue: 0.039)  // #C8360A
 }
 
 // One consistent press feedback for action buttons across the app: a quick
@@ -152,7 +152,9 @@ struct PressableScaleStyle: ButtonStyle {
 
 extension ButtonStyle where Self == PressableScaleStyle {
     static var pressable: PressableScaleStyle { PressableScaleStyle() }
-    static func pressable(scale: CGFloat) -> PressableScaleStyle { PressableScaleStyle(scale: scale) }
+    static func pressable(scale: CGFloat) -> PressableScaleStyle {
+        PressableScaleStyle(scale: scale)
+    }
 }
 
 // A button that fires once on tap and then auto-repeats while held (with a short
@@ -213,8 +215,8 @@ struct WarmWallpaper: View {
         ZStack {
             LinearGradient(
                 colors: [
-                    Color(red: 0.957, green: 0.949, blue: 0.933),   // #F4F2EE
-                    Color(red: 0.918, green: 0.906, blue: 0.882)    // #EAE7E1
+                    Color(red: 0.957, green: 0.949, blue: 0.933),  // #F4F2EE
+                    Color(red: 0.918, green: 0.906, blue: 0.882),  // #EAE7E1
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -229,8 +231,9 @@ struct WarmWallpaper: View {
                     .fill(
                         RadialGradient(
                             colors: [
-                                Color(red: 1.0, green: 0.353, blue: 0.157).opacity(dim ? 0.18 : 0.34),
-                                .clear
+                                Color(red: 1.0, green: 0.353, blue: 0.157).opacity(
+                                    dim ? 0.18 : 0.34),
+                                .clear,
                             ],
                             center: .center,
                             startRadius: 0,
@@ -248,7 +251,7 @@ struct WarmWallpaper: View {
                             RadialGradient(
                                 colors: [
                                     Color(red: 0.118, green: 0.176, blue: 0.275).opacity(0.09),
-                                    .clear
+                                    .clear,
                                 ],
                                 center: .center,
                                 startRadius: 0,
@@ -296,7 +299,7 @@ struct LiquidGlassBackground: View {
                         colors: [
                             Color.white.opacity(0.58),
                             Color.white.opacity(0.34),
-                            Color.white.opacity(0.46)
+                            Color.white.opacity(0.46),
                         ],
                         startPoint: .top,
                         endPoint: .bottom
@@ -320,7 +323,8 @@ extension View {
     @ViewBuilder
     func glassCard(radius: CGFloat = 24, thick: Bool = false) -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            self.glassEffect(
+                .regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
         } else {
             self.background(GlassBackground(radius: radius, thick: thick))
                 .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
@@ -330,7 +334,8 @@ extension View {
     @ViewBuilder
     func liquidGlass(radius: CGFloat = 28) -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            self.glassEffect(
+                .regular, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
         } else {
             self.background(LiquidGlassBackground(radius: radius))
                 .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
@@ -355,8 +360,8 @@ extension View {
 
 // MARK: - Effort
 
-private extension SetEffort {
-    var dotIndex: Int {
+extension SetEffort {
+    fileprivate var dotIndex: Int {
         switch self {
         case .easy: 0
         case .ok: 1
@@ -364,7 +369,7 @@ private extension SetEffort {
         }
     }
 
-    var emoji: String {
+    fileprivate var emoji: String {
         switch self {
         case .easy: "🙂"
         case .ok: "😐"
@@ -372,7 +377,7 @@ private extension SetEffort {
         }
     }
 
-    var bubbleColor: Color {
+    fileprivate var bubbleColor: Color {
         switch self {
         case .easy: DesignPalette.effortEasy
         case .ok: DesignPalette.effortOk
@@ -455,7 +460,8 @@ struct ExerciseGlyphView: View {
             ctx.stroke(
                 path,
                 with: .color(.primary),
-                style: StrokeStyle(lineWidth: lineWidth * (36 / size), lineCap: .round, lineJoin: .round)
+                style: StrokeStyle(
+                    lineWidth: lineWidth * (36 / size), lineCap: .round, lineJoin: .round)
             )
         }
         .frame(width: size, height: size)
@@ -466,11 +472,17 @@ struct ExerciseGlyphView: View {
         var p = Path()
         switch glyph {
         case .bench:
-            p.addRoundedRect(in: CGRect(x: 13, y: 9, width: 10, height: 3), cornerSize: CGSize(width: 1.2, height: 1.2))
-            p.move(to: CGPoint(x: 18, y: 12)); p.addLine(to: CGPoint(x: 18, y: 21))
-            p.move(to: CGPoint(x: 8, y: 21)); p.addLine(to: CGPoint(x: 28, y: 21))
-            p.move(to: CGPoint(x: 11, y: 21)); p.addLine(to: CGPoint(x: 11, y: 27))
-            p.move(to: CGPoint(x: 25, y: 21)); p.addLine(to: CGPoint(x: 25, y: 27))
+            p.addRoundedRect(
+                in: CGRect(x: 13, y: 9, width: 10, height: 3),
+                cornerSize: CGSize(width: 1.2, height: 1.2))
+            p.move(to: CGPoint(x: 18, y: 12))
+            p.addLine(to: CGPoint(x: 18, y: 21))
+            p.move(to: CGPoint(x: 8, y: 21))
+            p.addLine(to: CGPoint(x: 28, y: 21))
+            p.move(to: CGPoint(x: 11, y: 21))
+            p.addLine(to: CGPoint(x: 11, y: 27))
+            p.move(to: CGPoint(x: 25, y: 21))
+            p.addLine(to: CGPoint(x: 25, y: 27))
             p.addEllipse(in: CGRect(x: 4, y: 14, width: 4, height: 4))
             p.addEllipse(in: CGRect(x: 28, y: 14, width: 4, height: 4))
         case .legs:
@@ -485,7 +497,8 @@ struct ExerciseGlyphView: View {
             p.addLine(to: CGPoint(x: 24, y: 28))
             p.addEllipse(in: CGRect(x: 3.5, y: 3.5, width: 5, height: 5))
         case .lat:
-            p.move(to: CGPoint(x: 6, y: 7)); p.addLine(to: CGPoint(x: 30, y: 7))
+            p.move(to: CGPoint(x: 6, y: 7))
+            p.addLine(to: CGPoint(x: 30, y: 7))
             for x in [10, 16, 22, 28] {
                 p.move(to: CGPoint(x: CGFloat(x), y: 7))
                 p.addLine(to: CGPoint(x: CGFloat(x), y: x == 16 || x == 28 ? 16 : 13))
@@ -498,37 +511,53 @@ struct ExerciseGlyphView: View {
             p.closeSubpath()
         case .delts:
             p.addEllipse(in: CGRect(x: 15, y: 6, width: 6, height: 6))
-            p.move(to: CGPoint(x: 11, y: 16)); p.addLine(to: CGPoint(x: 18, y: 14))
+            p.move(to: CGPoint(x: 11, y: 16))
+            p.addLine(to: CGPoint(x: 18, y: 14))
             p.addLine(to: CGPoint(x: 25, y: 16))
-            p.move(to: CGPoint(x: 9, y: 22)); p.addLine(to: CGPoint(x: 12, y: 16))
-            p.move(to: CGPoint(x: 27, y: 22)); p.addLine(to: CGPoint(x: 24, y: 16))
-            p.move(to: CGPoint(x: 11, y: 22)); p.addLine(to: CGPoint(x: 25, y: 22))
-            p.addLine(to: CGPoint(x: 23, y: 29)); p.addLine(to: CGPoint(x: 13, y: 29))
+            p.move(to: CGPoint(x: 9, y: 22))
+            p.addLine(to: CGPoint(x: 12, y: 16))
+            p.move(to: CGPoint(x: 27, y: 22))
+            p.addLine(to: CGPoint(x: 24, y: 16))
+            p.move(to: CGPoint(x: 11, y: 22))
+            p.addLine(to: CGPoint(x: 25, y: 22))
+            p.addLine(to: CGPoint(x: 23, y: 29))
+            p.addLine(to: CGPoint(x: 13, y: 29))
             p.closeSubpath()
         case .biceps:
             p.move(to: CGPoint(x: 7, y: 24))
-            p.addCurve(to: CGPoint(x: 16, y: 15),
-                       control1: CGPoint(x: 7, y: 18), control2: CGPoint(x: 12, y: 15))
-            p.addCurve(to: CGPoint(x: 21, y: 9),
-                       control1: CGPoint(x: 20, y: 15), control2: CGPoint(x: 21, y: 12))
+            p.addCurve(
+                to: CGPoint(x: 16, y: 15),
+                control1: CGPoint(x: 7, y: 18), control2: CGPoint(x: 12, y: 15))
+            p.addCurve(
+                to: CGPoint(x: 21, y: 9),
+                control1: CGPoint(x: 20, y: 15), control2: CGPoint(x: 21, y: 12))
             p.move(to: CGPoint(x: 16, y: 15))
-            p.addCurve(to: CGPoint(x: 23, y: 19),
-                       control1: CGPoint(x: 17, y: 18), control2: CGPoint(x: 20, y: 19))
-            p.move(to: CGPoint(x: 21, y: 9)); p.addLine(to: CGPoint(x: 25, y: 6))
-            p.move(to: CGPoint(x: 28, y: 17)); p.addLine(to: CGPoint(x: 30, y: 17))
+            p.addCurve(
+                to: CGPoint(x: 23, y: 19),
+                control1: CGPoint(x: 17, y: 18), control2: CGPoint(x: 20, y: 19))
+            p.move(to: CGPoint(x: 21, y: 9))
+            p.addLine(to: CGPoint(x: 25, y: 6))
+            p.move(to: CGPoint(x: 28, y: 17))
+            p.addLine(to: CGPoint(x: 30, y: 17))
         case .triceps:
             p.move(to: CGPoint(x: 28, y: 12))
-            p.addCurve(to: CGPoint(x: 19, y: 21),
-                       control1: CGPoint(x: 28, y: 18), control2: CGPoint(x: 23, y: 21))
-            p.addCurve(to: CGPoint(x: 14, y: 27),
-                       control1: CGPoint(x: 15, y: 21), control2: CGPoint(x: 14, y: 24))
+            p.addCurve(
+                to: CGPoint(x: 19, y: 21),
+                control1: CGPoint(x: 28, y: 18), control2: CGPoint(x: 23, y: 21))
+            p.addCurve(
+                to: CGPoint(x: 14, y: 27),
+                control1: CGPoint(x: 15, y: 21), control2: CGPoint(x: 14, y: 24))
             p.move(to: CGPoint(x: 19, y: 21))
-            p.addCurve(to: CGPoint(x: 12, y: 17),
-                       control1: CGPoint(x: 18, y: 18), control2: CGPoint(x: 15, y: 17))
-            p.move(to: CGPoint(x: 15, y: 27)); p.addLine(to: CGPoint(x: 11, y: 30))
-            p.move(to: CGPoint(x: 7, y: 19)); p.addLine(to: CGPoint(x: 5, y: 19))
+            p.addCurve(
+                to: CGPoint(x: 12, y: 17),
+                control1: CGPoint(x: 18, y: 18), control2: CGPoint(x: 15, y: 17))
+            p.move(to: CGPoint(x: 15, y: 27))
+            p.addLine(to: CGPoint(x: 11, y: 30))
+            p.move(to: CGPoint(x: 7, y: 19))
+            p.addLine(to: CGPoint(x: 5, y: 19))
         case .row:
-            p.move(to: CGPoint(x: 4, y: 18)); p.addLine(to: CGPoint(x: 32, y: 18))
+            p.move(to: CGPoint(x: 4, y: 18))
+            p.addLine(to: CGPoint(x: 32, y: 18))
             p.addEllipse(in: CGRect(x: 4.5, y: 15.5, width: 5, height: 5))
             p.addEllipse(in: CGRect(x: 26.5, y: 15.5, width: 5, height: 5))
             p.move(to: CGPoint(x: 14, y: 12))
@@ -538,19 +567,24 @@ struct ExerciseGlyphView: View {
             p.addLine(to: CGPoint(x: 24, y: 18))
             p.addLine(to: CGPoint(x: 22, y: 24))
         case .fly:
-            p.move(to: CGPoint(x: 18, y: 8)); p.addLine(to: CGPoint(x: 18, y: 28))
+            p.move(to: CGPoint(x: 18, y: 8))
+            p.addLine(to: CGPoint(x: 18, y: 28))
             p.move(to: CGPoint(x: 18, y: 14))
-            p.addCurve(to: CGPoint(x: 9, y: 12),
-                       control1: CGPoint(x: 15, y: 11), control2: CGPoint(x: 12, y: 11))
+            p.addCurve(
+                to: CGPoint(x: 9, y: 12),
+                control1: CGPoint(x: 15, y: 11), control2: CGPoint(x: 12, y: 11))
             p.move(to: CGPoint(x: 18, y: 14))
-            p.addCurve(to: CGPoint(x: 27, y: 12),
-                       control1: CGPoint(x: 21, y: 11), control2: CGPoint(x: 24, y: 11))
+            p.addCurve(
+                to: CGPoint(x: 27, y: 12),
+                control1: CGPoint(x: 21, y: 11), control2: CGPoint(x: 24, y: 11))
             p.move(to: CGPoint(x: 18, y: 22))
-            p.addCurve(to: CGPoint(x: 9, y: 23),
-                       control1: CGPoint(x: 15, y: 24), control2: CGPoint(x: 12, y: 24))
+            p.addCurve(
+                to: CGPoint(x: 9, y: 23),
+                control1: CGPoint(x: 15, y: 24), control2: CGPoint(x: 12, y: 24))
             p.move(to: CGPoint(x: 18, y: 22))
-            p.addCurve(to: CGPoint(x: 27, y: 23),
-                       control1: CGPoint(x: 21, y: 24), control2: CGPoint(x: 24, y: 24))
+            p.addCurve(
+                to: CGPoint(x: 27, y: 23),
+                control1: CGPoint(x: 21, y: 24), control2: CGPoint(x: 24, y: 24))
         case .legext:
             p.move(to: CGPoint(x: 8, y: 26))
             p.addLine(to: CGPoint(x: 14, y: 26))
@@ -558,7 +592,8 @@ struct ExerciseGlyphView: View {
             p.addLine(to: CGPoint(x: 24, y: 18))
             p.addLine(to: CGPoint(x: 28, y: 26))
             p.addEllipse(in: CGRect(x: 19, y: 11, width: 6, height: 6))
-            p.move(to: CGPoint(x: 14, y: 18)); p.addLine(to: CGPoint(x: 11, y: 14))
+            p.move(to: CGPoint(x: 14, y: 18))
+            p.addLine(to: CGPoint(x: 11, y: 14))
         case .legcurl:
             p.move(to: CGPoint(x: 8, y: 12))
             p.addLine(to: CGPoint(x: 22, y: 12))
@@ -566,13 +601,18 @@ struct ExerciseGlyphView: View {
             p.addLine(to: CGPoint(x: 28, y: 20))
             p.addLine(to: CGPoint(x: 24, y: 26))
             p.addEllipse(in: CGRect(x: 19, y: 23, width: 6, height: 6))
-            p.move(to: CGPoint(x: 22, y: 20)); p.addLine(to: CGPoint(x: 22, y: 23))
+            p.move(to: CGPoint(x: 22, y: 20))
+            p.addLine(to: CGPoint(x: 22, y: 23))
         case .pullup:
-            p.move(to: CGPoint(x: 5, y: 7)); p.addLine(to: CGPoint(x: 31, y: 7))
-            p.move(to: CGPoint(x: 11, y: 7)); p.addLine(to: CGPoint(x: 11, y: 11))
-            p.move(to: CGPoint(x: 25, y: 7)); p.addLine(to: CGPoint(x: 25, y: 11))
+            p.move(to: CGPoint(x: 5, y: 7))
+            p.addLine(to: CGPoint(x: 31, y: 7))
+            p.move(to: CGPoint(x: 11, y: 7))
+            p.addLine(to: CGPoint(x: 11, y: 11))
+            p.move(to: CGPoint(x: 25, y: 7))
+            p.addLine(to: CGPoint(x: 25, y: 11))
             p.addEllipse(in: CGRect(x: 15.5, y: 11.5, width: 5, height: 5))
-            p.move(to: CGPoint(x: 18, y: 16)); p.addLine(to: CGPoint(x: 18, y: 24))
+            p.move(to: CGPoint(x: 18, y: 16))
+            p.addLine(to: CGPoint(x: 18, y: 24))
             p.move(to: CGPoint(x: 14, y: 19))
             p.addLine(to: CGPoint(x: 18, y: 17))
             p.addLine(to: CGPoint(x: 22, y: 19))
@@ -735,7 +775,7 @@ struct ProgressRingArc: View {
                         gradient: Gradient(stops: [
                             .init(color: Color(red: 1.0, green: 0.0, blue: 0.251), location: 0),
                             .init(color: Color(red: 1.0, green: 0.831, blue: 0.0), location: 0.5),
-                            .init(color: Color(red: 0.0, green: 0.902, blue: 0.463), location: 1)
+                            .init(color: Color(red: 0.0, green: 0.902, blue: 0.463), location: 1),
                         ]),
                         center: .center,
                         startAngle: .degrees(-90),
@@ -760,13 +800,22 @@ struct ContentView: View {
         ZStack(alignment: .top) {
             switch store.bootState {
             case .idle, .loading:
-                ZStack { WarmWallpaper(dim: true); LoadingScreen() }
+                ZStack {
+                    WarmWallpaper(dim: true)
+                    LoadingScreen()
+                }
             case .loaded:
                 MainShellView()
-            case let .needsSignIn(message):
-                ZStack { WarmWallpaper(dim: true); SignInScreen(message: message) }
-            case let .failed(message):
-                ZStack { WarmWallpaper(dim: true); ErrorScreen(message: message) }
+            case .needsSignIn(let message):
+                ZStack {
+                    WarmWallpaper(dim: true)
+                    SignInScreen(message: message)
+                }
+            case .failed(let message):
+                ZStack {
+                    WarmWallpaper(dim: true)
+                    ErrorScreen(message: message)
+                }
             }
 
             if let toast = store.toast {
@@ -896,18 +945,22 @@ struct CoachCard: View {
             VStack(spacing: 0) {
                 ZStack {
                     Circle().fill(DesignPalette.accent.opacity(0.12)).frame(width: 52, height: 52)
-                        .overlay(Circle().stroke(DesignPalette.accent.opacity(0.20), lineWidth: 0.5))
-                    Image(systemName: "sparkles").font(.system(size: 22)).foregroundStyle(DesignPalette.accent)
+                        .overlay(
+                            Circle().stroke(DesignPalette.accent.opacity(0.20), lineWidth: 0.5))
+                    Image(systemName: "sparkles").font(.system(size: 22)).foregroundStyle(
+                        DesignPalette.accent)
                 }
                 .padding(.bottom, 14)
                 Text("Совет ещё не сгенерирован")
                     .font(.jbm(15, weight: .bold)).tracking(-0.3)
                     .foregroundStyle(DesignPalette.ink).multilineTextAlignment(.center)
-                Text("Построю план следующей тренировки по твоей истории — с весами, повторами и обоснованием.")
-                    .font(.jbm(12)).foregroundStyle(DesignPalette.ink3)
-                    .multilineTextAlignment(.center).lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 6)
+                Text(
+                    "Построю план следующей тренировки по твоей истории — с весами, повторами и обоснованием."
+                )
+                .font(.jbm(12)).foregroundStyle(DesignPalette.ink3)
+                .multilineTextAlignment(.center).lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 6)
                 Button {
                     Task { await store.refreshRecommendation() }
                 } label: {
@@ -939,11 +992,13 @@ struct CoachCard: View {
                 ZStack {
                     Circle().fill(DesignPalette.bad.opacity(0.10)).frame(width: 40, height: 40)
                         .overlay(Circle().stroke(DesignPalette.bad.opacity(0.22), lineWidth: 0.5))
-                    Image(systemName: "exclamationmark.triangle").font(.system(size: 18)).foregroundStyle(DesignPalette.bad)
+                    Image(systemName: "exclamationmark.triangle").font(.system(size: 18))
+                        .foregroundStyle(DesignPalette.bad)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Не удалось подготовить план")
-                        .font(.jbm(14.5, weight: .bold)).tracking(-0.3).foregroundStyle(DesignPalette.ink)
+                        .font(.jbm(14.5, weight: .bold)).tracking(-0.3).foregroundStyle(
+                            DesignPalette.ink)
                     Text(failureMessage(rec.error))
                         .font(.jbm(12)).foregroundStyle(DesignPalette.ink3)
                         .lineSpacing(2).fixedSize(horizontal: false, vertical: true)
@@ -954,7 +1009,8 @@ struct CoachCard: View {
                 Task { await store.refreshRecommendation() }
             } label: {
                 HStack(spacing: 9) {
-                    Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 14, weight: .semibold))
+                    Image(systemName: "arrow.triangle.2.circlepath").font(
+                        .system(size: 14, weight: .semibold))
                     Text("Повторить").font(.jbm(14, weight: .bold))
                 }
                 .foregroundStyle(DesignPalette.ink2)
@@ -974,7 +1030,8 @@ struct CoachCard: View {
             return "Старый план скрыт. Попробуй ещё раз."
         }
         if error.localizedCaseInsensitiveContains("ограничения методики") {
-            return "План не прошёл автоматическую проверку нагрузки. Старый план скрыт — попробуй ещё раз."
+            return
+                "План не прошёл автоматическую проверку нагрузки. Старый план скрыт — попробуй ещё раз."
         }
         return "\(error)\nСтарый план скрыт — попробуй ещё раз."
     }
@@ -984,7 +1041,8 @@ struct CoachCard: View {
     private func header(basedOn: Int?) -> some View {
         HStack {
             HStack(spacing: 8) {
-                Image(systemName: "sparkles").font(.system(size: 14)).foregroundStyle(DesignPalette.accent)
+                Image(systemName: "sparkles").font(.system(size: 14)).foregroundStyle(
+                    DesignPalette.accent)
                 Text("Совет тренера")
                     .font(.jbm(10.5, weight: .semibold)).tracking(0.6)
                     .textCase(.uppercase).foregroundStyle(DesignPalette.ink)
@@ -1028,7 +1086,8 @@ struct CoachPhaseChip: View {
         // generated before the title existed.
         let name: String
         if let title = context.phaseTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !title.isEmpty {
+            !title.isEmpty
+        {
             name = title.uppercased()
         } else {
             guard let phase = context.phase else { return nil }
@@ -1177,10 +1236,14 @@ private struct TodayScreen: View {
                                         store.addPlannedSet(exerciseID: card.exerciseID)
                                     }
                                 },
-                                onManual: { openEditor(exerciseID: card.exerciseID, setIndex: nil) },
+                                onManual: {
+                                    openEditor(exerciseID: card.exerciseID, setIndex: nil)
+                                },
                                 onEditLast: {
                                     if !card.sets.isEmpty {
-                                        openEditor(exerciseID: card.exerciseID, setIndex: card.sets.count - 1)
+                                        openEditor(
+                                            exerciseID: card.exerciseID,
+                                            setIndex: card.sets.count - 1)
                                     }
                                 },
                                 onLongPress: { pendingActionExercise = card }
@@ -1251,18 +1314,23 @@ private struct TodayScreen: View {
             titleVisibility: .visible
         ) {
             if let pendingActionExercise,
-               pendingActionExercise.sets.isEmpty,
-               store.draft.editingWorkoutID == nil,
-               store.appliedPlan?.targets(for: pendingActionExercise.exerciseID) != nil {
+                pendingActionExercise.sets.isEmpty,
+                store.draft.editingWorkoutID == nil,
+                store.appliedPlan?.targets(for: pendingActionExercise.exerciseID) != nil
+            {
                 Button("Убрать из плана", role: .destructive) {
-                    withAnimation { store.removeFromPlan(exerciseID: pendingActionExercise.exerciseID) }
+                    withAnimation {
+                        store.removeFromPlan(exerciseID: pendingActionExercise.exerciseID)
+                    }
                     self.pendingActionExercise = nil
                 }
             }
 
             Button("Удалить последний сет", role: .destructive) {
                 if let pendingActionExercise {
-                    withAnimation { store.removeLastSet(exerciseID: pendingActionExercise.exerciseID) }
+                    withAnimation {
+                        store.removeLastSet(exerciseID: pendingActionExercise.exerciseID)
+                    }
                 }
                 pendingActionExercise = nil
             }
@@ -1270,7 +1338,9 @@ private struct TodayScreen: View {
 
             Button("Удалить упражнение", role: .destructive) {
                 if let pendingActionExercise {
-                    withAnimation { store.removeExercise(exerciseID: pendingActionExercise.exerciseID) }
+                    withAnimation {
+                        store.removeExercise(exerciseID: pendingActionExercise.exerciseID)
+                    }
                 }
                 pendingActionExercise = nil
             }
@@ -1337,7 +1407,8 @@ private struct TodayScreen: View {
                 .disabled(store.isSavingWorkout)
             }
         } else if !store.isTodayPlanUnavailable,
-                  let first = store.displayCards().first {
+            let first = store.displayCards().first
+        {
             Button {
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
                     store.addPlannedSet(exerciseID: first.exerciseID)
@@ -1419,7 +1490,8 @@ private struct TodayScreen: View {
         let totalSets = store.draft.exercises.reduce(0) { $0 + $1.sets.count }
         let label: String
         if store.draft.editingWorkoutID == nil,
-           let plan = store.appliedPlan {
+            let plan = store.appliedPlan
+        {
             // Against an applied coach plan show progress vs the plan's volume.
             let planTotal = plan.exercises.reduce(0) { $0 + $1.sets.count }
             label = "\(totalExercises) упр · \(min(totalSets, planTotal))/\(planTotal) сет"
@@ -1478,7 +1550,8 @@ private struct TodayScreen: View {
                 .accessibilityLabel("Перегенерировать совет")
 
                 if let rationale = store.recommendation?.recommendation?.rationale,
-                   !rationale.isEmpty {
+                    !rationale.isEmpty
+                {
                     Button {
                         showRationale = true
                     } label: {
@@ -1594,17 +1667,18 @@ struct SessionPill: View {
     }
 }
 
-
 private func repsRunString(_ reps: [Int]) -> String {
     guard let first = reps.first else { return "0" }
     var parts: [String] = []
     var current = first
     var count = 1
     for r in reps.dropFirst() {
-        if r == current { count += 1 }
-        else {
+        if r == current {
+            count += 1
+        } else {
             parts.append(count > 1 ? "\(current)×\(count)" : "\(current)")
-            current = r; count = 1
+            current = r
+            count = 1
         }
     }
     parts.append(count > 1 ? "\(current)×\(count)" : "\(current)")
@@ -1621,7 +1695,6 @@ private struct TodayExerciseCard: View {
     var onManual: () -> Void
     var onEditLast: () -> Void
     var onLongPress: () -> Void
-
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -1868,53 +1941,54 @@ struct QuickAddSheet: View {
                         .tLabel()
                         .padding(.top, 6)
 
-                        Stepper(
-                            value: TrainerLogic.formatWeight(state.weight),
-                            suffix: "",
-                            big: true,
-                            onMinus: { state.weight = max(0, state.weight - 2.5) },
-                            onPlus: { state.weight += 2.5 }
-                        )
+                    Stepper(
+                        value: TrainerLogic.formatWeight(state.weight),
+                        suffix: "",
+                        big: true,
+                        onMinus: { state.weight = max(0, state.weight - 2.5) },
+                        onPlus: { state.weight += 2.5 }
+                    )
 
-                        Rectangle()
-                            .fill(DesignPalette.sep)
-                            .frame(height: 0.5)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
+                    Rectangle()
+                        .fill(DesignPalette.sep)
+                        .frame(height: 0.5)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
 
-                        Text("Повторений")
-                            .tLabel()
-                            .padding(.top, 4)
-
-                        Stepper(
-                            value: "\(state.reps)",
-                            suffix: "",
-                            big: false,
-                            onMinus: { state.reps = max(1, state.reps - 1) },
-                            onPlus: { state.reps += 1 }
-                        )
-
-                        Rectangle()
-                            .fill(DesignPalette.sep)
-                            .frame(height: 0.5)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 8)
-
-                        Text("Как ощущения?")
-                            .tLabel()
-                            .padding(.bottom, 4)
-
-                        HStack(spacing: 14) {
-                            ForEach(SetEffort.allCases) { effort in
-                                Button {
-                                    state.effort = state.effort == effort ? nil : effort
-                                } label: {
-                                    EffortBubble(effort: effort, size: 60, selected: state.effort == effort)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
+                    Text("Повторений")
+                        .tLabel()
                         .padding(.top, 4)
+
+                    Stepper(
+                        value: "\(state.reps)",
+                        suffix: "",
+                        big: false,
+                        onMinus: { state.reps = max(1, state.reps - 1) },
+                        onPlus: { state.reps += 1 }
+                    )
+
+                    Rectangle()
+                        .fill(DesignPalette.sep)
+                        .frame(height: 0.5)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 8)
+
+                    Text("Как ощущения?")
+                        .tLabel()
+                        .padding(.bottom, 4)
+
+                    HStack(spacing: 14) {
+                        ForEach(SetEffort.allCases) { effort in
+                            Button {
+                                state.effort = state.effort == effort ? nil : effort
+                            } label: {
+                                EffortBubble(
+                                    effort: effort, size: 60, selected: state.effort == effort)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 4)
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 8)
@@ -1930,7 +2004,10 @@ struct QuickAddSheet: View {
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .frame(height: 56)
-                        .background(DesignPalette.ink, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                        .background(
+                            DesignPalette.ink,
+                            in: RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        )
                         .shadow(color: DesignPalette.ink.opacity(0.35), radius: 18, y: 8)
                 }
                 .buttonStyle(.pressable(scale: 0.96))
@@ -2069,7 +2146,7 @@ struct SignalBannerView: View {
         switch severity {
         case "warn":
             return Tone(
-                glyph: Color(red: 0.72, green: 0.48, blue: 0.07),   // #B87A12
+                glyph: Color(red: 0.72, green: 0.48, blue: 0.07),  // #B87A12
                 glyphBackground: DesignPalette.warn.opacity(0.16),
                 edge: DesignPalette.warn.opacity(0.38)
             )
@@ -2085,7 +2162,7 @@ struct SignalBannerView: View {
                 glyphBackground: DesignPalette.ok.opacity(0.15),
                 edge: DesignPalette.ok.opacity(0.34)
             )
-        default: // info + unknown severities
+        default:  // info + unknown severities
             return Tone(
                 glyph: DesignPalette.ink3,
                 glyphBackground: DesignPalette.ink.opacity(0.055),
@@ -2100,7 +2177,8 @@ struct SignalBannerView: View {
         let ink: Color = critical ? .white : DesignPalette.ink
         let sub: Color = critical ? .white.opacity(0.80) : DesignPalette.ink3
         let hasAction = signal.action != nil && signal.action?.type != "none"
-        let ctaColor: Color = critical
+        let ctaColor: Color =
+            critical
             ? .white
             : (signal.severity == "info" ? DesignPalette.ink2 : tone.glyph)
 
@@ -2232,7 +2310,8 @@ private struct HistoryScreen: View {
                             headerPills
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 0, trailing: 14))
+                                .listRowInsets(
+                                    EdgeInsets(top: 8, leading: 14, bottom: 0, trailing: 14))
                         }
 
                         TopTitle(sub: "Тренировки · \(store.workouts.count)", title: "История")
@@ -2243,16 +2322,19 @@ private struct HistoryScreen: View {
                         // Attention always wins over retrospective stats: every
                         // visible server signal is placed before the streak.
                         // Separate rows make the gesture match workout cards.
-                        ForEach(Array(visibleCoachSignals.enumerated()), id: \.element.id) { index, signal in
+                        ForEach(Array(visibleCoachSignals.enumerated()), id: \.element.id) {
+                            index, signal in
                             SignalBannerView(signal: signal, onAction: handleSignalAction)
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(
-                                    top: index == 0 ? 8 : 4,
-                                    leading: 14,
-                                    bottom: 0,
-                                    trailing: 14
-                                ))
+                                .listRowInsets(
+                                    EdgeInsets(
+                                        top: index == 0 ? 8 : 4,
+                                        leading: 14,
+                                        bottom: 0,
+                                        trailing: 14
+                                    )
+                                )
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     if signal.snoozable == true {
                                         Button(role: .destructive) {
@@ -2285,16 +2367,20 @@ private struct HistoryScreen: View {
                             HistoryNextWorkoutCard()
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 6, trailing: 14))
+                                .listRowInsets(
+                                    EdgeInsets(top: 8, leading: 14, bottom: 6, trailing: 14))
                         }
                     }
 
                     Section {
-                        ForEach(Array(store.workouts.enumerated()), id: \.element.stableID) { _, workout in
+                        ForEach(Array(store.workouts.enumerated()), id: \.element.stableID) {
+                            _, workout in
                             HistoryCard(workout: workout)
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+                                .listRowInsets(
+                                    EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14)
+                                )
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     Button(role: .destructive) {
                                         pendingDeleteWorkout = workout
@@ -2320,7 +2406,8 @@ private struct HistoryScreen: View {
                             )
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
-                            .listRowInsets(EdgeInsets(top: 16, leading: 14, bottom: 16, trailing: 14))
+                            .listRowInsets(
+                                EdgeInsets(top: 16, leading: 14, bottom: 16, trailing: 14))
                         }
                     }
                 }
@@ -2357,7 +2444,9 @@ private struct HistoryScreen: View {
             }
         } message: {
             if let pendingDeleteWorkout {
-                Text("Тренировка от \(DateTools.long(pendingDeleteWorkout.workoutDate)) будет удалена.")
+                Text(
+                    "Тренировка от \(DateTools.long(pendingDeleteWorkout.workoutDate)) будет удалена."
+                )
             }
         }
     }
@@ -2483,7 +2572,9 @@ private struct HistoryScreen: View {
     private var workoutsInLast28Days: Int {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        guard let start = cal.date(byAdding: .day, value: -27, to: today) else { return store.workouts.count }
+        guard let start = cal.date(byAdding: .day, value: -27, to: today) else {
+            return store.workouts.count
+        }
         return store.workouts.filter { w in
             let d = cal.startOfDay(for: DateTools.date(from: w.workoutDate))
             return d >= start && d <= today
@@ -2493,11 +2584,14 @@ private struct HistoryScreen: View {
     private var recentHeatmap: [Bool] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        let workoutDates = Set(store.workouts.compactMap { w -> Date? in
-            cal.startOfDay(for: DateTools.date(from: w.workoutDate))
-        })
+        let workoutDates = Set(
+            store.workouts.compactMap { w -> Date? in
+                cal.startOfDay(for: DateTools.date(from: w.workoutDate))
+            })
         return (0..<28).map { offset in
-            guard let d = cal.date(byAdding: .day, value: -(27 - offset), to: today) else { return false }
+            guard let d = cal.date(byAdding: .day, value: -(27 - offset), to: today) else {
+                return false
+            }
             return workoutDates.contains(d)
         }
     }
@@ -2551,7 +2645,7 @@ private struct HistoryNextWorkoutCard: View {
             }
             .background(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color(red: 0.984, green: 0.980, blue: 0.969)) // #FBFAF7
+                    .fill(Color(red: 0.984, green: 0.980, blue: 0.969))  // #FBFAF7
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -2617,7 +2711,8 @@ private struct HistoryNextWorkoutCard: View {
                 loadBadge(payload.loadType)
             }
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(payload.exercises.enumerated()), id: \.element.exerciseID) { idx, ex in
+                ForEach(Array(payload.exercises.enumerated()), id: \.element.exerciseID) {
+                    idx, ex in
                     if idx > 0 {
                         Rectangle().fill(Color.black.opacity(0.07)).frame(height: 0.5)
                     }
@@ -2654,10 +2749,12 @@ private struct HistoryNextWorkoutCard: View {
                 .foregroundStyle(DesignPalette.ink)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            deltaText(prev: prev, plan: plan, reps: TrainerLogic.recommendationRepsLabel(ex.sets), up: up)
-                .font(.jbm(11.5, weight: .semibold))
-                .monospacedDigit()
-                .fixedSize()
+            deltaText(
+                prev: prev, plan: plan, reps: TrainerLogic.recommendationRepsLabel(ex.sets), up: up
+            )
+            .font(.jbm(11.5, weight: .semibold))
+            .monospacedDigit()
+            .fixedSize()
         }
         .padding(.vertical, 5)
     }
@@ -2686,7 +2783,8 @@ private struct HistoryNextWorkoutCard: View {
             HStack(spacing: 12) {
                 ZStack {
                     Circle().fill(DesignPalette.accent.opacity(0.08))
-                        .overlay(Circle().stroke(DesignPalette.accent.opacity(0.18), lineWidth: 0.5))
+                        .overlay(
+                            Circle().stroke(DesignPalette.accent.opacity(0.18), lineWidth: 0.5))
                     ProgressView().controlSize(.small).tint(DesignPalette.accent)
                 }
                 .frame(width: 34, height: 34)
@@ -2712,8 +2810,10 @@ private struct HistoryNextWorkoutCard: View {
             HStack(spacing: 12) {
                 ZStack {
                     Circle().fill(DesignPalette.accent.opacity(0.12))
-                        .overlay(Circle().stroke(DesignPalette.accent.opacity(0.20), lineWidth: 0.5))
-                    Image(systemName: "sparkles").font(.system(size: 16)).foregroundStyle(DesignPalette.accent)
+                        .overlay(
+                            Circle().stroke(DesignPalette.accent.opacity(0.20), lineWidth: 0.5))
+                    Image(systemName: "sparkles").font(.system(size: 16)).foregroundStyle(
+                        DesignPalette.accent)
                 }
                 .frame(width: 34, height: 34)
                 VStack(alignment: .leading, spacing: 2) {
@@ -2807,7 +2907,7 @@ private struct HistoryCard: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(red: 0.984, green: 0.980, blue: 0.969)) // #FBFAF7
+                .fill(Color(red: 0.984, green: 0.980, blue: 0.969))  // #FBFAF7
         )
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -2856,7 +2956,8 @@ private struct HistoryCard: View {
 
     private var exerciseList: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(workout.data.exercises.enumerated()), id: \.element.exerciseID) { idx, ex in
+            ForEach(Array(workout.data.exercises.enumerated()), id: \.element.exerciseID) {
+                idx, ex in
                 if idx > 0 {
                     Rectangle().fill(Color.black.opacity(0.07)).frame(height: 0.5)
                 }
@@ -2930,9 +3031,9 @@ private struct ProgressTabScreen: View {
                 prefetchedEntry: weeklyReportForSheet,
                 fetchesOnAppear: false
             )
-                .environmentObject(store)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+            .environmentObject(store)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .task {
             // This prefetch only names the exact period. If the user taps while
@@ -2946,39 +3047,39 @@ private struct ProgressTabScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 headerPills
-                    TopTitle(sub: nil, title: "Прогресс")
-                        .padding(.horizontal, 4)
+                TopTitle(sub: nil, title: "Прогресс")
+                    .padding(.horizontal, 4)
 
-                    weeklySummarySection
-                    disciplineSection
-                    weeklyReportSection
-                    weeklyVolumeSection
+                weeklySummarySection
+                disciplineSection
+                weeklyReportSection
+                weeklyVolumeSection
 
-                    sectionHeader
+                sectionHeader
 
-                    let options = store.progressExerciseOptions()
-                    LazyVStack(spacing: 8) {
-                        ForEach(options) { ex in
-                            NavigationLink {
-                                ExerciseDetailScreen(exerciseID: ex.id, exerciseName: ex.name)
-                            } label: {
-                                ProgressExerciseRow(exerciseID: ex.id, name: ex.name, store: store)
-                            }
-                            .buttonStyle(.plain)
+                let options = store.progressExerciseOptions()
+                LazyVStack(spacing: 8) {
+                    ForEach(options) { ex in
+                        NavigationLink {
+                            ExerciseDetailScreen(exerciseID: ex.id, exerciseName: ex.name)
+                        } label: {
+                            ProgressExerciseRow(exerciseID: ex.id, name: ex.name, store: store)
                         }
+                        .buttonStyle(.plain)
+                    }
 
-                        if options.isEmpty {
-                            EmptyStateCard(
-                                glyph: .other,
-                                title: "Нет точек прогресса",
-                                subtitle: "Сохрани несколько тренировок, чтобы увидеть динамику."
-                            )
-                        }
+                    if options.isEmpty {
+                        EmptyStateCard(
+                            glyph: .other,
+                            title: "Нет точек прогресса",
+                            subtitle: "Сохрани несколько тренировок, чтобы увидеть динамику."
+                        )
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 8)
-                .padding(.bottom, 24)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+            .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
     }
@@ -3113,7 +3214,8 @@ private struct ProgressTabScreen: View {
             HStack(spacing: 11) {
                 ZStack {
                     Circle().fill(DesignPalette.accent.opacity(0.12)).frame(width: 36, height: 36)
-                        .overlay(Circle().stroke(DesignPalette.accent.opacity(0.20), lineWidth: 0.5))
+                        .overlay(
+                            Circle().stroke(DesignPalette.accent.opacity(0.20), lineWidth: 0.5))
                     if isOpeningWeeklyReport {
                         ProgressView()
                             .controlSize(.small)
@@ -3367,7 +3469,8 @@ private struct WeeklyReportSheet: View {
                         .padding(.top, 8)
                     } else if let entry {
                         VStack(alignment: .leading, spacing: 10) {
-                            ForEach(Array(paragraphs(entry.report).enumerated()), id: \.offset) { _, para in
+                            ForEach(Array(paragraphs(entry.report).enumerated()), id: \.offset) {
+                                _, para in
                                 Text(markdown(para))
                                     .font(.jbm(13))
                                     .foregroundStyle(DesignPalette.ink2)
@@ -3381,10 +3484,12 @@ private struct WeeklyReportSheet: View {
                             Text("Отчёта пока нет")
                                 .font(.jbm(15, weight: .bold)).tracking(-0.3)
                                 .foregroundStyle(DesignPalette.ink)
-                            Text("Тренер собирает итоги недели сам — каждое воскресенье вечером. Загляни после.")
-                                .font(.jbm(12)).foregroundStyle(DesignPalette.ink3)
-                                .lineSpacing(3)
-                                .fixedSize(horizontal: false, vertical: true)
+                            Text(
+                                "Тренер собирает итоги недели сам — каждое воскресенье вечером. Загляни после."
+                            )
+                            .font(.jbm(12)).foregroundStyle(DesignPalette.ink3)
+                            .lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
                         }
                         .padding(.top, 8)
                     }
@@ -3455,7 +3560,8 @@ private struct VolumeRow: View {
                     Rectangle()
                         .fill(DesignPalette.ink.opacity(0.28))
                         .frame(width: 1, height: 11)
-                        .offset(x: w * min(1, Double(row.minTarget) / Double(max(1, row.maxTarget))))
+                        .offset(
+                            x: w * min(1, Double(row.minTarget) / Double(max(1, row.maxTarget))))
                 }
             }
             .frame(height: 11)
@@ -3493,15 +3599,18 @@ private struct DisciplineCard: View {
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             Capsule().fill(DesignPalette.ink.opacity(0.07)).frame(height: 7)
-                            Capsule().fill(color).frame(width: max(7, geo.size.width * summary.ratio), height: 7)
+                            Capsule().fill(color).frame(
+                                width: max(7, geo.size.width * summary.ratio), height: 7)
                         }
                     }
                     .frame(height: 7)
-                    Text("\(summary.doneSets) из \(summary.plannedSets) плановых подходов · \(summary.comparedWorkouts) трен. по плану")
-                        .font(.jbm(10.5, weight: .medium))
-                        .foregroundStyle(DesignPalette.ink3)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(
+                        "\(summary.doneSets) из \(summary.plannedSets) плановых подходов · \(summary.comparedWorkouts) трен. по плану"
+                    )
+                    .font(.jbm(10.5, weight: .medium))
+                    .foregroundStyle(DesignPalette.ink3)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                     if !summary.skippedByName.isEmpty {
                         Text("чаще пропускаешь: \(skippedLabel)")
                             .font(.jbm(10.5, weight: .medium))
@@ -3517,10 +3626,12 @@ private struct DisciplineCard: View {
                     Image(systemName: "checklist")
                         .font(.system(size: 18))
                         .foregroundStyle(DesignPalette.ink4)
-                    Text("За последние 30 дней не было тренировок по плану тренера — дисциплину считать не по чему.")
-                        .font(.jbm(12, weight: .medium))
-                        .foregroundStyle(DesignPalette.ink3)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(
+                        "За последние 30 дней не было тренировок по плану тренера — дисциплину считать не по чему."
+                    )
+                    .font(.jbm(12, weight: .medium))
+                    .foregroundStyle(DesignPalette.ink3)
+                    .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                 }
                 .padding(14)
@@ -3580,15 +3691,22 @@ private struct ProgressExerciseRow: View {
     }
 
     private var formattedDelta: String? {
-        guard let summary = TrainerLogic.summarizeExerciseSeries(series), summary.firstPoint.bestWeight > 0 else { return nil }
-        let pct = (summary.latestPoint.bestWeight - summary.firstPoint.bestWeight) / summary.firstPoint.bestWeight * 100
+        guard let summary = TrainerLogic.summarizeExerciseSeries(series),
+            summary.firstPoint.bestWeight > 0
+        else { return nil }
+        let pct =
+            (summary.latestPoint.bestWeight - summary.firstPoint.bestWeight)
+            / summary.firstPoint.bestWeight * 100
         let sign = pct >= 0 ? "+" : ""
         return "\(sign)\(Int(pct.rounded()))%"
     }
 
     private var deltaTint: Color {
-        guard let summary = TrainerLogic.summarizeExerciseSeries(series) else { return DesignPalette.ink3 }
-        return summary.latestPoint.bestWeight >= summary.firstPoint.bestWeight ? DesignPalette.ok : DesignPalette.bad
+        guard let summary = TrainerLogic.summarizeExerciseSeries(series) else {
+            return DesignPalette.ink3
+        }
+        return summary.latestPoint.bestWeight >= summary.firstPoint.bestWeight
+            ? DesignPalette.ok : DesignPalette.bad
     }
 
     private var sparkline: some View {
@@ -3602,7 +3720,8 @@ private struct ProgressExerciseRow: View {
                 let toPoint: (Int) -> CGPoint = { i in
                     CGPoint(
                         x: CGFloat(i) * stepX,
-                        y: geo.size.height - CGFloat((pts[i] - mn) / range) * (geo.size.height - 4) - 2
+                        y: geo.size.height - CGFloat((pts[i] - mn) / range) * (geo.size.height - 4)
+                            - 2
                     )
                 }
                 Path { p in
@@ -3611,7 +3730,9 @@ private struct ProgressExerciseRow: View {
                         p.addLine(to: toPoint(i))
                     }
                 }
-                .stroke(DesignPalette.accent, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+                .stroke(
+                    DesignPalette.accent,
+                    style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
 
                 Path { p in
                     p.move(to: toPoint(0))
@@ -3622,7 +3743,9 @@ private struct ProgressExerciseRow: View {
                 }
                 .fill(
                     LinearGradient(
-                        colors: [DesignPalette.accent.opacity(0.3), DesignPalette.accent.opacity(0)],
+                        colors: [
+                            DesignPalette.accent.opacity(0.3), DesignPalette.accent.opacity(0),
+                        ],
                         startPoint: .top,
                         endPoint: .bottom
                     )
@@ -3632,7 +3755,9 @@ private struct ProgressExerciseRow: View {
                     p.move(to: CGPoint(x: 0, y: geo.size.height / 2))
                     p.addLine(to: CGPoint(x: geo.size.width, y: geo.size.height / 2))
                 }
-                .stroke(DesignPalette.accent.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+                .stroke(
+                    DesignPalette.accent.opacity(0.4),
+                    style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
             }
         }
     }
@@ -3743,7 +3868,8 @@ private struct ExerciseDetailScreen: View {
                         .foregroundStyle(DesignPalette.ok)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(DesignPalette.ok.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                        .background(
+                            DesignPalette.ok.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
                 }
                 Spacer()
                 if let last = series.last {
@@ -3766,7 +3892,10 @@ private struct ExerciseDetailScreen: View {
                         )
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [DesignPalette.accent.opacity(0.35), DesignPalette.accent.opacity(0)],
+                                colors: [
+                                    DesignPalette.accent.opacity(0.35),
+                                    DesignPalette.accent.opacity(0),
+                                ],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
@@ -3905,8 +4034,12 @@ private struct ExerciseDetailScreen: View {
     }
 
     private var deltaText: String {
-        guard let summary = TrainerLogic.summarizeExerciseSeries(series), summary.firstPoint.bestWeight > 0 else { return "" }
-        let pct = (summary.latestPoint.bestWeight - summary.firstPoint.bestWeight) / summary.firstPoint.bestWeight * 100
+        guard let summary = TrainerLogic.summarizeExerciseSeries(series),
+            summary.firstPoint.bestWeight > 0
+        else { return "" }
+        let pct =
+            (summary.latestPoint.bestWeight - summary.firstPoint.bestWeight)
+            / summary.firstPoint.bestWeight * 100
         let sign = pct >= 0 ? "↑" : "↓"
         return "\(sign) \(abs(Int(pct.rounded())))% за \(store.selectedRange.label)"
     }
@@ -3943,16 +4076,20 @@ private struct ExerciseDetailScreen: View {
     private var recentEntries: [RecentEntry] {
         var collected: [RecentEntry] = []
         for w in store.workouts {
-            guard let ex = w.data.exercises.first(where: { $0.exerciseID == exerciseID }) else { continue }
+            guard let ex = w.data.exercises.first(where: { $0.exerciseID == exerciseID }) else {
+                continue
+            }
             let top = ex.sets.max { left, right in
-                left.weight < right.weight || (left.weight == right.weight && left.reps < right.reps)
+                left.weight < right.weight
+                    || (left.weight == right.weight && left.reps < right.reps)
             }
             if let top {
-                collected.append(RecentEntry(
-                    date: DateTools.short(w.workoutDate),
-                    label: "\(TrainerLogic.formatWeight(top.weight)) кг × \(top.reps)",
-                    effort: top.effort
-                ))
+                collected.append(
+                    RecentEntry(
+                        date: DateTools.short(w.workoutDate),
+                        label: "\(TrainerLogic.formatWeight(top.weight)) кг × \(top.reps)",
+                        effort: top.effort
+                    ))
             }
             if collected.count >= 5 { break }
         }
@@ -4037,9 +4174,9 @@ private struct BodyWeightScreen: View {
                 initialDate: composerInitialDate,
                 initialValue: composerInitialValue
             )
-                .environmentObject(store)
-                .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
+            .environmentObject(store)
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
         }
         .alert("Удалить запись веса?", isPresented: deleteWeightBinding) {
             Button("Удалить", role: .destructive) {
@@ -4051,7 +4188,9 @@ private struct BodyWeightScreen: View {
             Button("Отмена", role: .cancel) { pendingDeleteWeight = nil }
         } message: {
             if let pendingDeleteWeight {
-                Text("\(TrainerLogic.formatBodyWeight(pendingDeleteWeight.weight)) кг от \(DateTools.long(pendingDeleteWeight.entryDate))")
+                Text(
+                    "\(TrainerLogic.formatBodyWeight(pendingDeleteWeight.weight)) кг от \(DateTools.long(pendingDeleteWeight.entryDate))"
+                )
             }
         }
         .alert("Удалить замер талии?", isPresented: deleteWaistBinding) {
@@ -4064,7 +4203,9 @@ private struct BodyWeightScreen: View {
             Button("Отмена", role: .cancel) { pendingDeleteWaist = nil }
         } message: {
             if let pendingDeleteWaist {
-                Text("\(Self.format1dp(pendingDeleteWaist.waist)) см от \(DateTools.long(pendingDeleteWaist.entryDate))")
+                Text(
+                    "\(Self.format1dp(pendingDeleteWaist.waist)) см от \(DateTools.long(pendingDeleteWaist.entryDate))"
+                )
             }
         }
     }
@@ -4248,7 +4389,9 @@ private struct BodyWeightScreen: View {
                 )
                 .foregroundStyle(
                     LinearGradient(
-                        colors: [DesignPalette.accent.opacity(0.32), DesignPalette.accent.opacity(0)],
+                        colors: [
+                            DesignPalette.accent.opacity(0.32), DesignPalette.accent.opacity(0),
+                        ],
                         startPoint: .top,
                         endPoint: .bottom
                     )
@@ -4414,7 +4557,8 @@ private struct BodyWeightScreen: View {
     private func openComposer() {
         let today = DateTools.localTodayISO()
         composerInitialDate = DateTools.date(from: today)
-        composerInitialValue = metric == .weight
+        composerInitialValue =
+            metric == .weight
             ? store.bodyWeightComposerValue(for: today)
             : store.waistComposerValue(for: today)
         showComposer = true
@@ -4423,8 +4567,12 @@ private struct BodyWeightScreen: View {
     private var ninetyDayDelta: Double? {
         let cal = Calendar.current
         guard let cutoff = cal.date(byAdding: .day, value: -90, to: Date()) else { return nil }
-        let window = points.filter { DateTools.date(from: $0.entryDate) >= cal.startOfDay(for: cutoff) }
-        guard let first = window.first, let last = window.last, window.count >= 2 else { return nil }
+        let window = points.filter {
+            DateTools.date(from: $0.entryDate) >= cal.startOfDay(for: cutoff)
+        }
+        guard let first = window.first, let last = window.last, window.count >= 2 else {
+            return nil
+        }
         return last.value - first.value
     }
 
@@ -4452,8 +4600,8 @@ private struct BodyWeightScreen: View {
 
     private func nearest(to date: Date) -> MeasurePoint? {
         points.min { left, right in
-            abs(DateTools.date(from: left.entryDate).timeIntervalSince(date)) <
-                abs(DateTools.date(from: right.entryDate).timeIntervalSince(date))
+            abs(DateTools.date(from: left.entryDate).timeIntervalSince(date))
+                < abs(DateTools.date(from: right.entryDate).timeIntervalSince(date))
         }
     }
 
@@ -4499,8 +4647,8 @@ private enum DecimalKeyboardPrewarmer {
 
     static func warmUp() {
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
-              !didWarmUp,
-              let window = UIApplication.shared.connectedScenes
+            !didWarmUp,
+            let window = UIApplication.shared.connectedScenes
                 .compactMap({ $0 as? UIWindowScene })
                 .flatMap(\.windows)
                 .first(where: \.isKeyWindow)
@@ -4685,10 +4833,10 @@ private struct MeasureComposerSheet: View {
                     buffer: draftBuffer,
                     accessibilityLabel: metric == .weight ? "Вес" : "Талия"
                 )
-                    .padding(.horizontal, 14)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 56)
-                    .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
+                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity)
+                .frame(height: 56)
+                .background(Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
 
                 Text(metric == .weight ? "кг" : "см")
                     .font(.jbm(16, weight: .semibold))
@@ -4763,9 +4911,11 @@ private struct SettingsSheet: View {
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    Text("Production: https://trainer.superbatonec.org. Локально: http://127.0.0.1:8080.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        "Production: https://trainer.superbatonec.org. Локально: http://127.0.0.1:8080."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
 
                 if let user = store.currentUser {
@@ -4829,7 +4979,9 @@ private struct SignInScreen: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             }
-            Button { Task { await store.reconnect() } } label: {
+            Button {
+                Task { await store.reconnect() }
+            } label: {
                 Text("Повторить")
                     .font(.jbm(16, weight: .heavy))
                     .foregroundStyle(.white)
@@ -4840,7 +4992,9 @@ private struct SignInScreen: View {
             }
             .buttonStyle(.pressable(scale: 0.96))
 
-            Button { showSettings = true } label: {
+            Button {
+                showSettings = true
+            } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "gear")
                     Text("Backend")
@@ -4881,13 +5035,16 @@ private struct ErrorScreen: View {
             Image(systemName: "wifi.exclamationmark")
                 .font(.jbm(40, weight: .heavy))
                 .foregroundStyle(DesignPalette.warn)
-            Text("Не удалось загрузить Trainer").display(size: 22, weight: .heavy).multilineTextAlignment(.center)
+            Text("Не удалось загрузить Trainer").display(size: 22, weight: .heavy)
+                .multilineTextAlignment(.center)
             Text(message)
                 .font(.jbm(13))
                 .foregroundStyle(DesignPalette.ink3)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
-            Button { Task { await store.reconnect() } } label: {
+            Button {
+                Task { await store.reconnect() }
+            } label: {
                 Text("Повторить")
                     .font(.jbm(16, weight: .heavy))
                     .foregroundStyle(.white)
@@ -4942,8 +5099,8 @@ private struct EmptyStateCard: View {
 
 // MARK: - Helpers
 
-private extension Collection {
-    subscript(safe index: Index) -> Element? {
+extension Collection {
+    fileprivate subscript(safe index: Index) -> Element? {
         indices.contains(index) ? self[index] : nil
     }
 }

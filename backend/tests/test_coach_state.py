@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pathlib
 import tempfile
 import unittest
 from datetime import date, timedelta
@@ -8,7 +9,6 @@ from pathlib import Path
 
 import support  # noqa: F401 — adds backend to sys.path
 
-import pathlib
 import coach_features
 import coach_state
 
@@ -37,8 +37,8 @@ class StateFileTests(unittest.TestCase):
                         "phase": "maintenance",
                         "phase_started": "2026-08-01",
                         "waist_limit_cm": 86.5,
-                        "waist_base_cm": 9000,     # implausible → ignored
-                        "injection_day": "вс",     # legacy field → ignored
+                        "waist_base_cm": 9000,  # implausible → ignored
+                        "injection_day": "вс",  # legacy field → ignored
                     }
                 ),
                 "utf-8",
@@ -148,15 +148,15 @@ class CyclePositionTests(unittest.TestCase):
     def test_deload_fires_on_week_seven_with_real_volume(self) -> None:
         start = date(2026, 5, 1)
         state = dict(coach_state.DEFAULT_STATE, phase_started=start.isoformat())
-        workouts = self._dense_workouts(start, 15)          # every 3 days → 2.3/wk
-        today = start + timedelta(days=42)                  # block week 7
+        workouts = self._dense_workouts(start, 15)  # every 3 days → 2.3/wk
+        today = start + timedelta(days=42)  # block week 7
         position = coach_state.cycle_position(state, workouts, today)
         self.assertEqual(position["block_week"], 7)
         self.assertEqual(position["cycle_week"], 7)
         self.assertTrue(position["deload_week"])
 
         # After the light week the cycle wraps and the ramp restarts.
-        later = start + timedelta(days=49)                  # block week 8
+        later = start + timedelta(days=49)  # block week 8
         more = workouts + self._dense_workouts(start + timedelta(days=43), 2)
         position = coach_state.cycle_position(state, more, later)
         self.assertEqual(position["cycle_week"], 1)
@@ -166,7 +166,7 @@ class CyclePositionTests(unittest.TestCase):
     def test_deload_withheld_without_accumulated_work(self) -> None:
         start = date(2026, 5, 1)
         state = dict(coach_state.DEFAULT_STATE, phase_started=start.isoformat())
-        workouts = self._dense_workouts(start, 7, step_days=7)   # 1/wk — no fatigue
+        workouts = self._dense_workouts(start, 7, step_days=7)  # 1/wk — no fatigue
         today = start + timedelta(days=42)
         position = coach_state.cycle_position(state, workouts, today)
         self.assertEqual(position["cycle_week"], 7)
@@ -174,8 +174,9 @@ class CyclePositionTests(unittest.TestCase):
 
     def test_maintenance_has_no_deload_cycle(self) -> None:
         start = date(2026, 5, 1)
-        state = dict(coach_state.DEFAULT_STATE, phase="maintenance",
-                     phase_started=start.isoformat())
+        state = dict(
+            coach_state.DEFAULT_STATE, phase="maintenance", phase_started=start.isoformat()
+        )
         workouts = self._dense_workouts(start, 15)
         position = coach_state.cycle_position(state, workouts, start + timedelta(days=42))
         self.assertFalse(position["deload_week"])
@@ -203,9 +204,7 @@ class GroupTargetOverrideTests(unittest.TestCase):
                 today=date(2026, 8, 16),
             )
             params = coach_state.phase_params(coach_state.load_state(path))
-            targets = coach_features.group_volume_targets(
-                (6, 9), None, params.get("group_targets")
-            )
+            targets = coach_features.group_volume_targets((6, 9), None, params.get("group_targets"))
             self.assertEqual(targets["спина"], (16, 16))
             self.assertEqual(targets["квадрицепс/ягодичные"], (9, 9))
             # неупомянутая крупная группа остаётся на общем коридоре
@@ -226,19 +225,16 @@ class GroupTargetOverrideTests(unittest.TestCase):
             self.assertIn("Неизвестная группа", str(ctx.exception))
 
     def test_malformed_bounds_are_rejected_on_write(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ValueError):
-                coach_state.set_phase(
-                    self._path(tmp),
-                    "cut_recomp",
-                    {"group_targets": {"спина": 16}},
-                    today=date(2026, 8, 16),
-                )
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
+            coach_state.set_phase(
+                self._path(tmp),
+                "cut_recomp",
+                {"group_targets": {"спина": 16}},
+                today=date(2026, 8, 16),
+            )
 
     def test_render_prints_the_group_goal_inline(self):
         volume = coach_features.weekly_volume([], date(2026, 8, 16))
-        text = coach_features.render_weekly_volume(
-            volume, (6, 9), None, {"спина": (16, 16)}
-        )
+        text = coach_features.render_weekly_volume(volume, (6, 9), None, {"спина": (16, 16)})
         self.assertIn("спина: 0 прямых / 0 эффективных (цель блока 16–16)", text)
         self.assertIn("ЗРЕЛОГО блока", text)

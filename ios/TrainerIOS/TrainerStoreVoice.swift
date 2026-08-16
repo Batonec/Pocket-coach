@@ -55,40 +55,46 @@ struct VoiceLoggedSet: Equatable {
         let ordinal = VoicePhrasing.capitalized(VoicePhrasing.ordinal(setNumber, in: language))
         if let plannedSets, setNumber <= plannedSets {
             let total = VoicePhrasing.countWord(plannedSets, in: language)
-            parts.append(language == .ru
-                ? "\(ordinal) подход из \(total)."
-                : "\(ordinal) set of \(total).")
+            parts.append(
+                language == .ru
+                    ? "\(ordinal) подход из \(total)."
+                    : "\(ordinal) set of \(total).")
         } else {
             parts.append(language == .ru ? "\(ordinal) подход." : "\(ordinal) set.")
         }
 
         switch filledFrom {
         case .plan:
-            parts.append(language == .ru
-                ? "Взял вес и повторы из плана."
-                : "Took weight and reps from the plan.")
+            parts.append(
+                language == .ru
+                    ? "Взял вес и повторы из плана."
+                    : "Took weight and reps from the plan.")
         case .history:
-            parts.append(language == .ru
-                ? "Взял вес и повторы как в прошлый раз."
-                : "Took weight and reps from last time.")
+            parts.append(
+                language == .ru
+                    ? "Взял вес и повторы как в прошлый раз."
+                    : "Took weight and reps from last time.")
         case nil:
             break
         }
         if convertedFromPounds {
-            parts.append(language == .ru
-                ? "Пересчитал из фунтов."
-                : "Converted from pounds.")
+            parts.append(
+                language == .ru
+                    ? "Пересчитал из фунтов."
+                    : "Converted from pounds.")
         }
         if unusualWeight {
-            parts.append(language == .ru
-                ? "Вес сильно отличается от плана — проверь."
-                : "That weight is far off the plan — double-check.")
+            parts.append(
+                language == .ru
+                    ? "Вес сильно отличается от плана — проверь."
+                    : "That weight is far off the plan — double-check.")
         }
         if let otherDate {
             let date = VoicePhrasing.date(otherDate, in: language)
-            parts.append(language == .ru
-                ? "Тренировка за \(date)."
-                : "This workout is dated \(date).")
+            parts.append(
+                language == .ru
+                    ? "Тренировка за \(date)."
+                    : "This workout is dated \(date).")
         }
         return parts.joined(separator: " ")
     }
@@ -104,12 +110,14 @@ struct VoiceUndoOutcome: Equatable {
     var spokenSummary: String {
         let set = VoicePhrasing.set(weight: weight, reps: reps, in: language)
         if language == .ru {
-            let tail = remainingSets == 0
+            let tail =
+                remainingSets == 0
                 ? "Тренировка снова пустая."
                 : "Осталось \(VoicePhrasing.sets(remainingSets, in: language))."
             return "Убрал \(exerciseName), \(set). \(tail)"
         }
-        let tail = remainingSets == 0
+        let tail =
+            remainingSets == 0
             ? "The workout is empty again."
             : "\(VoicePhrasing.sets(remainingSets, in: language)) left."
         return "Removed \(exerciseName), \(set). \(tail)"
@@ -132,7 +140,8 @@ struct VoiceNextSet: Equatable {
         let ordinal = VoicePhrasing.ordinal(setNumber, in: language)
         if let plannedSets, setNumber <= plannedSets {
             let total = VoicePhrasing.countWord(plannedSets, in: language)
-            line += language == .ru
+            line +=
+                language == .ru
                 ? ", \(ordinal) подход из \(total)."
                 : ", \(ordinal) set of \(total)."
         } else {
@@ -140,7 +149,8 @@ struct VoiceNextSet: Equatable {
         }
         if fromPlan, remainingExercises > 1 {
             let rest = VoicePhrasing.exercises(remainingExercises - 1, in: language)
-            line += language == .ru
+            line +=
+                language == .ru
                 ? " Дальше по плану ещё \(rest)."
                 : " \(VoicePhrasing.capitalized(rest)) left in the plan after this."
         }
@@ -154,7 +164,8 @@ struct VoiceFinishOutcome: Equatable {
     var language: VoiceLanguage
 
     var spokenSummary: String {
-        let body = "\(VoicePhrasing.exercises(exercises, in: language)), \(VoicePhrasing.sets(sets, in: language))"
+        let body =
+            "\(VoicePhrasing.exercises(exercises, in: language)), \(VoicePhrasing.sets(sets, in: language))"
         return language == .ru
             ? "Тренировка сохранена: \(body)."
             : "Workout saved: \(body)."
@@ -197,25 +208,25 @@ struct VoiceCommandError: Error, Equatable {
 
     var spokenMessage: String {
         switch (kind, language) {
-        case let (.unknownExercise(spoken), .ru):
+        case (.unknownExercise(let spoken), .ru):
             spoken.isEmpty
                 ? "Не понял упражнение. Скажи, например: жим ногами 80 на 10."
                 : "Не нашёл упражнение «\(spoken)». Скажи, например: жим ногами 80 на 10."
-        case let (.unknownExercise(spoken), .en):
+        case (.unknownExercise(let spoken), .en):
             spoken.isEmpty
                 ? "I didn't catch the exercise. Try: leg press 80 by 10."
                 : "I couldn't find “\(spoken)”. Try: leg press 80 by 10."
-        case let (.ambiguousExercise(names), .ru):
+        case (.ambiguousExercise(let names), .ru):
             "Уточни: \(names.joined(separator: " или ")). Например: \(names.first ?? "") 80 на 10."
-        case let (.ambiguousExercise(names), .en):
+        case (.ambiguousExercise(let names), .en):
             "Which one: \(names.joined(separator: " or "))? For example: \(names.first ?? "") 80 by 10."
         case (.emptyPhrase, .ru):
             "Не расслышал. Скажи, например: жим ногами 80 на 10, тяжело."
         case (.emptyPhrase, .en):
             "I didn't catch that. Try: leg press 80 by 10, hard."
-        case let (.staleDraft(date), .ru):
+        case (.staleDraft(let date), .ru):
             "В приложении осталась незакрытая тренировка за \(VoicePhrasing.date(date, in: .ru)). Открой Pocket Coach и сохрани её."
-        case let (.staleDraft(date), .en):
+        case (.staleDraft(let date), .en):
             "There's an unfinished workout from \(VoicePhrasing.date(date, in: .en)) in the app. Open Pocket Coach and save it first."
         case (.nothingToUndo, .ru):
             "В текущей тренировке ещё нет подходов."
@@ -229,9 +240,9 @@ struct VoiceCommandError: Error, Equatable {
             "Плана на сегодня нет — скажи упражнение, вес и повторы."
         case (.noPlan, .en):
             "There's no plan for today — say the exercise, weight and reps."
-        case let (.saveFailed(reason), .ru):
+        case (.saveFailed(let reason), .ru):
             "Не удалось сохранить тренировку: \(reason ?? "нет связи с сервером"). Подходы остались в приложении."
-        case let (.saveFailed(reason), .en):
+        case (.saveFailed(let reason), .en):
             "Couldn't save the workout: \(reason ?? "no connection to the server"). The sets are still in the app."
         }
     }
@@ -286,15 +297,18 @@ extension TrainerStore {
 
     static let bundledExerciseCatalog: [ExerciseDefinition] = {
         guard let url = Bundle.main.url(forResource: "exercises", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let payload = try? JSONDecoder().decode(ExerciseCatalogResponse.self, from: data) else {
+            let data = try? Data(contentsOf: url),
+            let payload = try? JSONDecoder().decode(ExerciseCatalogResponse.self, from: data)
+        else {
             return []
         }
         return payload.exercises
     }()
 
     func voiceExerciseName(for exerciseID: Int, in language: VoiceLanguage) -> String? {
-        exerciseDefinition(id: exerciseID).map { ExerciseVoiceNames.spoken(for: $0.name, in: language) }
+        exerciseDefinition(id: exerciseID).map {
+            ExerciseVoiceNames.spoken(for: $0.name, in: language)
+        }
     }
 
     /// Разбор продиктованной фразы целиком: «жим ногами 80 на 10, тяжело»
@@ -311,9 +325,12 @@ extension TrainerStore {
 
         let parsed = VoiceSetParser.parse(phrase, catalog: catalog)
         guard let exerciseID = parsed.exerciseID else {
-            let candidates = parsed.ambiguousIDs.compactMap { voiceExerciseName(for: $0, in: language) }
+            let candidates = parsed.ambiguousIDs.compactMap {
+                voiceExerciseName(for: $0, in: language)
+            }
             throw candidates.isEmpty
-                ? VoiceCommandError(.unknownExercise(spoken: parsed.spokenExercise), language: language)
+                ? VoiceCommandError(
+                    .unknownExercise(spoken: parsed.spokenExercise), language: language)
                 : VoiceCommandError(.ambiguousExercise(names: candidates), language: language)
         }
 
@@ -361,7 +378,8 @@ extension TrainerStore {
         )
 
         let targets = voicePlanTargets(for: exerciseID)
-        let performed = draft.exercises.first(where: { $0.exerciseID == exerciseID })?.sets.count ?? 1
+        let performed =
+            draft.exercises.first(where: { $0.exerciseID == exerciseID })?.sets.count ?? 1
         let reference = targets?.first?.weight ?? planned.weight
 
         return VoiceLoggedSet(
@@ -391,7 +409,8 @@ extension TrainerStore {
             draft.exercises.first(where: { $0.exerciseID == id && !$0.sets.isEmpty })
         }
         guard let target = stamped ?? draft.exercises.last(where: { !$0.sets.isEmpty }),
-              let removed = target.sets.last else {
+            let removed = target.sets.last
+        else {
             throw VoiceCommandError(.nothingToUndo, language: language)
         }
 
@@ -413,7 +432,9 @@ extension TrainerStore {
         let language = voiceLanguage
         let planExercises = draft.editingWorkoutID == nil ? (appliedPlan?.exercises ?? []) : []
         let pending = planExercises.filter { exercise in
-            let done = draft.exercises.first(where: { $0.exerciseID == exercise.exerciseID })?.sets.count ?? 0
+            let done =
+                draft.exercises.first(where: { $0.exerciseID == exercise.exerciseID })?.sets.count
+                ?? 0
             return done < exercise.sets.count
         }
 
@@ -462,8 +483,9 @@ extension TrainerStore {
     /// подход нельзя (данные уедут в чужую дату), молча стирать — тем более.
     var staleVoiceDraftDate: String? {
         guard draft.editingWorkoutID == nil,
-              draft.hasRealSets,
-              draft.workoutDate != DateTools.localTodayISO() else {
+            draft.hasRealSets,
+            draft.workoutDate != DateTools.localTodayISO()
+        else {
             return nil
         }
         guard let lastLoggedAt = draft.lastLoggedAt else {
@@ -481,7 +503,8 @@ extension TrainerStore {
     private func isUnusualVoiceWeight(_ weight: Double, reference: Double) -> Bool {
         guard reference > 0, weight > 0 else { return false }
         let ratio = weight / reference
-        return ratio >= Self.voiceWeightSuspicionFactor || ratio <= 1 / Self.voiceWeightSuspicionFactor
+        return ratio >= Self.voiceWeightSuspicionFactor
+            || ratio <= 1 / Self.voiceWeightSuspicionFactor
     }
 }
 

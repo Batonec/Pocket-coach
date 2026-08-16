@@ -5,13 +5,12 @@ import time
 import unittest
 from pathlib import Path
 
-import backend_store  # support puts backend/ on sys.path
 import support  # noqa: F401
 from support import sample_workout_payload
 
-import refresh_recommendation as refresh
+import backend_store  # support puts backend/ on sys.path
 import recommender
-
+import refresh_recommendation as refresh
 
 NOW = int(time.time())
 HOUR = 3600
@@ -59,7 +58,12 @@ class RunTests(unittest.TestCase):
                 "load_type": "medium",
                 "rationale": "r",
                 "exercises": [
-                    {"exercise_id": 1, "name": "Bench Press", "note": "n", "sets": [{"reps": 10, "weight": 50}]}
+                    {
+                        "exercise_id": 1,
+                        "name": "Bench Press",
+                        "note": "n",
+                        "sets": [{"reps": 10, "weight": 50}],
+                    }
                 ],
             },
             {"input_tokens": 1, "output_tokens": 2},

@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import TrainerIOS
 
 final class VoiceSetParserTests: XCTestCase {

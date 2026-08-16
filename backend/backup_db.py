@@ -13,6 +13,7 @@ BACKUP_KEEP backups and deletes older ones.
     python3 backup_db.py                  # backup + rotate
     BACKUP_DIR=/mnt/x python3 backup_db.py
 """
+
 from __future__ import annotations
 
 import gzip
@@ -20,7 +21,7 @@ import os
 import shutil
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -74,7 +75,7 @@ def main() -> None:
         print(f"[backup] база не найдена: {DB_PATH}", file=sys.stderr)
         sys.exit(1)
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     gz_path = make_backup(DB_PATH, BACKUP_DIR, stamp)
     size_kb = gz_path.stat().st_size / 1024
     print(f"[backup] создан {gz_path.name} ({size_kb:.0f} КБ)")
@@ -94,7 +95,7 @@ def main() -> None:
     removed = rotate(BACKUP_DIR, KEEP)
     # Keep companion copies in lockstep with the db backups we removed.
     for path in removed:
-        stamp_part = path.name[len(DB_PREFIX):-len(DB_SUFFIX)]
+        stamp_part = path.name[len(DB_PREFIX) : -len(DB_SUFFIX)]
         for prefix in ("coach_profile", "coach_state"):
             companion = BACKUP_DIR / f"{prefix}-{stamp_part}.json"
             if companion.exists():

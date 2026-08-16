@@ -10,11 +10,13 @@ automatically.
 
 Stdlib-only on purpose, like the rest of the backend.
 """
+
 from __future__ import annotations
 
 import json
 import os
 from datetime import date, timedelta
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -83,11 +85,11 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
 DEFAULT_STATE: dict[str, Any] = {
     "schema": 1,
     "phase": "cut_recomp",
-    "phase_started": None,          # ISO date; None → block week counts as 1
-    "phase_params": {},             # per-phase overrides: {phase: {key: value}}
-    "phase_history": [],            # closed phases: [{phase, started, ended}]
-    "waist_limit_cm": None,         # hard aesthetic limit; set by the athlete
-    "waist_base_cm": None,          # first measurement of the current phase
+    "phase_started": None,  # ISO date; None → block week counts as 1
+    "phase_params": {},  # per-phase overrides: {phase: {key: value}}
+    "phase_history": [],  # closed phases: [{phase, started, ended}]
+    "waist_limit_cm": None,  # hard aesthetic limit; set by the athlete
+    "waist_base_cm": None,  # first measurement of the current phase
 }
 
 
@@ -103,16 +105,16 @@ def _valid_iso_date(value: Any) -> str | None:
 
 def default_state_path(db_path: Path | str) -> Path:
     """coach_state.json lives next to the DB, like coach_profile.json."""
-    return Path(
-        os.getenv("COACH_STATE_PATH") or str(Path(db_path).parent / "coach_state.json")
-    )
+    return Path(os.getenv("COACH_STATE_PATH") or str(Path(db_path).parent / "coach_state.json"))
 
 
 def load_state(path: Path | str | None) -> dict[str, Any]:
     """Read the state file; a missing/broken file falls back to defaults so
     generation always works."""
-    state = {key: (dict(value) if isinstance(value, dict) else value)
-             for key, value in DEFAULT_STATE.items()}
+    state = {
+        key: (dict(value) if isinstance(value, dict) else value)
+        for key, value in DEFAULT_STATE.items()
+    }
     if not path:
         return state
     try:
@@ -148,16 +150,24 @@ def load_state(path: Path | str | None) -> dict[str, Any]:
 
 
 def save_state(path: Path | str, state: dict[str, Any]) -> None:
-    Path(path).write_text(
-        json.dumps(state, ensure_ascii=False, indent=2) + "\n", "utf-8"
-    )
+    Path(path).write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", "utf-8")
 
 
 _OVERRIDABLE_PARAM_KEYS = {
-    "calories", "rate_text", "rate_kg_per_week", "frequency_text",
-    "session_sets", "ramp_start", "ramp_cap", "sets_per_group", "protein_g",
+    "calories",
+    "rate_text",
+    "rate_kg_per_week",
+    "frequency_text",
+    "session_sets",
+    "ramp_start",
+    "ramp_cap",
+    "sets_per_group",
+    "protein_g",
     "sessions_per_week",
-    "target_weight_kg", "ceiling_weight_kg", "deload_every_weeks", "title",
+    "target_weight_kg",
+    "ceiling_weight_kg",
+    "deload_every_weeks",
+    "title",
     "group_targets",
 }
 
@@ -183,9 +193,7 @@ def _normalize_group_targets(value: Any) -> dict[str, tuple[float, float]]:
         if not (
             isinstance(bounds, (list, tuple))
             and len(bounds) == 2
-            and all(
-                isinstance(x, (int, float)) and not isinstance(x, bool) for x in bounds
-            )
+            and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in bounds)
         ):
             raise ValueError(f"Цель группы {group!r} должна быть парой чисел [min, max]")
         clean[group] = (bounds[0], bounds[1])
@@ -266,9 +274,7 @@ def phase_params(state: dict[str, Any]) -> dict[str, Any]:
         if key not in _OVERRIDABLE_PARAM_KEYS:
             continue
         if key == _GROUP_TARGET_KEY:
-            merged[key] = {
-                group: tuple(bounds) for group, bounds in (value or {}).items()
-            }
+            merged[key] = {group: tuple(bounds) for group, bounds in (value or {}).items()}
         else:
             merged[key] = tuple(value) if isinstance(value, list) else value
     merged["phase"] = phase
@@ -313,7 +319,7 @@ def _block_anchor(
     dates = [d for d in _workout_dates(workouts) if d <= today]
     if dates:
         ramp_anchor = dates[0]
-        for previous, current in zip(dates, dates[1:]):
+        for previous, current in pairwise(dates):
             if (current - previous).days >= BREAK_DAYS:
                 ramp_anchor = current
         anchor = max(anchor, ramp_anchor) if anchor else ramp_anchor
@@ -366,9 +372,7 @@ def cycle_position(
     if anchor is not None:
         cycle_start = anchor + timedelta(days=(week - cycle_week) * 7)
         sessions_in_cycle = sum(
-            1
-            for when in _workout_dates(workouts)
-            if cycle_start <= when <= today
+            1 for when in _workout_dates(workouts) if cycle_start <= when <= today
         )
     deload = (
         cycle_week == cycle_length

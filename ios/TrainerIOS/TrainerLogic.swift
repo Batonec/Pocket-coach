@@ -69,7 +69,8 @@ enum TrainerLogic {
 
         let rankedByImportance = rankedCatalog.sorted(by: compareByImportance)
         let suggestedPool = rankedByImportance.filter { $0.count > 0 }.prefix(6)
-        let primaryPool = suggestedPool.isEmpty ? Array(rankedByImportance.prefix(6)) : Array(suggestedPool)
+        let primaryPool =
+            suggestedPool.isEmpty ? Array(rankedByImportance.prefix(6)) : Array(suggestedPool)
         var primaryIDs = Set(primaryPool.map { $0.exercise.id })
         let replacement = rankedByImportance.first {
             $0.exercise.id != rareOnlyBenchPressID && !primaryIDs.contains($0.exercise.id)
@@ -92,7 +93,8 @@ enum TrainerLogic {
             )
         }
 
-        let primary = rankedAvailable
+        let primary =
+            rankedAvailable
             .filter { primaryIDs.contains($0.exercise.id) }
             .sorted(by: comparePrimaryDisplay)
             .map(\.exercise)
@@ -104,7 +106,8 @@ enum TrainerLogic {
         )
         let completedPrimaryCount = primaryIDs.filter { completedIDs.contains($0) }.count
 
-        let secondary = rankedAvailable
+        let secondary =
+            rankedAvailable
             .filter { !primaryIDs.contains($0.exercise.id) }
             .sorted(by: compareSecondaryDisplay)
             .map(\.exercise)
@@ -153,7 +156,8 @@ enum TrainerLogic {
             }
         }
 
-        let actualByID = Dictionary(uniqueKeysWithValues: draftExercises.map { ($0.exerciseID, $0) })
+        let actualByID = Dictionary(
+            uniqueKeysWithValues: draftExercises.map { ($0.exerciseID, $0) })
         var usedActualIDs = Set<Int>()
         var cards: [DraftDisplayExercise] = groups.primary.map { exercise in
             if let actual = actualByID[exercise.id] {
@@ -195,7 +199,8 @@ enum TrainerLogic {
         plan: AppliedCoachPlan,
         draftExercises: [DraftExercise]
     ) -> [DraftDisplayExercise] {
-        let actualByID = Dictionary(uniqueKeysWithValues: draftExercises.map { ($0.exerciseID, $0) })
+        let actualByID = Dictionary(
+            uniqueKeysWithValues: draftExercises.map { ($0.exerciseID, $0) })
         var usedActualIDs = Set<Int>()
         var cards: [DraftDisplayExercise] = plan.exercises.map { planned in
             if let actual = actualByID[planned.exerciseID] {
@@ -264,7 +269,8 @@ enum TrainerLogic {
             return 0
         }
 
-        let actualByID = Dictionary(uniqueKeysWithValues: draftExercises.map { ($0.exerciseID, $0) })
+        let actualByID = Dictionary(
+            uniqueKeysWithValues: draftExercises.map { ($0.exerciseID, $0) })
         let total = groups.primaryPoolIDs.reduce(0.0) { partial, exerciseID in
             let context = planningContext(
                 workouts: workouts,
@@ -279,11 +285,14 @@ enum TrainerLogic {
         return max(0, min(1, total / Double(groups.primaryPoolTotal)))
     }
 
-    static func progressExercises(catalog: [ExerciseDefinition], workouts: [Workout]) -> [ExerciseDefinition] {
+    static func progressExercises(catalog: [ExerciseDefinition], workouts: [Workout])
+        -> [ExerciseDefinition]
+    {
         var lookup = Dictionary(uniqueKeysWithValues: catalog.map { ($0.id, $0) })
         for workout in sortWorkouts(workouts) {
             for exercise in workout.data.exercises where lookup[exercise.exerciseID] == nil {
-                lookup[exercise.exerciseID] = ExerciseDefinition(id: exercise.exerciseID, name: exercise.name)
+                lookup[exercise.exerciseID] = ExerciseDefinition(
+                    id: exercise.exerciseID, name: exercise.name)
             }
         }
 
@@ -293,13 +302,17 @@ enum TrainerLogic {
                 result.append(value)
             }
         }
-        result.append(contentsOf: lookup.values.sorted { $0.name.localizedCompare($1.name) == .orderedAscending })
+        result.append(
+            contentsOf: lookup.values.sorted {
+                $0.name.localizedCompare($1.name) == .orderedAscending
+            })
         return result
     }
 
     static func getWorkoutsInRange(_ workouts: [Workout], range: RangeOption) -> [Workout] {
         let today = Calendar.current.startOfDay(for: Date())
-        return workouts
+        return
+            workouts
             .map { workout in
                 (workout, DateTools.date(from: workout.workoutDate))
             }
@@ -321,25 +334,29 @@ enum TrainerLogic {
         range: RangeOption,
         exerciseID: Int
     ) -> [ProgressPoint] {
-        return Array(getWorkoutsInRange(workouts, range: range)
-            .compactMap { workout -> ProgressPoint? in
-                guard let exercise = workout.data.exercises.first(where: { $0.exerciseID == exerciseID }),
-                      let heaviest = pickHeaviestSet(exercise.sets),
-                      let highestReps = pickHighestRepSet(exercise.sets)
-                else {
-                    return nil
-                }
+        return Array(
+            getWorkoutsInRange(workouts, range: range)
+                .compactMap { workout -> ProgressPoint? in
+                    guard
+                        let exercise = workout.data.exercises.first(where: {
+                            $0.exerciseID == exerciseID
+                        }),
+                        let heaviest = pickHeaviestSet(exercise.sets),
+                        let highestReps = pickHighestRepSet(exercise.sets)
+                    else {
+                        return nil
+                    }
 
-                return ProgressPoint(
-                    workoutID: workout.id ?? 0,
-                    workoutDate: workout.workoutDate,
-                    bestWeight: heaviest.weight,
-                    repsAtBestWeight: heaviest.reps,
-                    bestReps: highestReps.reps,
-                    weightAtBestReps: highestReps.weight
-                )
-            }
-            .reversed())
+                    return ProgressPoint(
+                        workoutID: workout.id ?? 0,
+                        workoutDate: workout.workoutDate,
+                        bestWeight: heaviest.weight,
+                        repsAtBestWeight: heaviest.reps,
+                        bestReps: highestReps.reps,
+                        weightAtBestReps: highestReps.weight
+                    )
+                }
+                .reversed())
     }
 
     static func summarizeExerciseSeries(_ series: [ProgressPoint]) -> ExerciseSeriesSummary? {
@@ -355,11 +372,15 @@ enum TrainerLogic {
         )
     }
 
-    static func bodyWeightEntriesInRange(_ entries: [BodyWeightEntry], range: RangeOption) -> [BodyWeightEntry] {
+    static func bodyWeightEntriesInRange(_ entries: [BodyWeightEntry], range: RangeOption)
+        -> [BodyWeightEntry]
+    {
         let today = Calendar.current.startOfDay(for: Date())
         return sortBodyWeights(entries)
             .filter { entry in
-                inRange(date: DateTools.date(from: entry.entryDate), rangeDays: range.days, today: today)
+                inRange(
+                    date: DateTools.date(from: entry.entryDate), rangeDays: range.days, today: today
+                )
             }
     }
 
@@ -387,11 +408,13 @@ enum TrainerLogic {
         exerciseID: Int,
         excludeWorkoutID: Int? = nil
     ) -> ExercisePlanningContext? {
-        guard let source = latestExerciseSource(
-            workouts: workouts,
-            exerciseID: exerciseID,
-            excludeWorkoutID: excludeWorkoutID
-        ) else {
+        guard
+            let source = latestExerciseSource(
+                workouts: workouts,
+                exerciseID: exerciseID,
+                excludeWorkoutID: excludeWorkoutID
+            )
+        else {
             return nil
         }
 
@@ -428,7 +451,8 @@ enum TrainerLogic {
             plannedSets: plannedSets,
             previousSummary: previousSummary,
             plannedSummary: plannedSummary,
-            progressionParts: referenceProgressionParts(previousSummary: previousSummary, plannedSummary: plannedSummary),
+            progressionParts: referenceProgressionParts(
+                previousSummary: previousSummary, plannedSummary: plannedSummary),
             maxWeight: previousSets.map(\.weight).max() ?? 0
         )
     }
@@ -448,7 +472,8 @@ enum TrainerLogic {
             exerciseID: exerciseID,
             excludeWorkoutID: excludeWorkoutID
         )
-        let previousSets = source.map { normalizedExerciseSets($0.exercise.sets, incrementReps: 0) } ?? []
+        let previousSets =
+            source.map { normalizedExerciseSets($0.exercise.sets, incrementReps: 0) } ?? []
 
         let plannedSets = planExercise.sets.enumerated().map { index, target in
             WorkoutSet(
@@ -463,8 +488,10 @@ enum TrainerLogic {
         let previousSummary = summarizeExerciseSets(previousSets)
         let plannedSummary = summarizeExerciseSets(plannedSets)
 
-        let progressionParts = plannedSummary.segments.enumerated().map { index, segment -> ReferenceProgressionPart in
-            let previousSegment = index < previousSummary.segments.count
+        let progressionParts = plannedSummary.segments.enumerated().map {
+            index, segment -> ReferenceProgressionPart in
+            let previousSegment =
+                index < previousSummary.segments.count
                 ? previousSummary.segments[index]
                 : previousSummary.segments.last
             return ReferenceProgressionPart(
@@ -499,7 +526,8 @@ enum TrainerLogic {
             return 0
         }
 
-        let actualByID = Dictionary(uniqueKeysWithValues: draftExercises.map { ($0.exerciseID, $0) })
+        let actualByID = Dictionary(
+            uniqueKeysWithValues: draftExercises.map { ($0.exerciseID, $0) })
         let total = plan.exercises.reduce(0.0) { partial, exercise in
             let targetCount = max(1, exercise.sets.count)
             let actualCount = actualByID[exercise.exerciseID]?.sets.count ?? 0
@@ -516,11 +544,13 @@ enum TrainerLogic {
         excludeWorkoutID: Int? = nil
     ) -> DraftSet {
         let index = max(0, draftSetIndex)
-        guard let context = planningContext(
-            workouts: workouts,
-            exerciseID: exerciseID,
-            excludeWorkoutID: excludeWorkoutID
-        ), !context.plannedSets.isEmpty else {
+        guard
+            let context = planningContext(
+                workouts: workouts,
+                exerciseID: exerciseID,
+                excludeWorkoutID: excludeWorkoutID
+            ), !context.plannedSets.isEmpty
+        else {
             return DraftSet(reps: 12, weight: 0, effort: nil, notes: nil)
         }
 
@@ -562,7 +592,8 @@ enum TrainerLogic {
             // Effort/notes never count as deviation; weight gets an epsilon so
             // JSON doubles vs ±2.5 stepper arithmetic can't cause phantom drift.
             if let expected = template(at: lastIndex),
-               expected.reps == last.reps, abs(expected.weight - last.weight) < 0.01 {
+                expected.reps == last.reps, abs(expected.weight - last.weight) < 0.01
+            {
                 // On template — keep walking the plan.
                 return template(at: draftSets.count)
                     ?? DraftSet(reps: last.reps, weight: last.weight, effort: nil, notes: nil)
@@ -581,18 +612,24 @@ enum TrainerLogic {
         excludeWorkoutID: Int?
     ) -> [DraftSet] {
         if let planTargets, !planTargets.isEmpty {
-            return planTargets.map { DraftSet(reps: $0.reps, weight: $0.weight, effort: nil, notes: nil) }
+            return planTargets.map {
+                DraftSet(reps: $0.reps, weight: $0.weight, effort: nil, notes: nil)
+            }
         }
 
-        guard let context = planningContext(
-            workouts: workouts,
-            exerciseID: exerciseID,
-            excludeWorkoutID: excludeWorkoutID
-        ) else {
+        guard
+            let context = planningContext(
+                workouts: workouts,
+                exerciseID: exerciseID,
+                excludeWorkoutID: excludeWorkoutID
+            )
+        else {
             return []
         }
 
-        return context.plannedSets.map { DraftSet(reps: $0.reps, weight: $0.weight, effort: nil, notes: nil) }
+        return context.plannedSets.map {
+            DraftSet(reps: $0.reps, weight: $0.weight, effort: nil, notes: nil)
+        }
     }
 
     static func summarizeExerciseSets(_ sets: [WorkoutSet]) -> ExerciseSetSummary {
@@ -644,7 +681,9 @@ enum TrainerLogic {
             parts: segments.map { segment in
                 segment.effort == nil ? segment.label : "\(segment.label) \(segment.effort!.icon)"
             },
-            notes: sets.compactMap { $0.notes?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank },
+            notes: sets.compactMap {
+                $0.notes?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+            },
             segments: segments
         )
     }
@@ -675,7 +714,8 @@ enum TrainerLogic {
 
         return Workout(
             id: draft.editingWorkoutID,
-            clientID: draft.editingClientID ?? "workout-\(Int(Date().timeIntervalSince1970 * 1000))",
+            clientID: draft.editingClientID
+                ?? "workout-\(Int(Date().timeIntervalSince1970 * 1000))",
             workoutDate: draft.workoutDate,
             planID: nil,
             createdAt: nil,
@@ -717,16 +757,17 @@ enum TrainerLogic {
     // primary muscle (same as the prompt's volume report). `key` is the
     // backend group name used by coach_context.group_targets; min/max are the
     // static fallbacks when no server targets are available yet.
-    static let muscleGroupLandmarks: [(name: String, key: String, ids: [Int], min: Int, max: Int)] = [
-        ("Грудь", "грудь", [18, 1, 17], 10, 16),
-        ("Спина", "спина", [9, 4, 10], 10, 16),
-        ("Квадрицепс/ягод.", "квадрицепс/ягодичные", [8, 16], 10, 16),
-        ("Дельты", "дельты", [13], 6, 12),
-        ("Задняя дельта", "задняя дельта", [19], 4, 8),
-        ("Бицепс", "бицепс", [11], 4, 8),
-        ("Трицепс", "трицепс", [12], 4, 8),
-        ("Бицепс бедра", "бицепс бедра", [15], 5, 10),
-    ]
+    static let muscleGroupLandmarks: [(name: String, key: String, ids: [Int], min: Int, max: Int)] =
+        [
+            ("Грудь", "грудь", [18, 1, 17], 10, 16),
+            ("Спина", "спина", [9, 4, 10], 10, 16),
+            ("Квадрицепс/ягод.", "квадрицепс/ягодичные", [8, 16], 10, 16),
+            ("Дельты", "дельты", [13], 6, 12),
+            ("Задняя дельта", "задняя дельта", [19], 4, 8),
+            ("Бицепс", "бицепс", [11], 4, 8),
+            ("Трицепс", "трицепс", [12], 4, 8),
+            ("Бицепс бедра", "бицепс бедра", [15], 5, 10),
+        ]
 
     /// Work sets per muscle group over the last `days` (default 7) — the weekly
     /// volume the coach tracks. `targets` (from the recommendation's
@@ -752,12 +793,14 @@ enum TrainerLogic {
         }
         return muscleGroupLandmarks.map { group in
             let count = group.ids.reduce(0) { $0 + (setsByID[$1] ?? 0) }
-            var minTarget = group.min, maxTarget = group.max
+            var minTarget = group.min
+            var maxTarget = group.max
             if let target = targets?[group.key], target.count == 2, target[0] <= target[1] {
                 minTarget = target[0]
                 maxTarget = target[1]
             }
-            return MuscleGroupVolume(name: group.name, count: count, minTarget: minTarget, maxTarget: maxTarget)
+            return MuscleGroupVolume(
+                name: group.name, count: count, minTarget: minTarget, maxTarget: maxTarget)
         }
     }
 
@@ -766,7 +809,10 @@ enum TrainerLogic {
     /// extra work doesn't inflate adherence past 100%. Mirrors the backend's
     /// 30-day discipline aggregate, including WHICH exercises get skipped.
     static func adherenceSummary(_ workouts: [Workout], range: RangeOption) -> AdherenceSummary {
-        var compared = 0, planned = 0, done = 0, skipped = 0
+        var compared = 0
+        var planned = 0
+        var done = 0
+        var skipped = 0
         var skipCounts: [String: Int] = [:]
         for workout in getWorkoutsInRange(workouts, range: range) {
             guard let plan = workout.data.recommendation?.exercises, !plan.isEmpty else { continue }
@@ -786,7 +832,8 @@ enum TrainerLogic {
                 }
             }
         }
-        let byName = skipCounts
+        let byName =
+            skipCounts
             .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
             .map { (name: $0.key, count: $0.value) }
         return AdherenceSummary(
@@ -805,9 +852,11 @@ enum TrainerLogic {
         let matching = workouts.filter { workout in
             workout.data.exercises.contains { $0.exerciseID == exerciseID && !$0.sets.isEmpty }
         }
-        guard let latest = matching.max(by: {
-            DateTools.date(from: $0.workoutDate) < DateTools.date(from: $1.workoutDate)
-        }) else { return nil }
+        guard
+            let latest = matching.max(by: {
+                DateTools.date(from: $0.workoutDate) < DateTools.date(from: $1.workoutDate)
+            })
+        else { return nil }
         let sets = latest.data.exercises.first { $0.exerciseID == exerciseID }?.sets ?? []
         return sets.map(\.weight).max()
     }
@@ -828,7 +877,8 @@ enum TrainerLogic {
     }
 
     static func normalizeBodyWeightInput(_ value: String) -> String {
-        let raw = value
+        let raw =
+            value
             .filter { $0.isNumber || $0 == "." || $0 == "," }
             .map { $0 == "," ? "." : $0 }
         let text = String(raw)
@@ -866,7 +916,8 @@ enum TrainerLogic {
             }
 
             if let exercise = workout.data.exercises.first(where: { $0.exerciseID == exerciseID }),
-               !exercise.sets.isEmpty {
+                !exercise.sets.isEmpty
+            {
                 return (workout, exercise)
             }
         }
@@ -898,13 +949,16 @@ enum TrainerLogic {
         plannedSummary: ExerciseSetSummary
     ) -> [ReferenceProgressionPart] {
         previousSummary.segments.enumerated().map { index, segment in
-            let nextSegment = index < plannedSummary.segments.count ? plannedSummary.segments[index] : nil
-            let nextReps = nextSegment?.reps.isEmpty == false
+            let nextSegment =
+                index < plannedSummary.segments.count ? plannedSummary.segments[index] : nil
+            let nextReps =
+                nextSegment?.reps.isEmpty == false
                 ? nextSegment!.reps
                 : segment.reps.map { max(1, $0 + 1) }
 
             return ReferenceProgressionPart(
-                previousLabel: "\(formatWeight(segment.weight))кг ×\(summarizeRepRuns(segment.reps))",
+                previousLabel:
+                    "\(formatWeight(segment.weight))кг ×\(summarizeRepRuns(segment.reps))",
                 nextLabel: summarizeRepRuns(nextReps),
                 previousEffort: segment.effort
             )
@@ -976,7 +1030,9 @@ enum TrainerLogic {
                 var current = stats[exercise.exerciseID] ?? ExerciseUsageStat()
                 current.count += 1
                 current.totalPosition += index
-                if current.latestWorkoutDate.isEmpty || workout.workoutDate > current.latestWorkoutDate {
+                if current.latestWorkoutDate.isEmpty
+                    || workout.workoutDate > current.latestWorkoutDate
+                {
                     current.latestWorkoutDate = workout.workoutDate
                 }
                 stats[exercise.exerciseID] = current
@@ -985,13 +1041,15 @@ enum TrainerLogic {
 
         for (exerciseID, value) in stats {
             var next = value
-            next.averagePosition = value.count > 0 ? Double(value.totalPosition) / Double(value.count) : .infinity
+            next.averagePosition =
+                value.count > 0 ? Double(value.totalPosition) / Double(value.count) : .infinity
             stats[exerciseID] = next
         }
         return stats
     }
 
-    private static func compareByImportance(_ left: RankedExercise, _ right: RankedExercise) -> Bool {
+    private static func compareByImportance(_ left: RankedExercise, _ right: RankedExercise) -> Bool
+    {
         if left.count != right.count {
             return left.count > right.count
         }
@@ -1004,7 +1062,9 @@ enum TrainerLogic {
         return left.catalogIndex < right.catalogIndex
     }
 
-    private static func comparePrimaryDisplay(_ left: RankedExercise, _ right: RankedExercise) -> Bool {
+    private static func comparePrimaryDisplay(_ left: RankedExercise, _ right: RankedExercise)
+        -> Bool
+    {
         if left.averagePosition != right.averagePosition {
             return left.averagePosition < right.averagePosition
         }
@@ -1017,7 +1077,9 @@ enum TrainerLogic {
         return left.catalogIndex < right.catalogIndex
     }
 
-    private static func compareSecondaryDisplay(_ left: RankedExercise, _ right: RankedExercise) -> Bool {
+    private static func compareSecondaryDisplay(_ left: RankedExercise, _ right: RankedExercise)
+        -> Bool
+    {
         if left.count != right.count {
             return left.count > right.count
         }

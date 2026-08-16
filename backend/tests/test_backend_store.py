@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from support import MINIAPP_DIR, sample_body_weight_payload, sample_workout_payload
-
-import sys
 
 if str(MINIAPP_DIR) not in sys.path:
     sys.path.insert(0, str(MINIAPP_DIR))
@@ -134,7 +133,9 @@ class MiniAppStoreTest(unittest.TestCase):
 
         workouts = self.store.list_workouts(int(user["id"]))
 
-        self.assertEqual([workouts[0]["id"], workouts[1]["id"]], [second_workout["id"], first_workout["id"]])
+        self.assertEqual(
+            [workouts[0]["id"], workouts[1]["id"]], [second_workout["id"], first_workout["id"]]
+        )
         self.assertIn("created_at", workouts[0])
         self.assertIn("updated_at", workouts[0])
 
@@ -188,7 +189,12 @@ class MiniAppStoreTest(unittest.TestCase):
                             "name": "Cable Fly",
                             "sets": [
                                 {"reps": 12, "weight": 25, "effort": "  easy  ", "notes": "  "},
-                                {"reps": 10, "weight": 30, "effort": " HARD ", "notes": " Last hard set "},
+                                {
+                                    "reps": 10,
+                                    "weight": 30,
+                                    "effort": " HARD ",
+                                    "notes": " Last hard set ",
+                                },
                             ],
                         }
                     ],
@@ -285,7 +291,9 @@ class MiniAppStoreTest(unittest.TestCase):
         )
 
         self.assertIsNone(updated_workout)
-        stored_workout = self.store.get_workout_by_id(int(first_user["id"]), int(created_workout["id"]))
+        stored_workout = self.store.get_workout_by_id(
+            int(first_user["id"]), int(created_workout["id"])
+        )
         self.assertIsNotNone(stored_workout)
         self.assertEqual(stored_workout["data"]["exercises"][0]["sets"][0]["weight"], 80.0)
 
@@ -310,7 +318,9 @@ class MiniAppStoreTest(unittest.TestCase):
             sample_workout_payload(client_id="delete-protected"),
         )
 
-        deleted_workout = self.store.delete_workout(int(second_user["id"]), int(created_workout["id"]))
+        deleted_workout = self.store.delete_workout(
+            int(second_user["id"]), int(created_workout["id"])
+        )
 
         self.assertIsNone(deleted_workout)
         self.assertEqual(len(self.store.list_workouts(int(first_user["id"]))), 1)
@@ -576,7 +586,13 @@ class NormalizeWorkoutPayloadTest(unittest.TestCase):
                     "data": {
                         "notes": None,
                         "load_type": None,
-                        "exercises": [{"exercise_id": "1", "name": "Bench", "sets": [{"reps": 10, "weight": 80}]}],
+                        "exercises": [
+                            {
+                                "exercise_id": "1",
+                                "name": "Bench",
+                                "sets": [{"reps": 10, "weight": 80}],
+                            }
+                        ],
                     },
                 }
             )
@@ -591,7 +607,9 @@ class NormalizeWorkoutPayloadTest(unittest.TestCase):
                     "data": {
                         "notes": None,
                         "load_type": None,
-                        "exercises": [{"exercise_id": 1, "name": "   ", "sets": [{"reps": 10, "weight": 80}]}],
+                        "exercises": [
+                            {"exercise_id": 1, "name": "   ", "sets": [{"reps": 10, "weight": 80}]}
+                        ],
                     },
                 }
             )
@@ -642,7 +660,9 @@ class NormalizeWorkoutPayloadTest(unittest.TestCase):
                     "data": {
                         "notes": None,
                         "load_type": None,
-                        "exercises": [{"exercise_id": 1, "name": "Bench", "sets": [{"reps": 0, "weight": 80}]}],
+                        "exercises": [
+                            {"exercise_id": 1, "name": "Bench", "sets": [{"reps": 0, "weight": 80}]}
+                        ],
                     },
                 }
             )
@@ -657,7 +677,13 @@ class NormalizeWorkoutPayloadTest(unittest.TestCase):
                     "data": {
                         "notes": None,
                         "load_type": None,
-                        "exercises": [{"exercise_id": 1, "name": "Bench", "sets": [{"reps": 10, "weight": -5}]}],
+                        "exercises": [
+                            {
+                                "exercise_id": 1,
+                                "name": "Bench",
+                                "sets": [{"reps": 10, "weight": -5}],
+                            }
+                        ],
                     },
                 }
             )
@@ -672,7 +698,13 @@ class NormalizeWorkoutPayloadTest(unittest.TestCase):
                     "data": {
                         "notes": None,
                         "load_type": None,
-                        "exercises": [{"exercise_id": 1, "name": "Bench", "sets": [{"reps": 10, "weight": 80}]}],
+                        "exercises": [
+                            {
+                                "exercise_id": 1,
+                                "name": "Bench",
+                                "sets": [{"reps": 10, "weight": 80}],
+                            }
+                        ],
                     },
                 }
             )
@@ -686,7 +718,13 @@ class NormalizeWorkoutPayloadTest(unittest.TestCase):
                     "data": {
                         "notes": None,
                         "load_type": None,
-                        "exercises": [{"exercise_id": 1, "name": "Bench", "sets": [{"reps": 10, "weight": 80}]}],
+                        "exercises": [
+                            {
+                                "exercise_id": 1,
+                                "name": "Bench",
+                                "sets": [{"reps": 10, "weight": 80}],
+                            }
+                        ],
                     },
                 }
             )
@@ -754,7 +792,9 @@ class RecommendationLogTest(unittest.TestCase):
             "focus": focus,
             "load_type": "medium",
             "rationale": "r",
-            "exercises": [{"exercise_id": 1, "name": "X", "note": "", "sets": [{"reps": 10, "weight": 50}]}],
+            "exercises": [
+                {"exercise_id": 1, "name": "X", "note": "", "sets": [{"reps": 10, "weight": 50}]}
+            ],
         }
 
     def test_save_appends_to_log_each_time(self) -> None:

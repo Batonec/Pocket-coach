@@ -21,7 +21,8 @@ enum VoiceLanguage: String, Codable, Equatable {
     /// `Locale.current`: последний фильтруется локализациями бандла и на
     /// англоязычном телефоне может схлопнуться в язык разработки.
     static var device: VoiceLanguage {
-        let preferred = UserDefaults.standard.stringArray(forKey: "AppleLanguages")?.first
+        let preferred =
+            UserDefaults.standard.stringArray(forKey: "AppleLanguages")?.first
             ?? Locale.preferredLanguages.first
             ?? "en"
         return preferred.lowercased().hasPrefix("ru") ? .ru : .en
@@ -151,11 +152,13 @@ enum VoiceSetParser {
     private static func effortValue(_ token: String) -> SetEffort? {
         if token.hasPrefix("тяжел") || token.hasPrefix("тяжк") || token.hasPrefix("жестк")
             || token == "отказ" || token == "предел" || token == "еле"
-            || hardWords.contains(token) {
+            || hardWords.contains(token)
+        {
             return .hard
         }
         if token.hasPrefix("легк") || token == "легко" || token == "изи"
-            || token == "просто" || easyWords.contains(token) {
+            || token == "просто" || easyWords.contains(token)
+        {
             return .easy
         }
         if token.hasPrefix("норм") || token.hasPrefix("средн") || okWords.contains(token) {
@@ -165,17 +168,18 @@ enum VoiceSetParser {
     }
 
     private static let hardWords: Set<String> = [
-        "hard", "heavy", "tough", "brutal", "killer", "grinder", "max", "maxed"
+        "hard", "heavy", "tough", "brutal", "killer", "grinder", "max", "maxed",
     ]
     private static let easyWords: Set<String> = ["easy", "light", "smooth", "breeze"]
     private static let okWords: Set<String> = [
-        "ок", "окей", "ok", "okay", "normal", "fine", "medium", "moderate", "alright"
+        "ок", "окей", "ok", "okay", "normal", "fine", "medium", "moderate", "alright",
     ]
 
     /// Единица, названная ПОСЛЕ числа: «80 кг», «10 раз», «80 kilos», «10 reps».
     private static func unitMarker(_ token: String) -> VoiceUnit? {
         if token == "кг" || token.hasPrefix("килограм") || token == "кило"
-            || kilogramWords.contains(token) {
+            || kilogramWords.contains(token)
+        {
             return .kilograms
         }
         if poundWords.contains(token) {
@@ -192,7 +196,8 @@ enum VoiceSetParser {
     /// Единица, названная ДО числа: «на 10», «весом 80», «by 10», «for 10».
     private static func leadingUnitMarker(_ token: String) -> VoiceUnit? {
         if token == "на" || token == "по" || token == "х" || token == "x"
-            || leadingRepetitionWords.contains(token) {
+            || leadingRepetitionWords.contains(token)
+        {
             return .repetitions
         }
         if token.hasPrefix("вес") || token == "weight" {
@@ -203,11 +208,11 @@ enum VoiceSetParser {
 
     private static let repetitionWords: Set<String> = [
         "раз", "раза", "разов", "реп", "репов", "рипов",
-        "rep", "reps", "repetition", "repetitions"
+        "rep", "reps", "repetition", "repetitions",
     ]
     private static let leadingRepetitionWords: Set<String> = ["by", "for", "times"]
     private static let kilogramWords: Set<String> = [
-        "kg", "kgs", "kilo", "kilos", "kilogram", "kilograms"
+        "kg", "kgs", "kilo", "kilos", "kilogram", "kilograms",
     ]
     private static let poundWords: Set<String> = ["lb", "lbs", "pound", "pounds"]
 
@@ -221,7 +226,7 @@ enum VoiceSetParser {
         "add", "log", "record", "save", "put", "set", "sets", "did", "done", "just",
         "the", "a", "an", "to", "in", "on", "of", "my", "i", "was", "it", "and",
         "please", "new", "last", "workout", "exercise", "reps",
-        "pocket", "coach", "trainer"
+        "pocket", "coach", "trainer",
     ]
 
     private static func isStopWord(_ token: String) -> Bool {
@@ -401,7 +406,7 @@ enum VoiceText {
         "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19,
         "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
         "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
-        "hundred": 100
+        "hundred": 100,
     ]
 }
 
@@ -420,7 +425,8 @@ enum ExerciseVoiceMatcher {
     ) -> (exerciseID: Int?, ambiguous: [Int]) {
         guard !tokens.isEmpty, !catalog.isEmpty else { return (nil, []) }
 
-        let scored = catalog
+        let scored =
+            catalog
             .map { (id: $0.id, score: score(tokens: tokens, for: $0.name)) }
             .sorted { $0.score > $1.score }
 
@@ -495,60 +501,60 @@ enum ExerciseVoiceMatcher {
     private static let synonyms: [String: [String]] = [
         "жим ногами": [
             "ноги", "платформа", "жим ног", "ножной жим",
-            "leg press", "legs", "leg presses"
+            "leg press", "legs", "leg presses",
         ],
         "жим гор": [
             "жим лежа", "жим горизонтальный", "горизонтальный жим",
             "жим от груди", "жим на грудь", "грудь",
-            "bench press", "bench", "flat bench", "barbell bench", "chest"
+            "bench press", "bench", "flat bench", "barbell bench", "chest",
         ],
         "тяга верт": [
             "тяга вертикальная", "вертикальная тяга", "верхний блок",
             "тяга сверху", "тяга к груди", "широчайшие",
-            "lat pulldown", "pulldown", "pull down", "lat pull down", "lats"
+            "lat pulldown", "pulldown", "pull down", "lat pull down", "lats",
         ],
         "тяга горизонт": [
             "тяга горизонтальная", "горизонтальная тяга", "нижний блок",
             "тяга к поясу", "тяга к животу",
-            "seated row", "cable row", "row", "horizontal row", "rows"
+            "seated row", "cable row", "row", "horizontal row", "rows",
         ],
         "дельты": [
             "плечи", "махи", "дельта", "дельтовидные", "средняя дельта",
-            "delts", "shoulders", "lateral raises", "side raises", "laterals"
+            "delts", "shoulders", "lateral raises", "side raises", "laterals",
         ],
         "задняя дельта": [
             "задняя дельта", "задние дельты", "обратная бабочка", "обратные махи",
             "махи в наклоне", "задний пучок",
-            "rear delt", "rear delts", "reverse fly", "reverse flyes", "rear fly"
+            "rear delt", "rear delts", "reverse fly", "reverse flyes", "rear fly",
         ],
         "бицепс": [
             "бицуха", "подъем на бицепс", "сгибания на бицепс",
-            "biceps", "biceps curl", "bicep curl", "curls", "arm curl"
+            "biceps", "biceps curl", "bicep curl", "curls", "arm curl",
         ],
         "трицепс": [
             "трицуха", "разгибания на трицепс", "французский жим",
-            "triceps", "tricep", "pushdown", "triceps pushdown", "triceps extension"
+            "triceps", "tricep", "pushdown", "triceps pushdown", "triceps extension",
         ],
         "разгибания ног": [
             "квадрицепс", "квадры", "передняя поверхность бедра",
-            "leg extension", "leg extensions", "quads", "quad extension"
+            "leg extension", "leg extensions", "quads", "quad extension",
         ],
         "сгибания ног": [
             "бицепс бедра", "задняя поверхность бедра",
-            "leg curl", "leg curls", "hamstrings", "hamstring curl"
+            "leg curl", "leg curls", "hamstrings", "hamstring curl",
         ],
         "бабочка": [
             "пек дек", "сведения", "сведение рук", "разводка",
-            "pec deck", "chest fly", "flys", "flyes", "butterfly", "pec fly"
+            "pec deck", "chest fly", "flys", "flyes", "butterfly", "pec fly",
         ],
         "жим в тренажере": [
             "жим сидя", "грудной тренажер", "жим тренажер",
-            "chest press", "machine press", "machine chest press", "seated chest press"
+            "chest press", "machine press", "machine chest press", "seated chest press",
         ],
         "подтягивания грав": [
             "подтягивания", "гравитрон", "гравитон", "подтяги",
-            "pull ups", "pull up", "pullups", "assisted pull ups", "chin ups"
-        ]
+            "pull ups", "pull up", "pullups", "assisted pull ups", "chin ups",
+        ],
     ]
 }
 
@@ -570,7 +576,7 @@ enum ExerciseVoiceNames {
         "жим гор": "Жим горизонтальный",
         "тяга верт": "Тяга вертикальная",
         "тяга горизонт": "Тяга горизонтальная",
-        "подтягивания грав": "Подтягивания в гравитроне"
+        "подтягивания грав": "Подтягивания в гравитроне",
     ]
 
     private static let english: [String: String] = [
@@ -586,7 +592,7 @@ enum ExerciseVoiceNames {
         "сгибания ног": "Leg curl",
         "бабочка": "Chest fly",
         "жим в тренажере": "Machine chest press",
-        "подтягивания грав": "Assisted pull ups"
+        "подтягивания грав": "Assisted pull ups",
     ]
 }
 
@@ -609,11 +615,16 @@ enum VoicePhrasing {
     }
 
     static func ordinal(_ number: Int, in language: VoiceLanguage) -> String {
-        let words = language == .ru
-            ? ["первый", "второй", "третий", "четвертый", "пятый", "шестой",
-               "седьмой", "восьмой", "девятый", "десятый", "одиннадцатый", "двенадцатый"]
-            : ["first", "second", "third", "fourth", "fifth", "sixth",
-               "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth"]
+        let words =
+            language == .ru
+            ? [
+                "первый", "второй", "третий", "четвертый", "пятый", "шестой",
+                "седьмой", "восьмой", "девятый", "десятый", "одиннадцатый", "двенадцатый",
+            ]
+            : [
+                "first", "second", "third", "fourth", "fifth", "sixth",
+                "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth",
+            ]
         guard number >= 1, number <= words.count else {
             return language == .ru ? "\(number)-й" : "\(number)"
         }
@@ -623,11 +634,16 @@ enum VoicePhrasing {
     /// Счётное слово после «из» / «of»: синтез речи читает цифру в этой позиции
     /// именительным падежом, и русская фраза звучит сломанной.
     static func countWord(_ number: Int, in language: VoiceLanguage) -> String {
-        let words = language == .ru
-            ? ["одного", "двух", "трех", "четырех", "пяти", "шести",
-               "семи", "восьми", "девяти", "десяти", "одиннадцати", "двенадцати"]
-            : ["one", "two", "three", "four", "five", "six",
-               "seven", "eight", "nine", "ten", "eleven", "twelve"]
+        let words =
+            language == .ru
+            ? [
+                "одного", "двух", "трех", "четырех", "пяти", "шести",
+                "семи", "восьми", "девяти", "десяти", "одиннадцати", "двенадцати",
+            ]
+            : [
+                "one", "two", "three", "four", "five", "six",
+                "seven", "eight", "nine", "ten", "eleven", "twelve",
+            ]
         guard number >= 1, number <= words.count else { return "\(number)" }
         return words[number - 1]
     }

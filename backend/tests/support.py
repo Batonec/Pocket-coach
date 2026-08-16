@@ -10,14 +10,14 @@ import tempfile
 import threading
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from email.message import Message
 from http.cookiejar import CookieJar
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 from urllib.parse import urlencode
-
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 MINIAPP_DIR = ROOT_DIR / "backend"
@@ -218,7 +218,9 @@ class JsonHttpClient:
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
         self.cookie_jar = CookieJar()
-        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookie_jar))
+        self.opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(self.cookie_jar)
+        )
 
     def request_json(
         self,
@@ -231,7 +233,8 @@ class JsonHttpClient:
         if payload is not None:
             data = json.dumps(payload).encode("utf-8")
 
-        request = urllib.request.Request(
+        # base_url собирает сам тест — это всегда http://127.0.0.1.
+        request = urllib.request.Request(  # noqa: S310
             f"{self.base_url}{path}",
             data=data,
             headers=headers,

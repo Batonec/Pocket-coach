@@ -86,11 +86,13 @@ final class TrainerStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        self.currentTab = TrainerTab(rawValue: defaults.string(forKey: Keys.currentTab) ?? "") ?? .trainings
+        self.currentTab =
+            TrainerTab(rawValue: defaults.string(forKey: Keys.currentTab) ?? "") ?? .trainings
         // The Progress screen dropped its 7D/30D/All picker — everything there
         // (discipline, sparklines, exercise detail) now reads all-time.
         self.selectedRange = .all
-        self.selectedBodyWeightRange = RangeOption(rawValue: defaults.string(forKey: Keys.bodyWeightRange) ?? "") ?? .days30
+        self.selectedBodyWeightRange =
+            RangeOption(rawValue: defaults.string(forKey: Keys.bodyWeightRange) ?? "") ?? .days30
         self.selectedProgressExerciseID = defaults.object(forKey: Keys.progressExercise) as? Int
         self.apiBaseURLString = Self.normalizedBackendURL(defaults.string(forKey: Keys.apiBaseURL))
         self.draft = Self.readDraft(defaults: defaults)
@@ -133,7 +135,8 @@ final class TrainerStore: ObservableObject {
         } catch {
             deadlineTask.cancel()
             // A cancellation that beat the work means we ran out of time.
-            let isTimeout = workTask.isCancelled
+            let isTimeout =
+                workTask.isCancelled
                 || error is CancellationError
                 || (error as? URLError)?.code == .cancelled
             if isTimeout {
@@ -402,13 +405,16 @@ final class TrainerStore: ObservableObject {
 
     private func fetchCoachSignals(generation: Int) async {
         guard case .loaded = bootState else { return }
-        guard let response = try? await APIClient(
-            baseURLString: apiBaseURLString
-        ).fetchCoachSignals() else { return }
+        guard
+            let response = try? await APIClient(
+                baseURLString: apiBaseURLString
+            ).fetchCoachSignals()
+        else { return }
         guard case .loaded = bootState,
-              coachSignalsLoadGeneration == generation,
-              !isCoachSignalsSuppressed,
-              let signals = response.signals else { return }
+            coachSignalsLoadGeneration == generation,
+            !isCoachSignalsSuppressed,
+            let signals = response.signals
+        else { return }
         coachSignals = signals
     }
 
@@ -440,7 +446,8 @@ final class TrainerStore: ObservableObject {
                     exerciseID: exercise.exerciseID,
                     exerciseName: exercise.name,
                     sets: exercise.sets.map {
-                        DraftSet(reps: $0.reps, weight: $0.weight, effort: $0.effort, notes: $0.notes)
+                        DraftSet(
+                            reps: $0.reps, weight: $0.weight, effort: $0.effort, notes: $0.notes)
                     }
                 )
             },
@@ -454,7 +461,8 @@ final class TrainerStore: ObservableObject {
     func deleteWorkout(_ workout: Workout) async {
         guard let id = workout.id else { return }
         do {
-            let response = try await APIClient(baseURLString: apiBaseURLString).deleteWorkout(id: id)
+            let response = try await APIClient(baseURLString: apiBaseURLString).deleteWorkout(
+                id: id)
             currentUser = response.user ?? currentUser
             workouts.removeAll { $0.id == id }
             if draft.editingWorkoutID == id {
@@ -493,9 +501,10 @@ final class TrainerStore: ObservableObject {
                 showToast("Изменения в тренировке сохранены")
             } else {
                 response = try await client.saveWorkout(payload)
-                showToast(currentUser?.isDefaultDebugUser == true
-                          ? "Тренировка сохранена для debug-user"
-                          : "Тренировка сохранена")
+                showToast(
+                    currentUser?.isDefaultDebugUser == true
+                        ? "Тренировка сохранена для debug-user"
+                        : "Тренировка сохранена")
             }
 
             currentUser = response.user ?? currentUser
@@ -632,7 +641,8 @@ final class TrainerStore: ObservableObject {
                     return
                 }
                 guard !Task.isCancelled,
-                      self.recommendationPollGeneration == generation else { return }
+                    self.recommendationPollGeneration == generation
+                else { return }
 
                 do {
                     let response = try await APIClient(
@@ -641,7 +651,8 @@ final class TrainerStore: ObservableObject {
                     guard self.recommendationPollGeneration == generation else { return }
                     self.recommendation = response
 
-                    let matchesWorkoutSnapshot = !validateWorkoutSnapshot
+                    let matchesWorkoutSnapshot =
+                        !validateWorkoutSnapshot
                         || Self.recommendation(
                             response,
                             matchesWorkoutCount: expectedWorkoutCount,
@@ -738,10 +749,11 @@ final class TrainerStore: ObservableObject {
     /// on every cached load and boot.
     func autoApplyRecommendationIfReady() {
         guard recommendation?.status == "ready",
-              recommendation?.recommendation != nil,
-              draft.editingWorkoutID == nil,
-              !draft.hasRealSets,
-              !isRecommendationApplied else { return }
+            recommendation?.recommendation != nil,
+            draft.editingWorkoutID == nil,
+            !draft.hasRealSets,
+            !isRecommendationApplied
+        else { return }
         applyRecommendationAsPlan()
     }
 
@@ -752,8 +764,9 @@ final class TrainerStore: ObservableObject {
     /// row is mutable and may be regenerated before the workout is saved.
     func applyRecommendationAsPlan() {
         guard let response = recommendation,
-              let payload = response.recommendation,
-              !payload.exercises.isEmpty else { return }
+            let payload = response.recommendation,
+            !payload.exercises.isEmpty
+        else { return }
 
         let planExercises = sanitizedPlanExercises(payload)
         guard !planExercises.isEmpty else { return }
@@ -777,8 +790,9 @@ final class TrainerStore: ObservableObject {
         var seen = Set<Int>()
         return payload.exercises.compactMap { exercise in
             guard !exercise.sets.isEmpty,
-                  seen.insert(exercise.exerciseID).inserted,
-                  exercises.isEmpty || knownIDs.contains(exercise.exerciseID) else {
+                seen.insert(exercise.exerciseID).inserted,
+                exercises.isEmpty || knownIDs.contains(exercise.exerciseID)
+            else {
                 return nil
             }
             return RecommendedExercise(
@@ -796,7 +810,8 @@ final class TrainerStore: ObservableObject {
     /// weight/reps) — shown on each plan card now that the expanded card is gone.
     func coachNote(for exerciseID: Int) -> String? {
         guard let note = appliedPlan?.exercises.first(where: { $0.exerciseID == exerciseID })?.note,
-              !note.isEmpty else { return nil }
+            !note.isEmpty
+        else { return nil }
         return note
     }
 
@@ -862,7 +877,8 @@ final class TrainerStore: ObservableObject {
 
     func removeLastSet(exerciseID: Int) {
         guard let index = draft.exercises.firstIndex(where: { $0.exerciseID == exerciseID }),
-              !draft.exercises[index].sets.isEmpty else {
+            !draft.exercises[index].sets.isEmpty
+        else {
             return
         }
 
@@ -906,7 +922,8 @@ final class TrainerStore: ObservableObject {
 
     func draftProgressRatio() -> Double {
         if let appliedPlan, draft.editingWorkoutID == nil {
-            return TrainerLogic.planProgressRatio(plan: appliedPlan, draftExercises: draft.exercises)
+            return TrainerLogic.planProgressRatio(
+                plan: appliedPlan, draftExercises: draft.exercises)
         }
         return TrainerLogic.draftProgressRatio(
             exercises: exercises,
@@ -918,7 +935,8 @@ final class TrainerStore: ObservableObject {
 
     func planningContext(for exerciseID: Int) -> ExercisePlanningContext? {
         if draft.editingWorkoutID == nil,
-           let planExercise = appliedPlan?.exercises.first(where: { $0.exerciseID == exerciseID }) {
+            let planExercise = appliedPlan?.exercises.first(where: { $0.exerciseID == exerciseID })
+        {
             return TrainerLogic.planPlanningContext(
                 workouts: workouts,
                 exerciseID: exerciseID,
@@ -1030,8 +1048,10 @@ final class TrainerStore: ObservableObject {
     }
 
     private func updateSet(_ set: DraftSet, exerciseID: Int, setIndex: Int) {
-        guard let exerciseIndex = draft.exercises.firstIndex(where: { $0.exerciseID == exerciseID }),
-              draft.exercises[exerciseIndex].sets.indices.contains(setIndex) else {
+        guard
+            let exerciseIndex = draft.exercises.firstIndex(where: { $0.exerciseID == exerciseID }),
+            draft.exercises[exerciseIndex].sets.indices.contains(setIndex)
+        else {
             return
         }
         draft.exercises[exerciseIndex].sets[setIndex] = set
@@ -1045,7 +1065,8 @@ final class TrainerStore: ObservableObject {
         }
 
         if let selectedProgressExerciseID,
-           options.contains(where: { $0.id == selectedProgressExerciseID }) {
+            options.contains(where: { $0.id == selectedProgressExerciseID })
+        {
             return
         }
 
@@ -1079,7 +1100,8 @@ final class TrainerStore: ObservableObject {
 
     private static func readDraft(defaults: UserDefaults) -> DraftWorkout {
         guard let data = defaults.data(forKey: Keys.draft),
-              let draft = try? JSONDecoder().decode(DraftWorkout.self, from: data) else {
+            let draft = try? JSONDecoder().decode(DraftWorkout.self, from: data)
+        else {
             return .empty
         }
         return draft
@@ -1113,9 +1135,10 @@ final class TrainerStore: ObservableObject {
         // в публичном репозитории не хранится.
         let isLegacyProduction = value?.contains(".nip.io") == true
         guard let value, !value.isEmpty,
-              value != localDevelopmentURL,
-              value != localHostURL,
-              !isLegacyProduction else {
+            value != localDevelopmentURL,
+            value != localHostURL,
+            !isLegacyProduction
+        else {
             return productionURL
         }
         return value
