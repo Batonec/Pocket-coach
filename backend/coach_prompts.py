@@ -77,6 +77,35 @@ def fragments(name: str, *, directory: Path | None = None) -> dict[str, str]:
     return out
 
 
+_HEADING_RE = re.compile(r"^## +(?:\d+\.\s*)?(.+?)\s*$", re.M)
+
+
+def document_sections(text: str, wanted: list[str]) -> tuple[str, list[str]]:
+    """Pull named «## N. Заголовок» sections out of a long human document.
+
+    Matching is by the heading TEXT with the leading number stripped: the
+    athlete renumbers sections while editing, and a slice keyed on «## 4.»
+    would silently start returning the wrong chapter. A heading that is not
+    found is reported back instead of quietly disappearing — a prompt missing
+    its training split must be visible, not merely shorter.
+
+    Returns ``(joined_sections, missing_headings)``; order follows ``wanted``.
+    """
+    marks = list(_HEADING_RE.finditer(text))
+    found: dict[str, str] = {}
+    for i, mark in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        found[mark.group(1).lower()] = text[mark.start():end].strip("\n")
+    picked, missing = [], []
+    for heading in wanted:
+        body = found.get(heading.lower())
+        if body is None:
+            missing.append(heading)
+        else:
+            picked.append(body)
+    return "\n\n".join(picked), missing
+
+
 def render(template: str, **values: str) -> str:
     """Fill every ``{{slot}}``; refuse to ship a half-filled prompt."""
     expected = slots(template)

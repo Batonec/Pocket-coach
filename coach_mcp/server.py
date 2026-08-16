@@ -74,6 +74,13 @@ _PROFILE_PATH = Path(
     or os.getenv("COACH_PROFILE_PATH")
     or str(_DB_PATH.parent / "coach_profile.json")
 )
+# Рабочий документ стратегии — там же, рядом с базой. Личный текст, в
+# репозиторий не попадает.
+_STRATEGY_PATH = Path(
+    os.getenv("COACH_MCP_STRATEGY_PATH")
+    or os.getenv("COACH_STRATEGY_PATH")
+    or str(_DB_PATH.parent / "coach_strategy.md")
+)
 # Mutable coaching state (phase, waist limit, injection day) — next to the DB,
 # same as the profile; COACH_STATE_PATH overrides.
 _STATE_PATH = coach_state.default_state_path(_DB_PATH)
@@ -463,7 +470,9 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
         today = date.today()
         # state обязателен: без него политика фаз рендерится из дефолтов, и
         # preview показывает не тот промпт, который уйдёт в модель.
-        system = recommender._build_system_prompt(catalog, profile, state)
+        system = recommender._build_system_prompt(
+            catalog, profile, state, recommender.load_strategy(_STRATEGY_PATH)
+        )
         user = recommender._build_user_prompt(
             workouts, body_weights, today, limit,
             catalog=catalog, state=state, waists=waists,
@@ -523,6 +532,7 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
                 body_weights,
                 catalog,
                 profile=profile,
+                strategy=recommender.load_strategy(_STRATEGY_PATH),
                 state=state,
                 waists=waists,
                 today=today,
@@ -721,6 +731,7 @@ def coach_generate_recommendation(
             body_weights,
             catalog,
             profile=recommender.load_profile(_PROFILE_PATH),
+            strategy=recommender.load_strategy(_STRATEGY_PATH),
             state=coach_state.load_state(_STATE_PATH),
             waists=STORE.list_waists(uid),
             history_limit=limit,
