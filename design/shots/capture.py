@@ -42,6 +42,7 @@ IDS = [
     "quickadd",
     "picker",
     "history",
+    "events",
     "progress",
     "exercise",
     "weight",

@@ -8,7 +8,8 @@ HTML/JSX-прототипы всех экранов приложения. Это
 
 - `Trainer iOS.html` — точка входа (открыть в браузере)
 - `screens/*.jsx` — экраны: today, history, progress, weight, picker, quickadd,
-  exercise, **coach** (карточка «Совет тренера»)
+  exercise, **coach** (карточка «Совет тренера»), **signals** (баннеры),
+  **events** (события и заметки)
 - `styles.css`, `ios-frame.jsx`, `shell.jsx`, `icons.jsx` — дизайн-токены и рамка телефона
 - `shots/` — рендер скриншотов для README
 - `_*.png` — снапшоты канваса
@@ -39,4 +40,11 @@ python3 design/shots/capture.py
 CI и деплое он не участвует. Новый экран в README = новый элемент `#shot-<id>` в
 `index.html` и его id в списке `IDS` внутри `capture.py`.
 
-_Последний синк макетов: 2026-06-12._
+_Последний синк макетов: 2026-06-12; частичный досинк 2026-08-24._
+
+**Снапшот неполный, и это надо знать.** 24 августа сюда приехали только файлы, нужные
+экрану событий: `screens/events.jsx`, `screens/signals.jsx`, `screens/coach.jsx`,
+`screens/history.jsx` и `data.jsx`. В самом Claude Design живут ещё четыре экрана, которых
+здесь нет — `week`, `measurements`, `progress-blocks` и обновлённые `today`/`progress`, —
+а `app.jsx` (раскладка канваса) остался июньским и про новые секции не знает. Из бандла
+сознательно не копируются `uploads/` и `screenshots/`: репозиторий публичный.
