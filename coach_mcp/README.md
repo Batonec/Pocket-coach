@@ -23,6 +23,7 @@ validator violations and the auto-reprompt, token usage and cost).
 | `coach_list_waists()` | Waist-measurement history (cm) |
 | `coach_get_catalog()` | The exercise catalog (only these exercises exist) |
 | `coach_get_state()` | Coaching state: phase + params, block week, weekly volume target, return-from-break flag, hormone-cycle day |
+| `coach_list_events()` | Events — gaps in training with a reason (newest first); `end_date: null` marks the one that is still running |
 
 ### Coaching state (writing)
 
@@ -33,6 +34,9 @@ validator violations and the auto-reprompt, token usage and cost).
 | `coach_update_profile(block, text?)` | Replace one profile block (empty text deletes it); previous file kept as a timestamped `.bak` |
 | `coach_add_waist(waist_cm, entry_date?)` | Record a waist measurement (upserts per date) |
 | `coach_delete_waist(entry_id)` | Remove a mistyped measurement |
+| `coach_add_event(text, start_date?, end_date?)` | Record an event — a gap in training with a reason ("was ill", "business trip"). No end date means it is still running, and only one event may be open; future dates are rejected |
+| `coach_update_event(event_id, text?, start_date?, end_date?)` | Edit an event; omitted fields keep their current value, so "it ended yesterday" is one call with `end_date`. Pass `end_date=""` to reopen it |
+| `coach_delete_event(event_id)` | Remove an event recorded by mistake |
 
 ### Recommendation engine
 

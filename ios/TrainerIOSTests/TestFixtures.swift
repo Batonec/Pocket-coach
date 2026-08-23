@@ -98,6 +98,22 @@ enum TestFixtures {
         DraftSet(reps: reps, weight: weight, effort: effort, notes: notes)
     }
 
+    static func event(
+        id: Int = 1,
+        start: String,
+        end: String? = nil,
+        text: String = "Болел, температура"
+    ) -> TrainingEvent {
+        TrainingEvent(
+            id: id,
+            startDate: start,
+            endDate: end,
+            text: text,
+            createdAt: 100,
+            updatedAt: 100
+        )
+    }
+
     static func bodyWeight(
         id: Int,
         date: String,

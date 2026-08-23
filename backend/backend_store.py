@@ -295,6 +295,48 @@ def normalize_waist_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_event_date(value: object, field: str) -> str:
+    """Дата события: формат + запрет будущего (планирование отложено, событие
+    описывает то, что уже случилось).
+
+    `date.fromisoformat` принимает и «20260820», поэтому наружу отдаётся
+    канонический вид: периоды сравниваются и сортируются как строки.
+    «Сегодня» — локальный день сервера; VPS живёт в Europe/Moscow, то есть в
+    том же дне, что и атлет, как и весь остальной слой коуча.
+    """
+    text = str(value or "").strip()
+    try:
+        parsed = date.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be in YYYY-MM-DD format") from exc
+    if parsed > date.today():
+        raise ValueError(f"{field} must not be in the future")
+    return parsed.isoformat()
+
+
+def normalize_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    start_date = _normalize_event_date(payload.get("start_date"), "start_date")
+
+    raw_end_date = payload.get("end_date")
+    # Пустая строка от клиента — это «ещё идёт», а не кривая дата.
+    if raw_end_date is None or not str(raw_end_date).strip():
+        end_date = None
+    else:
+        end_date = _normalize_event_date(raw_end_date, "end_date")
+        if end_date < start_date:
+            raise ValueError("end_date must not be earlier than start_date")
+
+    text = normalize_notes(payload.get("text"))
+    if text is None:
+        raise ValueError("text is required")
+
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "text": text,
+    }
+
+
 class MiniAppStore:
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -379,6 +421,22 @@ class MiniAppStore:
 
                 CREATE INDEX IF NOT EXISTS idx_waists_user_date
                 ON waists(user_id, entry_date ASC, id ASC);
+
+                -- Периоды без тренировок с причиной («болел», «командировка»):
+                -- текст для промпта тренера, из событий сознательно не строится
+                -- ни одного числа. end_date NULL = событие идёт прямо сейчас.
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    start_date TEXT NOT NULL,
+                    end_date TEXT,
+                    text TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_events_user_date
+                ON events(user_id, start_date DESC, id DESC);
 
                 -- Cached coach weekly reports: generated once (by the Sunday
                 -- timer or on demand), then served instantly and token-free.
@@ -1138,6 +1196,175 @@ class MiniAppStore:
 
         return self._deserialize_waist(row)
 
+    # --- events: gaps in training with a reason ---------------------------- #
+    def list_events(self, user_id: int) -> list[dict[str, Any]]:
+        """Новые сверху — событие читают рядом с дыркой, которую оно объясняет."""
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, user_id, start_date, end_date, text, created_at, updated_at
+                FROM events
+                WHERE user_id = ?
+                ORDER BY start_date DESC, id DESC
+                """,
+                (user_id,),
+            ).fetchall()
+        return [self._deserialize_event(row) for row in rows]
+
+    def save_event(self, user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        """Всегда создаёт запись: ключа апсерта у события нет — событий подряд
+        может быть несколько (болезнь → сразу командировка), в том числе с одной
+        датой начала."""
+        normalized_payload = normalize_event_payload(payload)
+        timestamp = utc_now()
+
+        with self._connection() as connection:
+            if normalized_payload["end_date"] is None:
+                self._reject_second_open_event(connection, user_id)
+
+            cursor = connection.execute(
+                """
+                INSERT INTO events (
+                    user_id, start_date, end_date, text, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    normalized_payload["start_date"],
+                    normalized_payload["end_date"],
+                    normalized_payload["text"],
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            row = self._get_event_row(connection, user_id, int(cursor.lastrowid))
+
+        if row is None:
+            raise RuntimeError("Failed to persist event")
+        return self._deserialize_event(row)
+
+    def update_event(
+        self,
+        user_id: int,
+        event_id: int,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        normalized_payload = normalize_event_payload(payload)
+        timestamp = utc_now()
+
+        with self._connection() as connection:
+            if self._get_event_row(connection, user_id, event_id) is None:
+                return None
+
+            if normalized_payload["end_date"] is None:
+                self._reject_second_open_event(connection, user_id, exclude_id=event_id)
+
+            connection.execute(
+                """
+                UPDATE events
+                SET start_date = ?, end_date = ?, text = ?, updated_at = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (
+                    normalized_payload["start_date"],
+                    normalized_payload["end_date"],
+                    normalized_payload["text"],
+                    timestamp,
+                    event_id,
+                    user_id,
+                ),
+            )
+            row = self._get_event_row(connection, user_id, event_id)
+
+        if row is None:
+            raise RuntimeError("Failed to update event")
+        return self._deserialize_event(row)
+
+    def delete_event(self, user_id: int, event_id: int) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            row = self._get_event_row(connection, user_id, event_id)
+            if row is None:
+                return None
+
+            connection.execute(
+                "DELETE FROM events WHERE id = ? AND user_id = ?",
+                (event_id, user_id),
+            )
+
+        return self._deserialize_event(row)
+
+    def close_open_event(self, user_id: int, end_date: str) -> dict[str, Any] | None:
+        """Закрыть текущее открытое событие; вернуть его или None, если открытых
+        нет. Идемпотентен — вызывается на каждой созданной тренировке."""
+        closed_on = _normalize_event_date(end_date, "end_date")
+        timestamp = utc_now()
+
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT id, user_id, start_date, end_date, text, created_at, updated_at
+                FROM events
+                WHERE user_id = ? AND end_date IS NULL
+                ORDER BY start_date DESC, id DESC
+                LIMIT 1
+                """,
+                (user_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            # Автозакрытие ставит вчерашний день, а событие могло начаться
+            # сегодня («заболел утром, вечером всё же потренировался»): такое
+            # закрывается однодневным периодом, а не концом раньше начала.
+            # Даты канонические, поэтому max по строкам — это max по времени.
+            resolved_end = max(closed_on, row["start_date"])
+            connection.execute(
+                "UPDATE events SET end_date = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (resolved_end, timestamp, row["id"], user_id),
+            )
+            closed = self._get_event_row(connection, user_id, int(row["id"]))
+
+        if closed is None:
+            raise RuntimeError("Failed to close open event")
+        return self._deserialize_event(closed)
+
+    def _reject_second_open_event(
+        self,
+        connection: sqlite3.Connection,
+        user_id: int,
+        exclude_id: int | None = None,
+    ) -> None:
+        """Открытое событие — это состояние «сейчас не тренируюсь», и оно одно:
+        автозакрытие тренировкой не смогло бы выбрать, какой период закрывать."""
+        # `id IS NOT ?` вместо `id != ?`: SQLite сравнивает с NULL без сюрпризов,
+        # поэтому exclude_id=None не требует второй ветки запроса.
+        row = connection.execute(
+            """
+            SELECT id FROM events
+            WHERE user_id = ? AND end_date IS NULL AND id IS NOT ?
+            LIMIT 1
+            """,
+            (user_id, exclude_id),
+        ).fetchone()
+        if row is not None:
+            raise ValueError("Another event is still open — close it before opening a new one")
+
+    def _get_event_row(
+        self,
+        connection: sqlite3.Connection,
+        user_id: int,
+        event_id: int,
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT id, user_id, start_date, end_date, text, created_at, updated_at
+            FROM events
+            WHERE id = ? AND user_id = ?
+            """,
+            (event_id, user_id),
+        ).fetchone()
+
     # --- cached coach reports + token spend -------------------------------- #
     def save_coach_report(
         self,
@@ -1342,6 +1569,16 @@ class MiniAppStore:
             "entry_date": row["entry_date"],
             "waist": float(row["waist"]),
             "notes": row["notes"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _deserialize_event(self, row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "start_date": row["start_date"],
+            "end_date": row["end_date"],
+            "text": row["text"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }

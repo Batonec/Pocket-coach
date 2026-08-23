@@ -39,6 +39,9 @@ final class TrainerStore: ObservableObject {
     @Published var workouts: [Workout] = []
     @Published var bodyWeightEntries: [BodyWeightEntry] = []
     @Published var waistEntries: [WaistEntry] = []
+    /// Периоды без тренировок с причиной. Ни одного числа из них не считается —
+    /// список нужен ленте «Истории», плашке «Сегодня» и промпту тренера.
+    @Published var events: [TrainingEvent] = []
     // Coach signals for the История banner: server-computed, snooze-filtered,
     // sorted. The client renders the first 1–2 and refetches on appear,
     // foreground and after relevant mutations.
@@ -57,6 +60,14 @@ final class TrainerStore: ObservableObject {
     @Published var waistDate: String
     @Published var waistValue: String = ""
     @Published var isSavingWaist = false
+    @Published var isSavingEvent = false
+    /// Отказ сервера по событию: второе открытое, будущая дата, нет связи.
+    /// Композер живёт в шите, а тост рисуется ПОД ним — увидеть отказ можно
+    /// только строкой в самом шите, как у валидации замеров.
+    @Published var eventError: String?
+    /// Полоска «Тренировка записана» с предложением заметки. Живёт секунды и
+    /// исчезает сама — завершение тренировки остаётся одним нажатием.
+    @Published var finishedWorkout: FinishedWorkout?
     @Published var toast: String?
 
     @Published var recommendation: RecommendationResponse?
@@ -72,11 +83,19 @@ final class TrainerStore: ObservableObject {
         isCoachSignalsSuppressed ? [] : coachSignals
     }
 
+    /// Текущее открытое событие — состояние «сейчас не тренируюсь». Оно одно:
+    /// второе backend не даёт создать, иначе автозакрытие тренировкой не смогло
+    /// бы выбрать, какой период закрывать.
+    var openEvent: TrainingEvent? {
+        events.first { $0.isOpen }
+    }
+
     private let defaults: UserDefaults
     /// Голосовой слой живёт в отдельном файле, но хранит свой язык в тех же
     /// defaults — в тестах они изолированные, и голос обязан их разделять.
     var voiceDefaults: UserDefaults { defaults }
     private var toastTask: Task<Void, Never>?
+    private var finishedWorkoutTask: Task<Void, Never>?
     private var recommendationPollTask: Task<Void, Never>?
     private var recommendationPollGeneration = 0
     // Several screens and mutations can request the same server-computed
@@ -165,6 +184,7 @@ final class TrainerStore: ObservableObject {
         recommendationPollTask = nil
         recommendationPollGeneration += 1
         invalidateCoachSignalsLoads()
+        dismissFinishedWorkout()
         isRefreshingRecommendation = false
         do {
             _ = try await APIClient(baseURLString: apiBaseURLString).logout()
@@ -176,6 +196,7 @@ final class TrainerStore: ObservableObject {
         workouts = []
         bodyWeightEntries = []
         waistEntries = []
+        events = []
         coachSignals = []
         bootState = .needsSignIn(nil)
     }
@@ -357,6 +378,120 @@ final class TrainerStore: ObservableObject {
         }
     }
 
+    // MARK: - События (периоды без тренировок)
+
+    /// Новые сверху — событие читают рядом с дыркой, которую оно объясняет.
+    private static func sortedEvents(_ events: [TrainingEvent]) -> [TrainingEvent] {
+        events.sorted { ($0.startDate, $0.id) > ($1.startDate, $1.id) }
+    }
+
+    /// Тихая перечитка. Список меняется не только из приложения: сегодняшняя
+    /// тренировка закрывает открытое событие на сервере молча, и запись из чата
+    /// с тренером (MCP) сюда тоже не стучится.
+    func reloadEvents() async {
+        guard let response = try? await APIClient(baseURLString: apiBaseURLString).fetchEvents()
+        else { return }
+        events = Self.sortedEvents(response.events)
+    }
+
+    @discardableResult
+    func saveEvent(startDate: String, endDate: String?, text: String) async -> Bool {
+        eventError = nil
+        guard let text = text.nilIfBlank else {
+            // И строкой в шите, и тостом: пустой текст ловится ещё
+            // заблокированной кнопкой, но у метода есть и вызов извне шита.
+            eventError = "Опиши, что случилось"
+            showToast("Опиши, что случилось")
+            return false
+        }
+
+        isSavingEvent = true
+        defer { isSavingEvent = false }
+
+        do {
+            let response = try await APIClient(baseURLString: apiBaseURLString)
+                .saveEvent(startDate: startDate, endDate: endDate, text: text)
+            currentUser = response.user ?? currentUser
+            events = Self.sortedEvents(events + [response.event])
+            showToast("Событие записано")
+            refreshRecommendationAfterEvent()
+            return true
+        } catch {
+            eventError = error.localizedDescription
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
+    @discardableResult
+    func updateEvent(
+        _ event: TrainingEvent,
+        startDate: String,
+        endDate: String?,
+        text: String,
+        successMessage: String = "Событие обновлено"
+    ) async -> Bool {
+        eventError = nil
+        guard let text = text.nilIfBlank else {
+            // И строкой в шите, и тостом: пустой текст ловится ещё
+            // заблокированной кнопкой, но у метода есть и вызов извне шита.
+            eventError = "Опиши, что случилось"
+            showToast("Опиши, что случилось")
+            return false
+        }
+
+        isSavingEvent = true
+        defer { isSavingEvent = false }
+
+        do {
+            let response = try await APIClient(baseURLString: apiBaseURLString)
+                .updateEvent(id: event.id, startDate: startDate, endDate: endDate, text: text)
+            currentUser = response.user ?? currentUser
+            events.removeAll { $0.id == response.event.id }
+            events = Self.sortedEvents(events + [response.event])
+            showToast(successMessage)
+            refreshRecommendationAfterEvent()
+            return true
+        } catch {
+            eventError = error.localizedDescription
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
+    @discardableResult
+    func deleteEvent(_ event: TrainingEvent) async -> Bool {
+        eventError = nil
+        do {
+            let response = try await APIClient(baseURLString: apiBaseURLString)
+                .deleteEvent(id: event.id)
+            currentUser = response.user ?? currentUser
+            events.removeAll { $0.id == event.id }
+            showToast("Событие удалено")
+            refreshRecommendationAfterEvent()
+            return true
+        } catch {
+            eventError = error.localizedDescription
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
+    /// Ручное закрытие в один тап: конец — вчерашний день, ровно как у
+    /// автозакрытия тренировкой («перерыв кончился в тот день, когда снова
+    /// пришёл в зал»). Событие, начавшееся сегодня, схлопывается в один день,
+    /// а не в конец раньше начала.
+    func closeEvent(_ event: TrainingEvent) async {
+        let yesterday = DateTools.adding(days: -1, to: DateTools.localTodayISO())
+        await updateEvent(
+            event,
+            startDate: event.startDate,
+            endDate: max(yesterday, event.startDate),
+            text: event.text,
+            successMessage: "Событие закрыто"
+        )
+    }
+
     // MARK: - Coach signals (the История banner)
 
     /// Silent refetch: the endpoint is cheap local SQLite on the server, so we
@@ -501,10 +636,10 @@ final class TrainerStore: ObservableObject {
                 showToast("Изменения в тренировке сохранены")
             } else {
                 response = try await client.saveWorkout(payload)
-                showToast(
-                    currentUser?.isDefaultDebugUser == true
-                        ? "Тренировка сохранена для debug-user"
-                        : "Тренировка сохранена")
+                // Тоста нет намеренно: о новой тренировке говорит полоска с
+                // предложением заметки, и два сообщения об одном и том же
+                // событии перекрывали бы друг друга.
+                showFinishedWorkout(response.workout)
             }
 
             currentUser = response.user ?? currentUser
@@ -520,12 +655,74 @@ final class TrainerStore: ObservableObject {
                 // Plan consumed; backend regenerates the recommendation in the
                 // background — pick up "pending" now and the fresh one later.
                 appliedPlan = nil
+                // Сегодняшняя тренировка закрывает открытое событие на сервере
+                // молча — перечитываем список, иначе плашка «идёт» провисит до
+                // следующего запуска. Тренировка задним числом состояние не
+                // трогает, значит и перечитывать нечего.
+                if response.workout.workoutDate == DateTools.localTodayISO() {
+                    Task { [weak self] in await self?.reloadEvents() }
+                }
                 Task { [weak self] in await self?.loadRecommendation() }
                 Task { [weak self] in
                     try? await Task.sleep(nanoseconds: 25_000_000_000)
                     await self?.loadRecommendation()
                 }
             }
+            return true
+        } catch {
+            showToast(error.localizedDescription)
+            return false
+        }
+    }
+
+    // MARK: - Заметка к тренировке
+
+    /// Полоска «Тренировка записана» — предложение, а не диалог: сама уедет
+    /// через несколько секунд, если её не тронули.
+    private func showFinishedWorkout(_ workout: Workout) {
+        guard let id = workout.id else { return }
+        let banner = FinishedWorkout(
+            id: id,
+            summary: TrainerLogic.finishedWorkoutSummary(workout)
+        )
+        finishedWorkout = banner
+        finishedWorkoutTask?.cancel()
+        finishedWorkoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 7_000_000_000)
+            await MainActor.run {
+                if self?.finishedWorkout == banner {
+                    self?.finishedWorkout = nil
+                }
+            }
+        }
+    }
+
+    func dismissFinishedWorkout() {
+        finishedWorkoutTask?.cancel()
+        finishedWorkoutTask = nil
+        finishedWorkout = nil
+    }
+
+    /// Заметка дописывается PUT'ом всей тренировки: частичного апдейта у API
+    /// нет. Поэтому в запрос уезжает объект, полученный от сервера, — так в нём
+    /// остаются и снапшот плана, и RIR подходов.
+    ///
+    /// Пересчёт рекомендации не запускается: PUT его и на сервере не запускает,
+    /// а заметка — текст для следующей генерации, а не новый факт о нагрузке.
+    @discardableResult
+    func saveWorkoutNote(workoutID: Int, text: String) async -> Bool {
+        guard var workout = workouts.first(where: { $0.id == workoutID }) else { return false }
+        let note = text.nilIfBlank
+        workout.data.notes = note
+
+        do {
+            let response = try await APIClient(baseURLString: apiBaseURLString)
+                .updateWorkout(id: workoutID, workout: workout)
+            currentUser = response.user ?? currentUser
+            workouts.removeAll { $0.id == response.workout.id }
+            workouts.append(response.workout)
+            workouts = TrainerLogic.sortWorkouts(workouts)
+            showToast(note == nil ? "Заметка удалена" : "Заметка сохранена")
             return true
         } catch {
             showToast(error.localizedDescription)
@@ -581,6 +778,21 @@ final class TrainerStore: ObservableObject {
             readyMessage: "План обновлён по свежим замерам",
             pendingMessage: "Замер сохранён, план ещё обновляется",
             offlineMessage: "Замер сохранён, план обновится после восстановления связи"
+        )
+    }
+
+    /// Событие уезжает в промпт тренера текстом, поэтому его запись, правка и
+    /// удаление обесценивают готовый совет ровно так же, как новый замер:
+    /// backend уже поставил генерацию в очередь, клиент переходит на тот же
+    /// pending-гейт. Пока идёт пересчёт, «Сегодня» прячет план и старт — это
+    /// принятое поведение, а не побочный эффект.
+    private func refreshRecommendationAfterEvent() {
+        guard !workouts.isEmpty else { return }
+
+        beginRecommendationPolling(
+            readyMessage: "План пересчитан с учётом события",
+            pendingMessage: "Событие записано, план ещё обновляется",
+            offlineMessage: "Событие записано, план обновится после восстановления связи"
         )
     }
 
@@ -992,19 +1204,29 @@ final class TrainerStore: ObservableObject {
         async let workoutsResponse = client.fetchWorkouts()
         async let weightsResponse = client.fetchBodyWeights()
         async let waistsResponse = client.fetchWaists()
+        // События нужны первому же кадру «Истории» и «Сегодня», поэтому едут
+        // внутри общего дедлайна 3 с, а не отдельным запросом после старта.
+        // Но ядром данных они не являются, и их ошибка НЕ ВПРАВЕ ронять старт:
+        // бэкенд без /api/events (ещё не задеплоен, откачен, старее клиента)
+        // обязан давать работающее приложение без событий, а не error screen на
+        // сплеше. Поэтому единственный из пяти запросов, который гасится.
+        async let eventsResponse: EventsResponse? = try? await client.fetchEvents()
 
-        let (exercisePayload, workoutPayload, weightPayload, waistPayload) = try await (
-            exerciseResponse,
-            workoutsResponse,
-            weightsResponse,
-            waistsResponse
-        )
+        let (exercisePayload, workoutPayload, weightPayload, waistPayload) =
+            try await (
+                exerciseResponse,
+                workoutsResponse,
+                weightsResponse,
+                waistsResponse
+            )
+        let eventPayload = await eventsResponse
 
         currentUser = workoutPayload.user ?? weightPayload.user ?? session.user ?? currentUser
         exercises = exercisePayload.exercises
         workouts = TrainerLogic.sortWorkouts(workoutPayload.workouts)
         bodyWeightEntries = TrainerLogic.sortBodyWeights(weightPayload.entries)
         waistEntries = waistPayload.entries.sorted { $0.entryDate < $1.entryDate }
+        events = Self.sortedEvents(eventPayload?.events ?? [])
         ensureSelectedProgressExercise()
         ensureDraftExerciseDefinitions()
         syncBodyWeightComposer()

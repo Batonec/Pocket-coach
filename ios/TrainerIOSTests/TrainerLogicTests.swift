@@ -713,4 +713,174 @@ final class TrainerLogicTests: XCTestCase {
         XCTAssertFalse(s.hasData)
         XCTAssertEqual(s.comparedWorkouts, 0)
     }
+
+    // MARK: - Лента «Истории»: тренировки, события и подсказки в разрывах
+
+    private func feedWorkout(id: Int, date: String) -> Workout {
+        TestFixtures.workout(
+            id: id,
+            clientID: "client-\(id)",
+            date: date,
+            exercises: [
+                TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [TestFixtures.set()])
+            ]
+        )
+    }
+
+    func testHistoryFeedPutsGapPromptExactlyIntoTheHoleBetweenWorkouts() {
+        let feed = TrainerLogic.historyFeed(
+            workouts: [
+                feedWorkout(id: 1, date: "2026-08-12"), feedWorkout(id: 2, date: "2026-08-21"),
+            ],
+            events: [],
+            today: "2026-08-21"
+        )
+
+        XCTAssertEqual(feed.map(\.id), ["workout-server-2", "gap-2026-08-13", "workout-server-1"])
+        guard case .gap(let gap) = feed[1] else { return XCTFail("Ожидалась подсказка в разрыве") }
+        // Подсказка не может попасть на дату с тренировкой: она живёт строго
+        // между ними, от следующего дня до предыдущего.
+        XCTAssertEqual(gap.startDate, "2026-08-13")
+        XCTAssertEqual(gap.endDate, "2026-08-20")
+        XCTAssertEqual(gap.days, 8)
+        XCTAssertFalse(gap.isRunning)
+    }
+
+    func testHistoryFeedKeepsShortBreaksSilent() {
+        let feed = TrainerLogic.historyFeed(
+            workouts: [
+                feedWorkout(id: 1, date: "2026-08-12"), feedWorkout(id: 2, date: "2026-08-15"),
+            ],
+            events: [],
+            today: "2026-08-15"
+        )
+
+        XCTAssertEqual(feed.map(\.id), ["workout-server-2", "workout-server-1"])
+    }
+
+    func testHistoryFeedPromptsTheOpenTailUpToToday() {
+        let feed = TrainerLogic.historyFeed(
+            workouts: [feedWorkout(id: 1, date: "2026-08-12")],
+            events: [],
+            today: "2026-08-20"
+        )
+
+        guard case .gap(let gap) = feed.first else { return XCTFail("Ожидалась подсказка сверху") }
+        XCTAssertEqual(gap.startDate, "2026-08-13")
+        XCTAssertEqual(gap.endDate, "2026-08-20")
+        XCTAssertEqual(gap.days, 8)
+        XCTAssertTrue(gap.isRunning)
+    }
+
+    func testHistoryFeedHidesPromptWhereAnEventAlreadyExplainsTheHole() {
+        let feed = TrainerLogic.historyFeed(
+            workouts: [
+                feedWorkout(id: 1, date: "2026-08-12"), feedWorkout(id: 2, date: "2026-08-21"),
+            ],
+            events: [TestFixtures.event(id: 7, start: "2026-08-14", end: "2026-08-16")],
+            today: "2026-08-21"
+        )
+
+        XCTAssertEqual(feed.map(\.id), ["workout-server-2", "event-7", "workout-server-1"])
+    }
+
+    func testHistoryFeedTreatsOpenEventAsCoveringEverythingUpToToday() {
+        let feed = TrainerLogic.historyFeed(
+            workouts: [feedWorkout(id: 1, date: "2026-08-12")],
+            events: [TestFixtures.event(id: 3, start: "2026-08-13", end: nil)],
+            today: "2026-08-20"
+        )
+
+        XCTAssertEqual(feed.map(\.id), ["event-3", "workout-server-1"])
+    }
+
+    func testHistoryFeedKeepsSameDayWorkoutOrderFromSortWorkouts() {
+        let earlier = TestFixtures.workout(
+            id: 1,
+            clientID: "a",
+            date: "2026-08-12",
+            createdAt: 100,
+            exercises: [
+                TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [TestFixtures.set()])
+            ]
+        )
+        let later = TestFixtures.workout(
+            id: 2,
+            clientID: "b",
+            date: "2026-08-12",
+            createdAt: 200,
+            exercises: [
+                TestFixtures.exercise(id: 11, name: "Бицепс", sets: [TestFixtures.set()])
+            ]
+        )
+
+        let feed = TrainerLogic.historyFeed(
+            workouts: [earlier, later],
+            events: [],
+            today: "2026-08-12"
+        )
+
+        XCTAssertEqual(feed.map(\.id), ["workout-server-2", "workout-server-1"])
+    }
+
+    func testEventRailLabelsCollapseDaysAndOpenBothMonthsOnTheBoundary() {
+        let single = TrainerLogic.eventRailLabels(
+            TestFixtures.event(start: "2026-08-18", end: "2026-08-18"),
+            today: "2026-08-23"
+        )
+        XCTAssertEqual(single.day, "18")
+        XCTAssertEqual(single.month, "авг")
+
+        let range = TrainerLogic.eventRailLabels(
+            TestFixtures.event(start: "2026-08-05", end: "2026-08-09"),
+            today: "2026-08-23"
+        )
+        XCTAssertEqual(range.day, "5–9")
+        XCTAssertEqual(range.month, "авг")
+
+        // «30–3» под одним «АПР» читалось бы как период внутри апреля.
+        let crossMonth = TrainerLogic.eventRailLabels(
+            TestFixtures.event(start: "2026-04-30", end: "2026-05-03"),
+            today: "2026-08-23"
+        )
+        XCTAssertEqual(crossMonth.day, "30–3")
+        XCTAssertEqual(crossMonth.month, "апр–май")
+
+        let open = TrainerLogic.eventRailLabels(
+            TestFixtures.event(start: "2026-08-21", end: nil),
+            today: "2026-08-23"
+        )
+        XCTAssertEqual(open.day, "21")
+        XCTAssertEqual(open.month, "авг")
+    }
+
+    func testFinishedWorkoutSummaryCountsExercisesAndSetsWithoutDeclension() {
+        let workout = TestFixtures.workout(
+            id: 1,
+            exercises: [
+                TestFixtures.exercise(
+                    id: 8,
+                    name: "Жим ногами",
+                    sets: [TestFixtures.set(index: 1), TestFixtures.set(index: 2)]
+                ),
+                TestFixtures.exercise(id: 11, name: "Бицепс", sets: [TestFixtures.set(index: 1)]),
+            ]
+        )
+
+        XCTAssertEqual(TrainerLogic.finishedWorkoutSummary(workout), "2 упр · 3 сет · 13 мин")
+    }
+
+    func testSetNotesLineCollapsesTheSameStagingRepeatedAcrossSets() {
+        // Постановка одна на все подходы — и в карточке она одна строка.
+        XCTAssertEqual(
+            TrainerLogic.setNotesLine(["канат", "канат", "канат"]),
+            "канат"
+        )
+        // Разные заметки остаются разными фактами, в порядке подходов.
+        XCTAssertEqual(
+            TrainerLogic.setNotesLine(["канат", "узкий хват", "канат"]),
+            "канат · узкий хват"
+        )
+        XCTAssertEqual(TrainerLogic.setNotesLine([]), "")
+    }
 }

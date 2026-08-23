@@ -65,6 +65,12 @@ MAX_REST_DAYS = 4  # rest_days is clamped to 0–4 silently, never reprompted
 # per-exercise summaries (the prompt must not grow from the feature work).
 RAW_HISTORY_COUNT = 10
 
+# Потолок хроники событий. Окна по датам у неё нет намеренно: событие любой
+# давности всё ещё объясняет дырку в датах, а сводки его не заменяют — из
+# событий не считается ни одного числа. Единственная страховка от промпта,
+# растущего без границы, — потолок по строкам; об обрезке блок говорит вслух.
+MAX_EVENT_LINES = 40
+
 ALLOWED_LOAD_TYPES = ("heavy", "medium", "light")
 
 _EFFORT_MARK = {"easy": "-", "ok": "", "hard": "+"}
@@ -305,6 +311,23 @@ def _plan_adherence_report(workouts: list[dict[str, Any]]) -> str | None:
 # --------------------------------------------------------------------------- #
 # Prompt building
 # --------------------------------------------------------------------------- #
+def _athlete_text(value: object) -> str:
+    """Дословный текст атлета одной строкой.
+
+    Переносы и лишние пробелы схлопываются: одна тренировка обязана остаться
+    одной строкой хроники, иначе заметка в две строки разорвёт формат, по
+    которому модель читает историю.
+    """
+    return " ".join(str(value or "").split())
+
+
+def _quoted(value: object) -> str:
+    """Слова атлета в «ёлочках» — по ним модель отличает его текст от наших
+    вычисленных данных. Пустая заметка не даёт пустых кавычек."""
+    text = _athlete_text(value)
+    return f"«{text}»" if text else ""
+
+
 def _serialize_workout(workout: dict[str, Any], names_by_id: dict[int, str] | None = None) -> str:
     data = workout.get("data", {}) or {}
     load_type = data.get("load_type") or "?"
@@ -331,24 +354,108 @@ def _serialize_workout(workout: dict[str, Any], names_by_id: dict[int, str] | No
                 else ""
             )
             weight_repr = f"{weight:g}"
-            sets_repr.append(f"{weight_repr}кг×{reps}{mark}{rir_repr}")
+            # Заметка стоит вплотную к своему подходу: она объясняет ИМЕННО
+            # его вес (канат вместо ручки, другая скамья), и в конце строки
+            # эта связь потерялась бы.
+            note = _quoted(workout_set.get("notes"))
+            sets_repr.append(f"{weight_repr}кг×{reps}{mark}{rir_repr}{' ' + note if note else ''}")
         if sets_repr:
             parts.append(f"{name} {', '.join(sets_repr)}")
     body = "; ".join(parts) if parts else "(нет подходов)"
-    return f"{workout.get('workout_date', '?')} [{load_type}] {body}"
+    line = f"{workout.get('workout_date', '?')} [{load_type}] {body}"
+    session_note = _quoted(data.get("notes"))
+    # Заметка ко всей сессии — после тире в хвосте строки: разбор «дата
+    # [нагрузка] упражнения» до неё не доходит, добавление ничего не ломает.
+    return f"{line} — {session_note}" if session_note else line
+
+
+def _serialize_event(event: dict[str, Any]) -> str:
+    """Строка события в хронике — тот же скелет, что у тренировки: дата,
+    маркер в квадратных скобках, дальше содержание."""
+    start = str(event.get("start_date") or "?")
+    end = str(event.get("end_date") or "").strip()
+    if not end:
+        period = f"{start} — идёт"
+    elif end == start:
+        period = start
+    else:
+        period = f"{start} — {end}"
+    return f"{period} [событие] {_quoted(event.get('text'))}"
+
+
+def _clip_events(events: list[dict[str, Any]] | None) -> tuple[list[dict[str, Any]], int]:
+    """Хроника от старых к новым и число опущенных событий.
+
+    Режем самые старые: свежее событие объясняет разрыв, до которого модель
+    ещё дойдёт, старое — давно прочитанный. Второе значение нужно, чтобы блок
+    назвал обрезку вслух: урезанная хроника, прочитанная как полная, врёт про
+    причины пауз.
+    """
+    ordered = sorted(events or [], key=lambda event: str(event.get("start_date") or ""))
+    if len(ordered) <= MAX_EVENT_LINES:
+        return ordered, 0
+    return ordered[-MAX_EVENT_LINES:], len(ordered) - MAX_EVENT_LINES
+
+
+def _open_event(events: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    """Идущее событие — то, у которого нет конца. Хранилище держит его
+    единственным; если в данных их всё же несколько, берём самое свежее."""
+    ongoing = [e for e in events or [] if not str(e.get("end_date") or "").strip()]
+    if not ongoing:
+        return None
+    return max(ongoing, key=lambda event: str(event.get("start_date") or ""))
+
+
+def _days_inclusive(value: object, today: date) -> int | None:
+    """Длительность идущего события в днях, где день начала — первый."""
+    try:
+        start = date.fromisoformat(str(value or ""))
+    except ValueError:
+        return None
+    return max(1, (today - start).days + 1)
+
+
+def _events_in_period(
+    events: list[dict[str, Any]] | None, start: date, end: date
+) -> list[dict[str, Any]]:
+    """События, пересекающиеся с периодом отчёта: событие без конца считается
+    идущим до конца периода, поэтому в отчёт попадает."""
+    picked: list[dict[str, Any]] = []
+    for event in events or []:
+        try:
+            begins = date.fromisoformat(str(event.get("start_date") or ""))
+        except ValueError:
+            continue
+        raw_end = str(event.get("end_date") or "").strip()
+        try:
+            finishes = date.fromisoformat(raw_end) if raw_end else end
+        except ValueError:
+            finishes = end
+        if begins <= end and finishes >= start:
+            picked.append(event)
+    return picked
 
 
 def _serialize_history(
     workouts: list[dict[str, Any]],
     limit: int,
     catalog: list[dict[str, Any]] | None = None,
+    events: list[dict[str, Any]] | None = None,
 ) -> str:
     # list_workouts() returns newest-first; take the most recent `limit`
     # and present oldest -> newest so progression reads naturally.
     names_by_id = {item["id"]: item["name"] for item in catalog} if catalog else None
     recent = list(workouts[:limit])
     recent.reverse()
-    return "\n".join(_serialize_workout(w, names_by_id) for w in recent)
+    # События идут не отдельным списком, а вперемешку с тренировками: разрыв
+    # в датах объясняется ровно там, где он виден. На общей дате событие стоит
+    # первым — сначала обстоятельство, потом сессия.
+    rows: list[tuple[str, int, str]] = [
+        (str(w.get("workout_date") or ""), 1, _serialize_workout(w, names_by_id)) for w in recent
+    ]
+    rows += [(str(e.get("start_date") or ""), 0, _serialize_event(e)) for e in events or []]
+    rows.sort(key=lambda row: row[:2])
+    return "\n".join(row[2] for row in rows)
 
 
 def _days_since_last(workouts: list[dict[str, Any]], today: date) -> int | None:
@@ -475,6 +582,7 @@ def _build_user_prompt(
     catalog: list[dict[str, Any]] | None = None,
     state: dict[str, Any] | None = None,
     waists: list[dict[str, Any]] | None = None,
+    events: list[dict[str, Any]] | None = None,
 ) -> str:
     state = state if state is not None else coach_state.load_state(None)
     waists = waists or []
@@ -518,6 +626,19 @@ def _build_user_prompt(
         context_lines.append(_block("context_returning", days=str(days)))
     else:
         context_lines.append(_block("context_last", days=str(days)))
+    # Идущее событие стоит сразу за днями простоя: решение о возврате
+    # принимается здесь, а без причины дырка в датах неотличима от лени.
+    ongoing = _open_event(events)
+    if ongoing is not None:
+        open_days = _days_inclusive(ongoing.get("start_date"), today)
+        context_lines.append(
+            _block(
+                "context_open_event",
+                since=str(ongoing.get("start_date") or "?"),
+                days=str(open_days) if open_days is not None else "?",
+                text=_athlete_text(ongoing.get("text")),
+            )
+        )
     chunks = ["=== КОНТЕКСТ ===\n" + "\n".join(context_lines)]
 
     volume = coach_features.weekly_volume(workouts, today)
@@ -582,8 +703,20 @@ def _build_user_prompt(
         chunks.append("\n".join(discipline_lines))
 
     raw_count = min(history_limit, RAW_HISTORY_COUNT)
-    chunks.append(_block("raw_history_header", count=str(raw_count)))
-    chunks.append(_serialize_history(workouts, raw_count, catalog))
+    shown_events, dropped_events = _clip_events(events)
+    header = [_block("raw_history_header", count=str(raw_count))]
+    if shown_events:
+        header.append(_block("raw_history_events"))
+    if dropped_events:
+        header.append(
+            _block(
+                "events_truncated",
+                count=str(len(shown_events)),
+                total=str(len(shown_events) + dropped_events),
+            )
+        )
+    chunks.append("\n".join(header))
+    chunks.append(_serialize_history(workouts, raw_count, catalog, shown_events))
     chunks.append(_block("task"))
     return "\n\n".join(chunks)
 
@@ -1060,6 +1193,7 @@ def generate_with_trace(
     state: dict[str, Any] | None = None,
     strategy: str | None = None,
     waists: list[dict[str, Any]] | None = None,
+    events: list[dict[str, Any]] | None = None,
     today: date | None = None,
     model: str = DEFAULT_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -1090,6 +1224,7 @@ def generate_with_trace(
         catalog=catalog,
         state=state,
         waists=waists,
+        events=events,
     )
     schema = _build_schema(catalog)
 
@@ -1202,6 +1337,7 @@ def generate(
     state: dict[str, Any] | None = None,
     strategy: str | None = None,
     waists: list[dict[str, Any]] | None = None,
+    events: list[dict[str, Any]] | None = None,
     today: date | None = None,
     model: str = DEFAULT_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -1221,6 +1357,7 @@ def generate(
         state=state,
         strategy=strategy,
         waists=waists,
+        events=events,
         today=today,
         model=model,
         max_tokens=max_tokens,
@@ -1263,6 +1400,7 @@ def _build_report_prompt(
     state: dict[str, Any],
     today: date,
     days: int,
+    events: list[dict[str, Any]] | None = None,
 ) -> str:
     params = coach_state.phase_params(state)
     position = coach_state.cycle_position(state, workouts, today)
@@ -1301,6 +1439,27 @@ def _build_report_prompt(
         )
     else:
         chunks.append(_block("report_no_workouts"))
+
+    # События — сразу за списком тренировок: они объясняют пустые дни периода.
+    # Пустой блок тоже нужен: «событий нет» значит, что пропуски ничем не
+    # объяснены, и это другой разговор с атлетом.
+    period_events, dropped_events = _clip_events(
+        _events_in_period(events, today - timedelta(days=days - 1), today)
+    )
+    if period_events:
+        lines = [_block("report_events_header")]
+        lines += [_serialize_event(event) for event in period_events]
+        if dropped_events:
+            lines.append(
+                _block(
+                    "events_truncated",
+                    count=str(len(period_events)),
+                    total=str(len(period_events) + dropped_events),
+                )
+            )
+        chunks.append("\n".join(lines))
+    else:
+        chunks.append(_block("report_no_events"))
 
     week_target = (
         params.get("ramp_start")
@@ -1394,6 +1553,7 @@ def generate_weekly_report(
     profile: dict[str, Any] | None = None,
     strategy: str | None = None,
     state: dict[str, Any] | None = None,
+    events: list[dict[str, Any]] | None = None,
     today: date | None = None,
     days: int = 7,
     model: str = DEFAULT_MODEL,
@@ -1411,7 +1571,7 @@ def generate_weekly_report(
     today = today or date.today()
     state = state if state is not None else coach_state.load_state(None)
     user = _build_report_prompt(
-        workouts, body_weights, waists, catalog, state, today, max(1, int(days))
+        workouts, body_weights, waists, catalog, state, today, max(1, int(days)), events=events
     )
     text, usage = _request_model(
         _build_report_system_prompt(profile, strategy),

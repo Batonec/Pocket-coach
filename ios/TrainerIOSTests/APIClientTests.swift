@@ -151,6 +151,65 @@ final class APIClientTests: XCTestCase {
         }
     }
 
+    func testEventEndpointsMatchTheContract() async throws {
+        let client = makeClient()
+
+        protocolType.enqueue(json: #"{"ok":true,"user":null,"events":[]}"#)
+        _ = try await client.fetchEvents()
+
+        protocolType.enqueue(status: 201, json: eventMutationJSON(id: 12, end: nil))
+        let created = try await client.saveEvent(
+            startDate: "2026-08-20", endDate: nil, text: "Болел, температура")
+
+        protocolType.enqueue(json: eventMutationJSON(id: 12, end: #""2026-08-26""#))
+        _ = try await client.updateEvent(
+            id: 12, startDate: "2026-08-20", endDate: "2026-08-26", text: "Болел, температура")
+
+        protocolType.enqueue(json: eventMutationJSON(id: 12, end: #""2026-08-26""#, deleted: true))
+        _ = try await client.deleteEvent(id: 12)
+
+        XCTAssertNil(created.event.endDate)
+        XCTAssertEqual(protocolType.requests.map(\.httpMethod), ["GET", "POST", "PUT", "DELETE"])
+        XCTAssertEqual(
+            protocolType.requests.compactMap(\.url?.path),
+            ["/api/events", "/api/events", "/api/events/12", "/api/events/12"]
+        )
+
+        // «Ещё идёт» — это значение, а не отсутствие ключа: пропущенный
+        // end_date на PUT не снял бы уже проставленный конец.
+        let openBody = try XCTUnwrap(protocolType.requests[1].httpBody)
+        let openJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: openBody) as? [String: Any])
+        XCTAssertEqual(openJSON["start_date"] as? String, "2026-08-20")
+        XCTAssertEqual(openJSON["text"] as? String, "Болел, температура")
+        XCTAssertTrue(openJSON["end_date"] is NSNull)
+
+        let closedBody = try XCTUnwrap(protocolType.requests[2].httpBody)
+        let closedJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: closedBody) as? [String: Any])
+        XCTAssertEqual(closedJSON["end_date"] as? String, "2026-08-26")
+    }
+
+    private func eventMutationJSON(id: Int, end: String?, deleted: Bool? = nil) -> String {
+        var fields = [#""ok":true"#]
+        if let deleted {
+            fields.append(#""deleted":\#(deleted)"#)
+        }
+        fields.append(
+            #"""
+            "event":{
+              "id":\#(id),
+              "start_date":"2026-08-20",
+              "end_date":\#(end ?? "null"),
+              "text":"Болел, температура",
+              "created_at":1756,
+              "updated_at":1756
+            }
+            """#
+        )
+        return "{\(fields.joined(separator: ","))}"
+    }
+
     private func makeClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockURLProtocol.self]

@@ -116,7 +116,15 @@ _INSTRUCTIONS = """\
 Записывающие инструменты: coach_set_phase (смена фазы подготовки — только по
 явной просьбе пользователя), coach_update_state (лимит/база талии),
 coach_update_profile (правка блока профиля атлета — только по явной просьбе),
-coach_add_waist / coach_delete_waist (замеры талии, см).
+coach_add_waist / coach_delete_waist (замеры талии, см), coach_add_event /
+coach_update_event / coach_delete_event (события, см. ниже).
+
+Событие — период без тренировок с причиной («болел», «командировка»):
+coach_list_events показывает их (новые сверху), coach_add_event записывает.
+Событие с end_date = null идёт прямо сейчас, и такое оно одно; первая
+тренировка сегодняшним числом закрывает его сама, вручную — coach_update_event
+с датой конца. Из события ничего не считается: это текст для тренера, а не
+число.
 
 Это аналитика и сценарии, не медицинский совет: никаких рекомендаций по
 дозировкам/схеме ГЗТ/анализам. Веса — в килограммах, талия — в сантиметрах,
@@ -437,6 +445,138 @@ def coach_delete_waist(entry_id: int, user_id: int | None = None) -> CallToolRes
         return _result(_err(f"Ошибка: {exc}"))
 
 
+# --- tools: events (перерывы в тренировках с причиной) ------------------------
+def _event_period(entry: dict[str, Any]) -> str:
+    """Период события строкой: открытое, однодневное или отрезок."""
+    if entry["end_date"] is None:
+        return f"с {entry['start_date']}, идёт"
+    if entry["end_date"] == entry["start_date"]:
+        return entry["start_date"]
+    return f"{entry['start_date']} — {entry['end_date']}"
+
+
+@mcp.tool()
+def coach_list_events(user_id: int | None = None) -> CallToolResult:
+    """События — периоды без тренировок с причиной («болел», «командировка»), новые сверху.
+    end_date = null означает, что событие идёт прямо сейчас; такое событие одно."""
+    try:
+        uid = _uid(user_id)
+        entries = STORE.list_events(uid)
+        # Открытое достаётся фильтром по тому же списку — отдельного запроса не нужно,
+        # а модели важно именно оно: им объясняется сегодняшний день.
+        open_event = next((entry for entry in entries if entry["end_date"] is None), None)
+        summary = f"Событий: {len(entries)}."
+        if open_event is not None:
+            summary += f" Открытое ({_event_period(open_event)}): {open_event['text']}"
+        return _result(
+            {
+                "ok": True,
+                "summary": summary,
+                "user_id": uid,
+                "entries": entries,
+                "open_event": open_event,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+@mcp.tool()
+def coach_add_event(
+    text: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    user_id: int | None = None,
+) -> CallToolResult:
+    """Записать событие — период без тренировок с причиной. start_date по умолчанию сегодня,
+    пустой end_date означает «ещё идёт»; будущие даты запрещены — событие описывает то, что уже
+    случилось. Открытое событие одно: пока оно не закрыто, второе открытое записать нельзя.
+    Ключа дедупа у события нет, повторный вызов создаст вторую запись."""
+    try:
+        uid = _uid(user_id)
+        payload = {
+            "start_date": start_date or date.today().isoformat(),
+            "end_date": end_date,
+            "text": text,
+        }
+        entry = STORE.save_event(uid, payload)
+        return _result(
+            {
+                "ok": True,
+                "summary": f"Событие записано ({_event_period(entry)}): {entry['text']}",
+                "user_id": uid,
+                "entry": entry,
+            }
+        )
+    except ValueError as exc:
+        return _result(_err(f"Событие не записано: {exc}"))
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+@mcp.tool()
+def coach_update_event(
+    event_id: int,
+    text: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    user_id: int | None = None,
+) -> CallToolResult:
+    """Поправить событие: текст и даты. Не переданные поля не трогаются, поэтому «событие
+    закончилось вчера» — это один вызов с end_date. Чтобы снова открыть событие, передай
+    end_date="" — пустая строка означает «ещё идёт»."""
+    try:
+        uid = _uid(user_id)
+        eid = int(event_id)
+        current = next((entry for entry in STORE.list_events(uid) if entry["id"] == eid), None)
+        if current is None:
+            return _result(_err(f"Событие #{eid} не найдено."))
+        # Хранилище перезаписывает запись целиком, а в разговоре меняют одно поле
+        # («всё, вышел вчера»): недостающее берём из текущей записи. В хранилище
+        # None и "" у end_date значат одно, поэтому здесь None — это «не передавали»,
+        # а пустая строка — явная просьба открыть событие снова.
+        payload = {
+            "start_date": current["start_date"] if start_date is None else start_date,
+            "end_date": current["end_date"] if end_date is None else end_date,
+            "text": current["text"] if text is None else text,
+        }
+        updated = STORE.update_event(uid, eid, payload)
+        if updated is None:
+            return _result(_err(f"Событие #{eid} не найдено."))
+        return _result(
+            {
+                "ok": True,
+                "summary": f"Событие обновлено ({_event_period(updated)}): {updated['text']}",
+                "user_id": uid,
+                "entry": updated,
+            }
+        )
+    except ValueError as exc:
+        return _result(_err(f"Событие не обновлено: {exc}"))
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+@mcp.tool()
+def coach_delete_event(event_id: int, user_id: int | None = None) -> CallToolResult:
+    """Удалить событие по id (например, записанное по ошибке)."""
+    try:
+        uid = _uid(user_id)
+        deleted = STORE.delete_event(uid, int(event_id))
+        if deleted is None:
+            return _result(_err(f"Событие #{event_id} не найдено."))
+        return _result(
+            {
+                "ok": True,
+                "summary": f"Удалено событие ({_event_period(deleted)}): {deleted['text']}",
+                "user_id": uid,
+                "deleted": deleted,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
 # --- tools: recommendation debugging -----------------------------------------
 @mcp.tool()
 def coach_get_stored_recommendation(user_id: int | None = None) -> CallToolResult:
@@ -479,6 +619,7 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
         workouts = STORE.list_workouts(uid)
         body_weights = STORE.list_body_weights(uid)
         waists = STORE.list_waists(uid)
+        events = STORE.list_events(uid)
         profile = recommender.load_profile(_PROFILE_PATH)
         state = coach_state.load_state(_STATE_PATH)
         today = date.today()
@@ -495,6 +636,7 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
             catalog=catalog,
             state=state,
             waists=waists,
+            events=events,
         )
         schema = recommender._build_schema(catalog)
         return _result(
@@ -533,6 +675,7 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
             return _result(_err("Нет истории тренировок для генерации."))
         body_weights = STORE.list_body_weights(uid)
         waists = STORE.list_waists(uid)
+        events = STORE.list_events(uid)
         profile = recommender.load_profile(_PROFILE_PATH)
         state = coach_state.load_state(_STATE_PATH)
         today = date.today()
@@ -545,6 +688,7 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
             catalog=catalog,
             state=state,
             waists=waists,
+            events=events,
         )
 
         validated = None
@@ -560,6 +704,7 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
                 strategy=recommender.load_strategy(_STRATEGY_PATH),
                 state=state,
                 waists=waists,
+                events=events,
                 today=today,
                 history_limit=limit,
             )
@@ -628,6 +773,7 @@ def coach_weekly_report(
             profile=recommender.load_profile(_PROFILE_PATH),
             strategy=recommender.load_strategy(_STRATEGY_PATH),
             state=coach_state.load_state(_STATE_PATH),
+            events=STORE.list_events(uid),
             days=days,
         )
         STORE.save_coach_report(
@@ -773,6 +919,7 @@ def coach_generate_recommendation(
             strategy=recommender.load_strategy(_STRATEGY_PATH),
             state=coach_state.load_state(_STATE_PATH),
             waists=STORE.list_waists(uid),
+            events=STORE.list_events(uid),
             history_limit=limit,
         )
         stored = None
