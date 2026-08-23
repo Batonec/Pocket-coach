@@ -38,6 +38,152 @@ enum TrainerLogic {
         }
     }
 
+    // MARK: - Лента «Истории»: тренировки, события и подсказки в разрывах
+
+    /// Разрыв — сплошной ряд дней без тренировок между двумя соседними
+    /// тренировками (или между последней тренировкой и сегодняшним днём).
+    struct HistoryGap: Hashable {
+        var startDate: String
+        var endDate: String
+        var days: Int
+        /// Верхний разрыв упирается в сегодня — он единственный, который ещё
+        /// может продолжаться, поэтому композер открывается из него «идёт».
+        var isRunning: Bool
+    }
+
+    enum HistoryFeedItem: Identifiable, Hashable {
+        case workout(Workout)
+        case event(TrainingEvent)
+        case gap(HistoryGap)
+
+        var id: String {
+            switch self {
+            case .workout(let workout): "workout-\(workout.stableID)"
+            case .event(let event): "event-\(event.id)"
+            case .gap(let gap): "gap-\(gap.startDate)"
+            }
+        }
+    }
+
+    /// Короче трёх дней — это не перерыв, а обычный отдых между тренировками:
+    /// объяснять там нечего, и подсказка только шумела бы в ленте.
+    static let minPromptableGapDays = 3
+
+    /// Лента истории одним списком. Тренировки остаются главным содержимым,
+    /// событие и подсказка встают по дате начала — то есть ровно в ту дырку,
+    /// которую объясняют.
+    ///
+    /// «Сегодня» приходит аргументом: функция обязана быть чистой, иначе тест
+    /// на верхний разрыв зависел бы от даты прогона.
+    static func historyFeed(
+        workouts: [Workout],
+        events: [TrainingEvent],
+        today: String
+    ) -> [HistoryFeedItem] {
+        let sortedWorkouts = sortWorkouts(workouts)
+        var entries: [(date: String, rank: Int, item: HistoryFeedItem)] = sortedWorkouts.map {
+            ($0.workoutDate, 2, .workout($0))
+        }
+        entries += events.map { ($0.startDate, 1, .event($0)) }
+        entries += promptableGaps(workouts: sortedWorkouts, events: events, today: today).map {
+            ($0.startDate, 0, .gap($0))
+        }
+
+        // Sort в Swift не обещает стабильности, поэтому исходный индекс —
+        // третий ключ: порядок нескольких тренировок одного дня уже выбран
+        // sortWorkouts, и пересортировка не должна его перемешивать.
+        return entries.enumerated()
+            .sorted { left, right in
+                if left.element.date != right.element.date {
+                    return left.element.date > right.element.date
+                }
+                if left.element.rank != right.element.rank {
+                    return left.element.rank > right.element.rank
+                }
+                return left.offset < right.offset
+            }
+            .map(\.element.item)
+    }
+
+    /// Разрывы, которые ещё некому объяснить: длиннее порога и не пересечённые
+    /// ни одним событием. Подсказка живёт только МЕЖДУ тренировками — поэтому
+    /// интерфейс физически не может предложить событие на дату с тренировкой.
+    static func promptableGaps(
+        workouts: [Workout],
+        events: [TrainingEvent],
+        today: String
+    ) -> [HistoryGap] {
+        // Даты канонические (YYYY-MM-DD), поэтому сравнение строк — это
+        // сравнение дней, и весь расчёт обходится без разбора в Date.
+        let dates = Set(workouts.map(\.workoutDate)).sorted()
+        guard !dates.isEmpty else { return [] }
+
+        var gaps: [HistoryGap] = []
+        for (index, date) in dates.enumerated() {
+            let isLast = index == dates.count - 1
+            let start = DateTools.adding(days: 1, to: date)
+            // Верхний разрыв включает сегодняшний день: тренировки на него ещё
+            // нет, значит он такой же день без зала, как и предыдущие.
+            let end = isLast ? today : DateTools.adding(days: -1, to: dates[index + 1])
+            guard end >= start else { continue }
+
+            let days = DateTools.daysBetween(start, end) + 1
+            guard days >= minPromptableGapDays else { continue }
+            gaps.append(
+                HistoryGap(startDate: start, endDate: end, days: days, isRunning: isLast)
+            )
+        }
+
+        return gaps.filter { gap in
+            !events.contains { event in
+                event.startDate <= gap.endDate && event.lastDay(today: today) >= gap.startDate
+            }
+        }
+    }
+
+    /// Подписи рельсы события: число (или диапазон чисел) и месяц. Период на
+    /// стыке месяцев показывает оба — иначе «30–3» под «АПР» читается как
+    /// период внутри апреля.
+    static func eventRailLabels(_ event: TrainingEvent, today: String) -> (
+        day: String, month: String
+    ) {
+        let startDay = DateTools.dayNumber(event.startDate)
+        let startMonth = DateTools.monthShort(event.startDate)
+        guard let endDate = event.endDate, endDate != event.startDate else {
+            return (startDay, startMonth)
+        }
+
+        let endMonth = DateTools.monthShort(endDate)
+        return (
+            "\(startDay)–\(DateTools.dayNumber(endDate))",
+            startMonth == endMonth ? startMonth : "\(startMonth)–\(endMonth)"
+        )
+    }
+
+    /// Оценка длительности тренировки по числу сетов. Настоящего таймера в
+    /// приложении нет, поэтому число одно и то же везде, где показывается.
+    static func workoutDurationMinutes(_ workout: Workout) -> Int {
+        let setCount = workout.data.exercises.reduce(0) { $0 + $1.sets.count }
+        return max(8, setCount * 3 + workout.data.exercises.count * 2)
+    }
+
+    /// Строка заметок к подходам под упражнением в карточке истории.
+    /// Одинаковый текст на нескольких подходах схлопывается: постановка одна,
+    /// а «канат · канат · канат» — это шум, а не три разных факта.
+    static func setNotesLine(_ notes: [String]) -> String {
+        var seen = Set<String>()
+        return notes.filter { seen.insert($0).inserted }.joined(separator: " · ")
+    }
+
+    /// Итог только что записанной тренировки для полоски «Тренировка записана».
+    /// Слова не склоняются («14 сет», а не «14 сетов») — склонения числительных
+    /// в проекте нет, и то же сокращение уже стоит в шапке «Сегодня».
+    static func finishedWorkoutSummary(_ workout: Workout) -> String {
+        let exercises = workout.data.exercises.count
+        let sets = workout.data.exercises.reduce(0) { $0 + $1.sets.count }
+        return "\(exercises) упр · \(sets) сет · \(workoutDurationMinutes(workout)) мин"
+    }
+
     static func exercisePickerGroups(
         available: [ExerciseDefinition],
         catalog: [ExerciseDefinition],

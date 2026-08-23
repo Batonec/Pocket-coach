@@ -174,6 +174,10 @@ struct WorkoutSet: Codable, Hashable, Identifiable {
     var weight: Double
     var effort: SetEffort?
     var notes: String?
+    /// iOS запас в повторах не вводит, но обязан вернуть его на PUT: частичного
+    /// апдейта у API нет, тренировка уезжает объектом целиком, и неизвестное
+    /// клиенту поле молча стёрло бы RIR, записанный не из приложения.
+    var rir: Int?
 
     var id: Int { setIndex ?? reps.hashValue ^ weight.hashValue }
 
@@ -183,6 +187,7 @@ struct WorkoutSet: Codable, Hashable, Identifiable {
         case weight
         case effort
         case notes
+        case rir
     }
 }
 
@@ -413,6 +418,59 @@ struct WaistMutationResponse: Codable {
     var created: Bool?
     var user: TrainerUser?
     var entry: WaistEntry
+}
+
+/// Событие — период без тренировок с причиной («болел», «командировка»).
+/// Единственное назначение — текст в промпт тренера: из событий сознательно
+/// не считается ни одного числа и не рисуется ни один график.
+struct TrainingEvent: Codable, Hashable, Identifiable {
+    var id: Int
+    var startDate: String
+    /// nil — событие идёт прямо сейчас. Открытое у атлета одно: это состояние
+    /// «сейчас не тренируюсь», и закрывает его первая же тренировка.
+    var endDate: String?
+    var text: String
+    var createdAt: Int?
+    var updatedAt: Int?
+
+    var isOpen: Bool { endDate == nil }
+
+    /// Последний день события. У открытого он плывёт вместе с сегодняшним днём —
+    /// поэтому «сегодня» приходит аргументом, а не берётся из часов: на этом
+    /// стоят и лента, и тесты.
+    func lastDay(today: String) -> String {
+        // Даты канонические (YYYY-MM-DD), поэтому max по строкам — это max по
+        // времени. Событие, начатое завтрашним числом, невозможно: backend
+        // запрещает будущее.
+        endDate ?? max(today, startDate)
+    }
+
+    /// Длительность в днях, день начала — первый.
+    func dayCount(today: String) -> Int {
+        max(1, DateTools.daysBetween(startDate, lastDay(today: today)) + 1)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case startDate = "start_date"
+        case endDate = "end_date"
+        case text
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct EventsResponse: Codable {
+    var ok: Bool?
+    var user: TrainerUser?
+    var events: [TrainingEvent]
+}
+
+struct EventMutationResponse: Codable {
+    var ok: Bool?
+    var deleted: Bool?
+    var user: TrainerUser?
+    var event: TrainingEvent
 }
 
 /// A coach signal for the История banner (see ios/COACH_SIGNALS_BANNER_BRIEF.md).
@@ -733,6 +791,13 @@ struct BodyWeightSummary {
     var delta: Double
 }
 
+/// Только что записанная тренировка. Повод предложить заметку после факта,
+/// а не шагом в завершении сессии: полоска уедет сама, её можно не заметить.
+struct FinishedWorkout: Identifiable, Equatable {
+    var id: Int
+    var summary: String
+}
+
 enum BootState: Equatable {
     case idle
     case loading
@@ -780,8 +845,48 @@ enum DateTools {
         return formatter
     }()
 
+    /// Календарь дневной арифметики. Тренировочный день — локальный день
+    /// атлета, поэтому разницу дат считаем в его часовом поясе, а не в UTC:
+    /// иначе переход на летнее время сдвинул бы длину периода на сутки.
+    static let dayCalendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        return calendar
+    }()
+
+    static let monthShortFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        // LLL — «standalone»-месяц: «авг», а не родительный «августа».
+        formatter.dateFormat = "LLL"
+        return formatter
+    }()
+
     static func localTodayISO() -> String {
         isoFormatter.string(from: Date())
+    }
+
+    /// Разница в календарных днях; отрицательная, если `toISO` раньше.
+    static func daysBetween(_ fromISO: String, _ toISO: String) -> Int {
+        let from = dayCalendar.startOfDay(for: date(from: fromISO))
+        let to = dayCalendar.startOfDay(for: date(from: toISO))
+        return dayCalendar.dateComponents([.day], from: from, to: to).day ?? 0
+    }
+
+    static func adding(days: Int, to iso: String) -> String {
+        guard let shifted = dayCalendar.date(byAdding: .day, value: days, to: date(from: iso))
+        else { return iso }
+        return self.iso(from: shifted)
+    }
+
+    /// Число месяца без ведущего нуля — для рельсы карточки.
+    static func dayNumber(_ iso: String) -> String {
+        "\(dayCalendar.component(.day, from: date(from: iso)))"
+    }
+
+    static func monthShort(_ iso: String) -> String {
+        monthShortFormatter.string(from: date(from: iso))
+            .replacingOccurrences(of: ".", with: "")
     }
 
     static func date(from iso: String) -> Date {

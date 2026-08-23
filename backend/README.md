@@ -27,6 +27,10 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 - `GET /api/workouts` · `POST /api/workouts` · `PUT /api/workouts/{id}` · `DELETE /api/workouts/{id}`
 - `GET /api/body-weights` · `POST /api/body-weights` · `DELETE /api/body-weights/{id}`
 - `GET /api/waists` · `POST /api/waists` · `DELETE /api/waists/{id}`
+- `GET /api/events` · `POST /api/events` · `PUT /api/events/{id}` · `DELETE /api/events/{id}` —
+  события: периоды без тренировок с причиной. Открытое событие (`end_date: null`) одно; новая
+  тренировка сегодняшним числом закрывает его концом «вчера» (правка истории — не закрывает).
+  Ни одного числа из событий не считается: это текст в промпт тренера
 - `GET /api/coach/signals` · `POST /api/coach/signals/dismiss`
 - `GET /api/recommendations/next` · `POST /api/recommendations/refresh`
 - `GET /api/reports/weekly` — кэшированный недельный отчёт тренера (без генерации; отчёт пишет воскресный таймер или Coach MCP)

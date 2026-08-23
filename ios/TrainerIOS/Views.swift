@@ -358,6 +358,145 @@ extension View {
     }
 }
 
+// MARK: - Свободный текст
+//
+// Единственный примитив поля свободного текста в приложении: событие, заметка
+// к тренировке, заметка к подходу. Системный TextEditor приезжает вообще без
+// оформления, поэтому вся оболочка своя — стекло, радиус, плейсхолдер и
+// каретка акцентом; три размера отличаются только минимальной высотой.
+//
+// Автофокуса нет намеренно: клавиатура поверх CTA — это закрытая кнопка, а
+// автофокус в проекте уже дал флакающий тест. Вместо него — «Готово» в
+// тулбаре клавиатуры.
+
+struct MonoTextArea: View {
+    var placeholder: String
+    @Binding var text: String
+    var minHeight: CGFloat = 76
+    var radius: CGFloat = 18
+    /// Надпись внутри блока — нужна там, где поле стоит без своего заголовка
+    /// (заметка к подходу в шите быстрого ввода).
+    var label: String?
+
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let label {
+                Text(label)
+                    .tLabel(size: 9)
+            }
+
+            ZStack(alignment: .topLeading) {
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(.jbm(13.5))
+                        .foregroundStyle(DesignPalette.ink4)
+                        // Подгон под внутренние инсеты UITextView: без него
+                        // плейсхолдер стоит на пару точек выше и левее текста.
+                        .padding(.top, 8)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
+                }
+
+                // Высота фиксирована по макету, а не растёт с текстом: в
+                // ScrollView композера TextEditor забирает всё предложенное
+                // место, а карточка «на пол-экрана» ради двух фраз не нужна.
+                // Что не влезло — скроллится внутри поля.
+                TextEditor(text: $text)
+                    .font(.jbm(13.5))
+                    .foregroundStyle(DesignPalette.ink)
+                    .tint(DesignPalette.accent)
+                    .scrollContentBackground(.hidden)
+                    .focused($isFocused)
+                    .frame(height: minHeight)
+            }
+        }
+        // 14/12 по макету минус собственные инсеты TextEditor.
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard(radius: radius)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Готово") { isFocused = false }
+                    .font(.jbm(15, weight: .semibold))
+                    .foregroundStyle(DesignPalette.ink)
+            }
+        }
+    }
+}
+
+/// Перенос чипов по строкам: пять пресетов не влезают в ширину SE одной
+/// строкой, а горизонтальный скролл спрятал бы половину списка.
+struct WrapLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var rowWidth: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var total = CGSize.zero
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if rowWidth > 0, rowWidth + spacing + size.width > maxWidth {
+                total.width = max(total.width, rowWidth)
+                total.height += rowHeight + spacing
+                rowWidth = 0
+                rowHeight = 0
+            }
+            rowWidth += (rowWidth > 0 ? spacing : 0) + size.width
+            rowHeight = max(rowHeight, size.height)
+        }
+
+        total.width = max(total.width, rowWidth)
+        total.height += rowHeight
+        return total
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Void
+    ) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
+/// Вертикальный пунктир — граница рельсы у карточки события.
+struct VerticalDashedLine: View {
+    var color: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            Path { path in
+                path.move(to: CGPoint(x: 0.5, y: 0))
+                path.addLine(to: CGPoint(x: 0.5, y: geo.size.height))
+            }
+            .stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+            .foregroundStyle(color)
+        }
+        .frame(width: 1)
+    }
+}
+
 // MARK: - Effort
 
 extension SetEffort {
@@ -690,11 +829,14 @@ extension View {
             .monospacedDigit()
     }
 
-    func tLabel(size: CGFloat = 10.5) -> some View {
+    /// Цвет — параметр, а не второй `.foregroundStyle` поверх: у Text выигрывает
+    /// БЛИЖАЙШИЙ к нему стиль, поэтому `.tLabel().foregroundStyle(accent)`
+    /// молча оставляет надпись серой.
+    func tLabel(size: CGFloat = 10.5, color: Color = DesignPalette.ink3) -> some View {
         font(.jbm(size, weight: .semibold))
             .tracking(0.6)
             .textCase(.uppercase)
-            .foregroundStyle(DesignPalette.ink3)
+            .foregroundStyle(color)
     }
 }
 
@@ -795,6 +937,7 @@ struct ProgressRingArc: View {
 
 struct ContentView: View {
     @EnvironmentObject private var store: TrainerStore
+    @State private var noteWorkout: Workout?
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -825,8 +968,27 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, alignment: .top)
                     .allowsHitTesting(false)
             }
+
+            // Полоска живёт над таб-баром и поверх любого экрана: тренировку
+            // могли записать голосом, а заметка предлагается к факту, а не к
+            // месту в интерфейсе.
+            if let finished = store.finishedWorkout {
+                FinishWorkoutStrip(summary: finished.summary) {
+                    noteWorkout = store.workouts.first { $0.id == finished.id }
+                    store.dismissFinishedWorkout()
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 96)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            }
+        }
+        .sheet(item: $noteWorkout) { workout in
+            WorkoutNoteSheet(workout: workout)
+                .environmentObject(store)
         }
         .animation(.spring(response: 0.28, dampingFraction: 0.86), value: store.toast)
+        .animation(.spring(response: 0.30, dampingFraction: 0.86), value: store.finishedWorkout)
         .animation(.spring(response: 0.32, dampingFraction: 0.85), value: store.currentTab)
         .animation(.spring(response: 0.32, dampingFraction: 0.85), value: store.draft.hasRealSets)
         // Decimal-pad startup is surprisingly expensive on a cold process.
@@ -871,6 +1033,11 @@ private struct MainShellView: View {
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 store.refreshCoachSignals()
+                // События пишутся не только отсюда: запись из чата с тренером
+                // (MCP) — штатный сценарий, а сегодняшняя тренировка закрывает
+                // открытое событие на сервере молча. Запрос такой же дешёвый,
+                // как за сигналами, — локальный SQLite на той же машине.
+                Task { await store.reloadEvents() }
             }
         }
     }
@@ -1194,6 +1361,7 @@ private struct TodayScreen: View {
     @State private var showRareCatalog = false
     @State private var showRationale = false
     @State private var confirmRegen = false
+    @State private var eventComposer: EventComposerMode?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -1209,6 +1377,17 @@ private struct TodayScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 topPillsRow
+
+                // Открытое событие — состояние, а не упрёк, и оно совместимо с
+                // начатой сессией: плашка остаётся на месте, пока событие идёт.
+                if let openEvent = store.openEvent {
+                    TodayEventStrip(
+                        event: openEvent,
+                        today: DateTools.localTodayISO(),
+                        onTap: { eventComposer = .edit(openEvent) },
+                        onClose: { Task { await store.closeEvent(openEvent) } }
+                    )
+                }
 
                 if store.draft.editingWorkoutID == nil {
                     CoachCard()
@@ -1277,14 +1456,16 @@ private struct TodayScreen: View {
                         reps: nextState.reps,
                         weight: nextState.weight,
                         effort: nextState.effort,
-                        notes: nil
+                        notes: nextState.notes.nilIfBlank
                     ),
                     exerciseID: nextState.exerciseID,
                     setIndex: nextState.setIndex
                 )
             }
-            .presentationDetents([.height(520)])
-            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $eventComposer) { mode in
+            EventComposerSheet(mode: mode)
+                .environmentObject(store)
         }
         .sheet(isPresented: $showRationale) {
             CoachRationaleSheet(
@@ -1602,7 +1783,8 @@ private struct TodayScreen: View {
             effort: draftSet.effort,
             previousLabel: previousLabel(for: exerciseID),
             targetLabel: targetLabel(for: exerciseID),
-            currentSetIndex: (draftExercise?.sets.count ?? 0) + 1
+            currentSetIndex: (draftExercise?.sets.count ?? 0) + 1,
+            notes: draftSet.notes ?? ""
         )
     }
 
@@ -1917,15 +2099,26 @@ struct SetEditorState: Identifiable, Equatable {
     var previousLabel: String
     var targetLabel: String
     var currentSetIndex: Int
+    /// Заметка к подходу: «канат вместо прямой ручки». Вес сопоставим только
+    /// внутри одной постановки, и объясняет её этот текст, а не число.
+    var notes: String = ""
 }
 
 struct QuickAddSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var state: SetEditorState
+    @State private var isNoteExpanded: Bool
+    @State private var detent: PresentationDetent
     var onApply: (SetEditorState) -> Void
+
+    private static let compactDetent = PresentationDetent.height(520)
 
     init(state: SetEditorState, onApply: @escaping (SetEditorState) -> Void) {
         _state = State(initialValue: state)
+        _isNoteExpanded = State(initialValue: !state.notes.isEmpty)
+        _detent = State(
+            initialValue: state.notes.isEmpty ? Self.compactDetent : .large
+        )
         self.onApply = onApply
     }
 
@@ -1989,6 +2182,9 @@ struct QuickAddSheet: View {
                         }
                     }
                     .padding(.top, 4)
+
+                    noteBlock
+                        .padding(.top, 16)
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 8)
@@ -2015,6 +2211,53 @@ struct QuickAddSheet: View {
                 .padding(.bottom, 28)
             }
             .padding(.top, 8)
+        }
+        // Раскрытая заметка означает клавиатуру поверх CTA, поэтому шит
+        // переезжает на полный детент, а не сжимает содержимое.
+        .presentationDetents([Self.compactDetent, .large], selection: $detent)
+        .presentationDragIndicator(.visible)
+    }
+
+    /// Свёрнутая заметка — пунктирная строка: она не занимает место в колонке
+    /// шита и не мешает основному сценарию «вес, повторы, ощущения».
+    @ViewBuilder
+    private var noteBlock: some View {
+        if isNoteExpanded {
+            MonoTextArea(
+                placeholder: "канат, узкий хват, другая скамья",
+                text: $state.notes,
+                minHeight: 44,
+                radius: 16,
+                label: "Заметка к подходу"
+            )
+        } else {
+            Button {
+                expandNote()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "pencil")
+                        .font(.jbm(11, weight: .semibold))
+                    Text("канат, узкий хват, другая скамья")
+                        .font(.jbm(12.5, weight: .semibold))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(DesignPalette.ink3)
+                .frame(maxWidth: .infinity)
+                .frame(height: 42)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                        .foregroundStyle(DesignPalette.ink.opacity(0.16))
+                )
+            }
+            .buttonStyle(.pressable(scale: 0.98))
+        }
+    }
+
+    private func expandNote() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
+            isNoteExpanded = true
+            detent = .large
         }
     }
 
@@ -2049,6 +2292,34 @@ struct QuickAddSheet: View {
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
                     .chipBackground()
+
+                // Второй вход в заметку: из шапки видно, есть она уже или нет.
+                Button {
+                    if isNoteExpanded {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
+                            isNoteExpanded = false
+                        }
+                    } else {
+                        expandNote()
+                    }
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.jbm(12, weight: .semibold))
+                        .foregroundStyle(
+                            state.notes.isEmpty ? DesignPalette.ink2 : Color.white
+                        )
+                        .frame(width: 30, height: 30)
+                        .background(
+                            Circle()
+                                .fill(
+                                    state.notes.isEmpty
+                                        ? DesignPalette.ink.opacity(0.05)
+                                        : DesignPalette.ink
+                                )
+                        )
+                }
+                .buttonStyle(.pressable(scale: 0.92))
+                .accessibilityLabel("Заметка к подходу")
             }
             .padding(.horizontal, 24)
             .padding(.top, 12)
@@ -2294,6 +2565,9 @@ private struct HistoryScreen: View {
     @EnvironmentObject private var store: TrainerStore
     var openSettings: () -> Void
     @State private var pendingDeleteWorkout: Workout?
+    @State private var pendingDeleteEvent: TrainingEvent?
+    @State private var eventComposer: EventComposerMode?
+    @State private var noteWorkout: Workout?
     @State private var isShowingProgress = false
     @State private var isShowingWeeklyReport = false
     // Keep the internal backend switcher reachable in code without exposing
@@ -2373,32 +2647,14 @@ private struct HistoryScreen: View {
                     }
 
                     Section {
-                        ForEach(Array(store.workouts.enumerated()), id: \.element.stableID) {
-                            _, workout in
-                            HistoryCard(workout: workout)
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                                .listRowInsets(
-                                    EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14)
-                                )
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                    Button(role: .destructive) {
-                                        pendingDeleteWorkout = workout
-                                    } label: {
-                                        Label("Удалить", systemImage: "trash")
-                                    }
-
-                                    Button {
-                                        store.startEditing(workout)
-                                        store.currentTab = .trainings
-                                    } label: {
-                                        Label("Изменить", systemImage: "pencil")
-                                    }
-                                    .tint(DesignPalette.accent)
-                                }
+                        // Лента — тренировки, события и подсказки в разрывах
+                        // одним списком: событие стоит ровно в той дырке,
+                        // которую объясняет.
+                        ForEach(feedItems) { item in
+                            feedRow(item)
                         }
 
-                        if store.workouts.isEmpty {
+                        if store.workouts.isEmpty && store.events.isEmpty {
                             EmptyStateCard(
                                 glyph: .other,
                                 title: "История пуста",
@@ -2432,6 +2688,30 @@ private struct HistoryScreen: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(item: $eventComposer) { mode in
+            EventComposerSheet(mode: mode)
+                .environmentObject(store)
+        }
+        .sheet(item: $noteWorkout) { workout in
+            WorkoutNoteSheet(workout: workout)
+                .environmentObject(store)
+        }
+        .alert("Удалить событие?", isPresented: deleteEventBinding) {
+            Button("Удалить", role: .destructive) {
+                if let pendingDeleteEvent {
+                    Task { await store.deleteEvent(pendingDeleteEvent) }
+                }
+                pendingDeleteEvent = nil
+            }
+            Button("Отмена", role: .cancel) {
+                pendingDeleteEvent = nil
+            }
+        } message: {
+            if let pendingDeleteEvent {
+                Text("Тренер перестанет видеть причину этого перерыва.")
+                    .accessibilityLabel(pendingDeleteEvent.text)
+            }
+        }
         .alert("Удалить тренировку?", isPresented: deleteWorkoutBinding) {
             Button("Удалить", role: .destructive) {
                 if let pendingDeleteWorkout {
@@ -2448,6 +2728,81 @@ private struct HistoryScreen: View {
                     "Тренировка от \(DateTools.long(pendingDeleteWorkout.workoutDate)) будет удалена."
                 )
             }
+        }
+    }
+
+    private var feedItems: [TrainerLogic.HistoryFeedItem] {
+        TrainerLogic.historyFeed(
+            workouts: store.workouts,
+            events: store.events,
+            today: DateTools.localTodayISO()
+        )
+    }
+
+    @ViewBuilder
+    private func feedRow(_ item: TrainerLogic.HistoryFeedItem) -> some View {
+        switch item {
+        case .workout(let workout):
+            HistoryCard(workout: workout)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) {
+                        pendingDeleteWorkout = workout
+                    } label: {
+                        Label("Удалить", systemImage: "trash")
+                    }
+
+                    Button {
+                        store.startEditing(workout)
+                        store.currentTab = .trainings
+                    } label: {
+                        Label("Изменить", systemImage: "pencil")
+                    }
+                    .tint(DesignPalette.accent)
+
+                    // Поздний вход в заметку: полоска после сохранения уезжает
+                    // сама, и другого способа дописать её потом нет.
+                    Button {
+                        noteWorkout = workout
+                    } label: {
+                        Label("Заметка", systemImage: "note.text")
+                    }
+                    .tint(DesignPalette.ink3)
+                }
+
+        case .event(let event):
+            EventCard(
+                event: event,
+                today: DateTools.localTodayISO(),
+                onClose: { Task { await store.closeEvent(event) } }
+            )
+            .contentShape(Rectangle())
+            // Тап — правка: только там текст события виден целиком, и только
+            // там правятся уехавшие даты.
+            .onTapGesture { eventComposer = .edit(event) }
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    pendingDeleteEvent = event
+                } label: {
+                    Label("Удалить", systemImage: "trash")
+                }
+            }
+
+        case .gap(let gap):
+            EventGapPromptRow(gap: gap) {
+                eventComposer = .new(
+                    start: gap.startDate,
+                    end: gap.isRunning ? nil : gap.endDate
+                )
+            }
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
         }
     }
 
@@ -2560,6 +2915,13 @@ private struct HistoryScreen: View {
         default:
             break
         }
+    }
+
+    private var deleteEventBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeleteEvent != nil },
+            set: { if !$0 { pendingDeleteEvent = nil } }
+        )
     }
 
     private var deleteWorkoutBinding: Binding<Bool> {
@@ -2894,10 +3256,7 @@ private struct HistoryCard: View {
     }
 
     private var durationLabel: String {
-        let setCount = workout.data.exercises.reduce(0) { $0 + $1.sets.count }
-        // Rough estimate — minutes per set.
-        let mins = max(8, setCount * 3 + workout.data.exercises.count * 2)
-        return "\(mins) МИН"
+        "\(TrainerLogic.workoutDurationMinutes(workout)) МИН"
     }
 
     var body: some View {
@@ -2963,6 +3322,26 @@ private struct HistoryCard: View {
                 }
                 HistoryExerciseRow(exercise: ex)
             }
+
+            // Заметку к тренировке видно здесь и больше нигде: текст, который
+            // нельзя перечитать, незачем и вводить.
+            if let note = workout.data.notes?.nilIfBlank {
+                Rectangle().fill(Color.black.opacity(0.07)).frame(height: 0.5)
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "text.quote")
+                        .font(.jbm(10, weight: .semibold))
+                        .foregroundStyle(DesignPalette.ink4)
+                        .padding(.top, 1)
+                    Text(note)
+                        .font(.jbm(11))
+                        .italic()
+                        .foregroundStyle(DesignPalette.ink3)
+                        .lineLimit(4)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.top, 7)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -2977,33 +3356,866 @@ private struct HistoryExerciseRow: View {
 
     var body: some View {
         let summary = TrainerLogic.summarizeExerciseSets(exercise.sets)
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(ExerciseGlyph.short(name: exercise.name))
-                .font(.jbm(13, weight: .semibold))
-                .tracking(-0.2)
-                .foregroundStyle(DesignPalette.ink)
-                .frame(width: 78, alignment: .leading)
-                .lineLimit(1)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(ExerciseGlyph.short(name: exercise.name))
+                    .font(.jbm(13, weight: .semibold))
+                    .tracking(-0.2)
+                    .foregroundStyle(DesignPalette.ink)
+                    .frame(width: 78, alignment: .leading)
+                    .lineLimit(1)
 
-            HStack(spacing: 3) {
-                ForEach(Array(summary.segments.enumerated()), id: \.offset) { i, seg in
-                    Text(seg.label)
-                        .mono(12, weight: .regular)
-                        .foregroundStyle(DesignPalette.ink2)
-                    if let effort = seg.effort, effort == .hard {
-                        Text("😣").font(.jbm(11))
-                    }
-                    if i != summary.segments.count - 1 {
-                        Text(",")
-                            .mono(12)
+                HStack(spacing: 3) {
+                    ForEach(Array(summary.segments.enumerated()), id: \.offset) { i, seg in
+                        Text(seg.label)
+                            .mono(12, weight: .regular)
                             .foregroundStyle(DesignPalette.ink2)
+                        if let effort = seg.effort, effort == .hard {
+                            Text("😣").font(.jbm(11))
+                        }
+                        if i != summary.segments.count - 1 {
+                            Text(",")
+                                .mono(12)
+                                .foregroundStyle(DesignPalette.ink2)
+                        }
+                    }
+                }
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+
+            // Заметка к подходу объясняет вес: «канат вместо прямой ручки» —
+            // это другая постановка, а не откат силы.
+            let notesLine = TrainerLogic.setNotesLine(summary.notes)
+            if !notesLine.isEmpty {
+                Text(notesLine)
+                    .font(.jbm(10.5))
+                    .italic()
+                    .foregroundStyle(DesignPalette.ink3)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.vertical, 6.5)
+    }
+}
+
+// MARK: - События (периоды без тренировок)
+//
+// Событие — это текст с датами и ничего больше: ни одного числа из него не
+// считается, ни один график его не видит. В интерфейсе оно живёт ровно там,
+// где объясняет дырку в ленте, плюс плашкой на «Сегодня», пока идёт.
+
+/// Что открыло композер: подсказка из разрыва (даты уже известны) или правка
+/// существующего события.
+enum EventComposerMode: Identifiable {
+    case new(start: String, end: String?)
+    case edit(TrainingEvent)
+
+    var id: String {
+        switch self {
+        case .new(let start, let end): "new-\(start)-\(end ?? "open")"
+        case .edit(let event): "edit-\(event.id)"
+        }
+    }
+}
+
+/// Карточка события в ленте «Истории». Та же порода, что карточка тренировки:
+/// тот же радиус, та же рельса 64 pt. Но не бумага, а незалитый блок с
+/// пунктиром — в ленте это буквально дырка, на которой оставили подпись.
+/// Тренировки остаются главным содержимым.
+struct EventCard: View {
+    var event: TrainingEvent
+    var today: String
+    var onClose: () -> Void
+
+    private var isOpen: Bool { event.isOpen }
+
+    private var strokeColor: Color {
+        isOpen ? DesignPalette.accent.opacity(0.35) : DesignPalette.ink.opacity(0.20)
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            rail
+            VStack(alignment: .leading, spacing: 8) {
+                // Длинный текст режется: лента рассчитана на короткие строки.
+                // Целиком его видно в правке — тап по карточке её и открывает.
+                Text(event.text)
+                    .font(.jbm(13.5))
+                    .lineSpacing(4)
+                    .foregroundStyle(DesignPalette.ink2)
+                    .lineLimit(4)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if isOpen {
+                    Button(action: onClose) {
+                        Text("Закончилось")
+                            .font(.jbm(11.5, weight: .bold))
+                            .foregroundStyle(DesignPalette.ink)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .chipBackground()
+                    }
+                    .buttonStyle(.pressable(scale: 0.96))
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(isOpen ? DesignPalette.accent.opacity(0.04) : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                .foregroundStyle(strokeColor)
+        )
+    }
+
+    private var rail: some View {
+        let labels = TrainerLogic.eventRailLabels(event, today: today)
+        let isRange = labels.day.contains("–")
+
+        return VStack(spacing: 0) {
+            VStack(spacing: 3) {
+                if isOpen {
+                    HStack(alignment: .firstTextBaseline, spacing: 0) {
+                        Text("с ")
+                            .font(.jbm(12))
+                            .foregroundStyle(DesignPalette.ink3)
+                        Text(labels.day)
+                            .font(.jbm(19, weight: .bold))
+                            .tracking(-0.5)
+                            .foregroundStyle(DesignPalette.ink)
+                    }
+                } else {
+                    Text(labels.day)
+                        .font(.jbm(isRange ? 16 : 28, weight: .bold))
+                        .tracking(isRange ? -0.6 : -0.04)
+                        .foregroundStyle(DesignPalette.ink)
+                }
+
+                Text(labels.month)
+                    .tLabel(size: labels.month.contains("–") ? 9 : 10.5)
+            }
+
+            Spacer(minLength: 4)
+
+            Rectangle()
+                .fill(DesignPalette.ink.opacity(0.10))
+                .frame(width: 22, height: 0.5)
+                .padding(.vertical, 4)
+
+            HStack(spacing: 4) {
+                if isOpen {
+                    Circle()
+                        .fill(DesignPalette.accent)
+                        .frame(width: 5, height: 5)
+                        .overlay(
+                            Circle()
+                                .stroke(DesignPalette.accent.opacity(0.15), lineWidth: 3)
+                        )
+                }
+                Text(isOpen ? "идёт" : "\(event.dayCount(today: today)) дн.")
+                    .tLabel(
+                        size: 9,
+                        color: isOpen ? DesignPalette.accent : DesignPalette.ink4
+                    )
+            }
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 13)
+        .frame(width: 64)
+        .frame(maxHeight: .infinity)
+        .overlay(alignment: .trailing) {
+            VerticalDashedLine(color: DesignPalette.ink.opacity(0.18))
+        }
+    }
+}
+
+/// Подсказка в самой дырке — единственная точка входа в событие. Свайп влево
+/// на «Истории» занят удалением, свободных целей на экране нет, поэтому вход
+/// контекстный: строка появляется ровно там, где разрыв между тренировками
+/// длиннее порога. Побочный эффект и есть главное свойство — интерфейс
+/// физически не может предложить событие на дату, где уже есть тренировка.
+struct EventGapPromptRow: View {
+    var gap: TrainerLogic.HistoryGap
+    var onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 8) {
+                Text("\(gap.days) дн. без тренировок")
+                    .tLabel(size: 9.5, color: DesignPalette.ink4)
+
+                Spacer(minLength: 8)
+
+                Text("отметить событие")
+                    .font(.jbm(11.5, weight: .bold))
+                    .foregroundStyle(DesignPalette.accent)
+
+                Image(systemName: "chevron.right")
+                    .font(.jbm(9, weight: .bold))
+                    .foregroundStyle(DesignPalette.accent)
+            }
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity)
+            .frame(height: 42)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                    .foregroundStyle(DesignPalette.ink.opacity(0.16))
+            )
+        }
+        .buttonStyle(.pressable(scale: 0.98))
+    }
+}
+
+/// Плашка открытого события на «Сегодня». Состояние, а не упрёк: нейтральные
+/// чернила, без красного и без слова «пропущено».
+struct TodayEventStrip: View {
+    var event: TrainingEvent
+    var today: String
+    var onTap: () -> Void
+    var onClose: () -> Void
+
+    private var headline: String {
+        let firstLine = event.text.split(separator: "\n").first.map(String.init) ?? event.text
+        return firstLine.trimmingCharacters(in: .whitespaces)
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(DesignPalette.accent)
+                .frame(width: 7, height: 7)
+                .overlay(Circle().stroke(DesignPalette.accent.opacity(0.15), lineWidth: 3))
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(headline)
+                        .font(.jbm(13.5, weight: .bold))
+                        .tracking(-0.2)
+                        .foregroundStyle(DesignPalette.ink)
+                        .lineLimit(1)
+                    Text("· \(event.dayCount(today: today)) дн.")
+                        .mono(13.5, weight: .semibold)
+                        .foregroundStyle(DesignPalette.ink3)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                }
+                Text("План сегодня легче обычного")
+                    .font(.jbm(11))
+                    .foregroundStyle(DesignPalette.ink3)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onTap)
+
+            Button(action: onClose) {
+                Text("Закончилась?")
+                    .font(.jbm(11.5, weight: .bold))
+                    .foregroundStyle(DesignPalette.ink)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .chipBackground()
+            }
+            .buttonStyle(.pressable(scale: 0.96))
+        }
+        .padding(EdgeInsets(top: 9, leading: 13, bottom: 9, trailing: 10))
+        .liquidGlass(radius: 18)
+    }
+}
+
+/// Переключатель «ещё идёт». Системный Toggle в моно-язык не приведён, а этот
+/// нужен ровно в одном месте — поэтому он и живёт рядом с композером.
+private struct EventRunningSwitch: View {
+    var isOn: Bool
+
+    var body: some View {
+        Capsule()
+            .fill(isOn ? DesignPalette.accent : DesignPalette.ink.opacity(0.14))
+            .frame(width: 46, height: 28)
+            .overlay(alignment: isOn ? .trailing : .leading) {
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 22, height: 22)
+                    .shadow(color: DesignPalette.ink.opacity(0.28), radius: 1.5, y: 1)
+                    .padding(.horizontal, 3)
+            }
+            .animation(.spring(response: 0.24, dampingFraction: 0.8), value: isOn)
+    }
+}
+
+private struct EventDateField: View {
+    var label: String
+    var value: String
+    var muted: Bool
+    var onTap: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .tLabel(size: 9)
+
+            Button(action: onTap) {
+                Text(value)
+                    .font(.jbm(15, weight: .bold))
+                    .tracking(-0.2)
+                    .foregroundStyle(muted ? DesignPalette.ink4 : DesignPalette.ink)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 46)
+                    .background(fieldBackground)
+            }
+            .buttonStyle(.pressable(scale: 0.97))
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var fieldBackground: some View {
+        if muted {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                .foregroundStyle(DesignPalette.ink.opacity(0.14))
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(0.6))
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(DesignPalette.ink.opacity(0.10), lineWidth: 0.5)
+            }
+        }
+    }
+}
+
+struct EventComposerSheet: View {
+    var mode: EventComposerMode
+
+    @EnvironmentObject private var store: TrainerStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var startDate: Date
+    @State private var endDate: Date
+    @State private var isRunning: Bool
+    @State private var text: String
+    @State private var openPicker: PickedField?
+    @State private var isConfirmingDelete = false
+    @State private var detent: PresentationDetent = .height(560)
+
+    private enum PickedField { case start, end }
+
+    /// Пресеты подставляют текст, а не категорию: категории в данных нет и не
+    /// будет — это миграция и ещё одно место синхронизации ради иконки.
+    private static let presets = ["Болезнь", "Травма", "Поездка", "Не спал", "Зал закрыт"]
+
+    init(mode: EventComposerMode) {
+        self.mode = mode
+        switch mode {
+        case .new(let start, let end):
+            _startDate = State(initialValue: DateTools.date(from: start))
+            _endDate = State(initialValue: DateTools.date(from: end ?? start))
+            _isRunning = State(initialValue: end == nil)
+            _text = State(initialValue: "")
+        case .edit(let event):
+            _startDate = State(initialValue: DateTools.date(from: event.startDate))
+            _endDate = State(initialValue: DateTools.date(from: event.endDate ?? event.startDate))
+            _isRunning = State(initialValue: event.isOpen)
+            _text = State(initialValue: event.text)
+        }
+    }
+
+    private var isEditing: Bool {
+        if case .edit = mode { return true }
+        return false
+    }
+
+    private var editedEvent: TrainingEvent? {
+        if case .edit(let event) = mode { return event }
+        return nil
+    }
+
+    /// Открытое событие одно. Если оно уже есть и правим мы не его — «ещё идёт»
+    /// недоступно: иначе backend откажет уже на сохранении.
+    private var canRun: Bool {
+        guard let open = store.openEvent else { return true }
+        return open.id == editedEvent?.id
+    }
+
+    private var dayCount: Int {
+        let start = DateTools.iso(from: startDate)
+        let end = isRunning ? DateTools.localTodayISO() : DateTools.iso(from: endDate)
+        return max(1, DateTools.daysBetween(start, max(end, start)) + 1)
+    }
+
+    private var canSave: Bool {
+        text.nilIfBlank != nil && !store.isSavingEvent
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    datesRow
+                        .padding(.top, 14)
+
+                    if let openPicker {
+                        datePicker(for: openPicker)
+                            .padding(.top, 10)
+                    }
+
+                    runningRow
+                        .padding(.top, 10)
+
+                    presetsRow
+                        .padding(.top, 12)
+
+                    MonoTextArea(placeholder: "болел, температура", text: $text)
+                        .padding(.top, 10)
+
+                    // Отказ сервера — второе открытое событие, будущая дата,
+                    // нет связи — строкой под полем: тост рисуется ПОД шитом,
+                    // и на этом экране его физически не видно.
+                    if let eventError = store.eventError {
+                        Text(eventError)
+                            .font(.jbm(11.5, weight: .semibold))
+                            .foregroundStyle(DesignPalette.bad)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 8)
                     }
                 }
             }
-            .lineLimit(1)
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            .scrollIndicators(.hidden)
+
+            actionsRow
+                .padding(.top, 14)
+
+            Text("Тренер перечитает план — как после нового замера")
+                .font(.jbm(11))
+                .foregroundStyle(DesignPalette.ink4)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 9)
         }
-        .padding(.vertical, 6.5)
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
+        .padding(.bottom, 26)
+        .background(WarmWallpaper())
+        .presentationDetents([.height(560), .large], selection: $detent)
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(store.isSavingEvent)
+        .onAppear { store.eventError = nil }
+        .onChange(of: startDate) { _, newValue in
+            // Конец раньше начала невозможен по построению: поле конца
+            // подтягивается за началом, а его пикер ограничен снизу.
+            if endDate < newValue { endDate = newValue }
+        }
+        .confirmationDialog(
+            "Удалить событие?",
+            isPresented: $isConfirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Удалить", role: .destructive) {
+                guard let event = editedEvent else { return }
+                Task {
+                    if await store.deleteEvent(event) { dismiss() }
+                }
+            }
+            Button("Отмена", role: .cancel) {}
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isEditing ? "Правка события" : "Новое событие")
+                    .tLabel()
+                Text("Дни без тренировок")
+                    .font(.jbm(17, weight: .bold))
+                    .tracking(-0.3)
+                    .foregroundStyle(DesignPalette.ink)
+            }
+
+            Spacer()
+
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.jbm(11, weight: .bold))
+                    .foregroundStyle(DesignPalette.ink3)
+                    .frame(width: 34, height: 34)
+                    .chipBackground()
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Закрыть")
+        }
+    }
+
+    private var datesRow: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            EventDateField(
+                label: "Начало",
+                value: DateTools.short(DateTools.iso(from: startDate)),
+                muted: false,
+                onTap: { toggle(.start) }
+            )
+
+            Text("—")
+                .font(.jbm(13))
+                .foregroundStyle(DesignPalette.ink4)
+                .padding(.bottom, 15)
+
+            EventDateField(
+                label: "Конец",
+                value: isRunning ? "идёт" : DateTools.short(DateTools.iso(from: endDate)),
+                muted: isRunning,
+                onTap: {
+                    // Пока событие «идёт», конца нет и выбирать нечего —
+                    // сначала переключатель.
+                    guard !isRunning else { return }
+                    toggle(.end)
+                }
+            )
+
+            VStack(spacing: 2) {
+                Text("\(dayCount)")
+                    .display(size: 20, weight: .bold)
+                    .foregroundStyle(isRunning ? DesignPalette.accent : DesignPalette.ink)
+                Text("дн.")
+                    .tLabel(size: 9)
+            }
+            .frame(width: 52)
+            .padding(.bottom, 4)
+        }
+    }
+
+    @ViewBuilder
+    private func datePicker(for field: PickedField) -> some View {
+        // Системный DatePicker — уже принятый прецедент (композер замеров);
+        // будущее он запрещает так же, как backend.
+        DatePicker(
+            "",
+            selection: field == .start ? $startDate : $endDate,
+            in: (field == .start ? Date.distantPast : startDate)...Date(),
+            displayedComponents: .date
+        )
+        .datePickerStyle(.graphical)
+        .labelsHidden()
+        .tint(DesignPalette.accent)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .glassCard(radius: 18)
+    }
+
+    private var runningRow: some View {
+        Button {
+            guard canRun else { return }
+            withAnimation(.spring(response: 0.26, dampingFraction: 0.85)) {
+                isRunning.toggle()
+                if isRunning { openPicker = nil }
+            }
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Ещё идёт")
+                        .font(.jbm(14, weight: .bold))
+                        .tracking(-0.2)
+                        .foregroundStyle(DesignPalette.ink)
+                    Text(
+                        canRun
+                            ? "Закроется само, когда запишешь тренировку"
+                            : "Одно открытое событие уже есть"
+                    )
+                    .font(.jbm(11))
+                    .foregroundStyle(DesignPalette.ink3)
+                    .multilineTextAlignment(.leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                EventRunningSwitch(isOn: isRunning)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .glassCard(radius: 16)
+        }
+        .buttonStyle(.plain)
+        .opacity(canRun ? 1 : 0.55)
+    }
+
+    private var presetsRow: some View {
+        WrapLayout(spacing: 6) {
+            ForEach(Self.presets, id: \.self) { preset in
+                Button {
+                    apply(preset: preset)
+                } label: {
+                    presetChip(
+                        preset,
+                        isPicked: text.trimmingCharacters(in: .whitespacesAndNewlines) == preset
+                    )
+                }
+                .buttonStyle(.pressable(scale: 0.96))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func presetChip(_ preset: String, isPicked: Bool) -> some View {
+        let label =
+            Text(preset)
+            .font(.jbm(12.5, weight: .bold))
+            .tracking(-0.15)
+            .foregroundStyle(isPicked ? Color.white : DesignPalette.ink2)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 8)
+
+        if isPicked {
+            label.background(DesignPalette.ink, in: Capsule())
+        } else {
+            label.chipBackground()
+        }
+    }
+
+    private var actionsRow: some View {
+        HStack(spacing: 8) {
+            if isEditing {
+                Button {
+                    isConfirmingDelete = true
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.jbm(16, weight: .semibold))
+                        .foregroundStyle(DesignPalette.bad)
+                        .frame(width: 56, height: 54)
+                        .background(
+                            RoundedRectangle(cornerRadius: 27, style: .continuous)
+                                .fill(DesignPalette.bad.opacity(0.06))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 27, style: .continuous)
+                                .stroke(DesignPalette.bad.opacity(0.20), lineWidth: 0.5)
+                        )
+                }
+                .buttonStyle(.pressable(scale: 0.96))
+                .accessibilityLabel("Удалить событие")
+            }
+
+            Button {
+                Task { await save() }
+            } label: {
+                HStack(spacing: 8) {
+                    if store.isSavingEvent {
+                        ProgressView().tint(.white)
+                    }
+                    Text(isEditing ? "Сохранить" : "Добавить событие")
+                        .font(.jbm(16, weight: .bold))
+                        .tracking(-0.2)
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 54)
+                .background(
+                    DesignPalette.ink,
+                    in: RoundedRectangle(cornerRadius: 27, style: .continuous)
+                )
+                .shadow(color: DesignPalette.ink.opacity(0.30), radius: 12, y: 6)
+            }
+            .buttonStyle(.pressable(scale: 0.97))
+            .disabled(!canSave)
+            .opacity(canSave ? 1 : 0.5)
+        }
+    }
+
+    private func toggle(_ field: PickedField) {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            openPicker = openPicker == field ? nil : field
+            // Календарь высокий — на маленьком детенте он не помещается.
+            if openPicker != nil { detent = .large }
+        }
+    }
+
+    /// Пресет — это подстановка текста. Пустое поле и поле ровно с другим
+    /// пресетом заменяются целиком; написанное руками не затирается — пресет
+    /// дописывается в конец. Повторный тап по выбранному очищает поле, так что
+    /// промах всегда обратим.
+    private func apply(preset: String) {
+        let current = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if current == preset {
+            text = ""
+        } else if current.isEmpty || Self.presets.contains(current) {
+            text = preset
+        } else {
+            text = "\(current), \(preset.lowercased())"
+        }
+    }
+
+    private func save() async {
+        let start = DateTools.iso(from: startDate)
+        let end = isRunning ? nil : DateTools.iso(from: endDate)
+        let saved: Bool
+        if let event = editedEvent {
+            saved = await store.updateEvent(event, startDate: start, endDate: end, text: text)
+        } else {
+            saved = await store.saveEvent(startDate: start, endDate: end, text: text)
+        }
+        if saved { dismiss() }
+    }
+}
+
+// MARK: - Заметка к тренировке
+
+/// Полоска после сохранения тренировки. Завершение остаётся одним нажатием:
+/// тренировка уже записана, заметку предлагает полоска, которая сама уедет, —
+/// её можно просто не заметить.
+struct FinishWorkoutStrip: View {
+    var summary: String
+    var onNote: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark")
+                .font(.jbm(12, weight: .heavy))
+                .foregroundStyle(DesignPalette.ok)
+                .frame(width: 26, height: 26)
+                .background(DesignPalette.ok.opacity(0.15), in: Circle())
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Тренировка записана")
+                    .font(.jbm(13.5, weight: .bold))
+                    .tracking(-0.2)
+                    .foregroundStyle(DesignPalette.ink)
+                Text(summary)
+                    .mono(11)
+                    .foregroundStyle(DesignPalette.ink3)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: onNote) {
+                HStack(spacing: 6) {
+                    Image(systemName: "pencil")
+                        .font(.jbm(11, weight: .semibold))
+                    Text("Заметка")
+                        .font(.jbm(12, weight: .bold))
+                }
+                .foregroundStyle(DesignPalette.ink)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 8)
+                .chipBackground()
+            }
+            .buttonStyle(.pressable(scale: 0.96))
+        }
+        .padding(EdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 10))
+        .glassCard(radius: 20, thick: true)
+        .shadow(color: DesignPalette.ink.opacity(0.18), radius: 14, y: 8)
+    }
+}
+
+/// Открывается только если полоску тронули — либо поздним входом со свайпа
+/// карточки в «Истории».
+struct WorkoutNoteSheet: View {
+    var workout: Workout
+
+    @EnvironmentObject private var store: TrainerStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+    @State private var isSaving = false
+
+    init(workout: Workout) {
+        self.workout = workout
+        _text = State(initialValue: workout.data.notes ?? "")
+    }
+
+    private var title: String {
+        let date = DateTools.short(workout.workoutDate)
+        if let focus = workout.data.focus?.nilIfBlank {
+            return "\(date) · \(focus)"
+        }
+        return "\(date) · \(DateTools.weekday(workout.workoutDate))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Заметка к тренировке")
+                        .tLabel()
+                    Text(title)
+                        .font(.jbm(17, weight: .bold))
+                        .tracking(-0.3)
+                        .foregroundStyle(DesignPalette.ink)
+                }
+
+                Spacer()
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.jbm(11, weight: .bold))
+                        .foregroundStyle(DesignPalette.ink3)
+                        .frame(width: 34, height: 34)
+                        .chipBackground()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Закрыть")
+            }
+            .padding(.bottom, 12)
+
+            MonoTextArea(placeholder: "Как прошло, что мешало", text: $text)
+
+            Button {
+                Task {
+                    guard let id = workout.id else { return }
+                    isSaving = true
+                    let saved = await store.saveWorkoutNote(workoutID: id, text: text)
+                    isSaving = false
+                    if saved { dismiss() }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if isSaving {
+                        ProgressView().tint(.white)
+                    }
+                    Text("Сохранить")
+                        .font(.jbm(16, weight: .bold))
+                        .tracking(-0.2)
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 54)
+                .background(
+                    DesignPalette.ink,
+                    in: RoundedRectangle(cornerRadius: 27, style: .continuous)
+                )
+                .shadow(color: DesignPalette.ink.opacity(0.30), radius: 12, y: 6)
+            }
+            .buttonStyle(.pressable(scale: 0.97))
+            .padding(.top, 12)
+            .disabled(isSaving)
+
+            Text("Уедет тренеру вместе с весами")
+                .font(.jbm(11))
+                .foregroundStyle(DesignPalette.ink4)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 9)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
+        .padding(.bottom, 26)
+        .background(WarmWallpaper())
+        .presentationDetents([.height(320), .large])
+        .presentationDragIndicator(.visible)
+        .interactiveDismissDisabled(isSaving)
     }
 }
 

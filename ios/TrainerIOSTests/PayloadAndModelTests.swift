@@ -256,4 +256,58 @@ final class PayloadAndModelTests: XCTestCase {
         // Гравитрон выведен из каталога в августе 2026 — такого тренажёра в зале нет.
         XCTAssertFalse(catalog.exercises.contains { $0.id == 4 })
     }
+
+    func testTrainingEventDecodesSnakeCaseAndOpenPeriod() throws {
+        let json = #"""
+            {
+              "id": 12,
+              "start_date": "2026-08-20",
+              "end_date": null,
+              "text": "Болел, температура",
+              "created_at": 1756,
+              "updated_at": 1757
+            }
+            """#
+
+        let event = try JSONDecoder().decode(TrainingEvent.self, from: Data(json.utf8))
+
+        XCTAssertEqual(event.id, 12)
+        XCTAssertEqual(event.startDate, "2026-08-20")
+        XCTAssertNil(event.endDate)
+        XCTAssertTrue(event.isOpen)
+        XCTAssertEqual(event.text, "Болел, температура")
+        XCTAssertEqual(event.createdAt, 1756)
+        XCTAssertEqual(event.updatedAt, 1757)
+    }
+
+    func testEventDayCountIsInclusiveAndFollowsTodayWhileOpen() {
+        let closed = TestFixtures.event(start: "2026-08-20", end: "2026-08-26")
+        XCTAssertEqual(closed.dayCount(today: "2026-08-30"), 7)
+
+        let oneDay = TestFixtures.event(start: "2026-08-18", end: "2026-08-18")
+        XCTAssertEqual(oneDay.dayCount(today: "2026-08-30"), 1)
+
+        let open = TestFixtures.event(start: "2026-08-21", end: nil)
+        XCTAssertEqual(open.dayCount(today: "2026-08-23"), 3)
+        XCTAssertEqual(open.lastDay(today: "2026-08-23"), "2026-08-23")
+        // День записи события — уже первый его день, даже если он же и сегодня.
+        XCTAssertEqual(open.dayCount(today: "2026-08-21"), 1)
+    }
+
+    func testWorkoutSetKeepsRIRItNeverEdits() throws {
+        let json = #"""
+            {"set_index":1,"reps":10,"weight":80,"effort":"hard","notes":"канат","rir":2}
+            """#
+
+        let decoded = try JSONDecoder().decode(WorkoutSet.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.rir, 2)
+
+        // Правка заметки шлёт тренировку целиком: RIR обязан уехать назад.
+        let encoded =
+            try JSONSerialization.jsonObject(
+                with: try JSONEncoder().encode(decoded)
+            ) as? [String: Any]
+        XCTAssertEqual(encoded?["rir"] as? Int, 2)
+        XCTAssertEqual(encoded?["notes"] as? String, "канат")
+    }
 }

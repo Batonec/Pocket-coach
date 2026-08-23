@@ -8,6 +8,7 @@ import mimetypes
 import os
 import threading
 import time
+from datetime import date, timedelta
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -94,6 +95,7 @@ def _generate_and_store_recommendation(user_id: int) -> dict[str, Any] | None:
             strategy=recommender.load_strategy(COACH_STRATEGY_PATH),
             state=coach_state.load_state(COACH_STATE_PATH),
             waists=STORE.list_waists(user_id),
+            events=STORE.list_events(user_id),
         )
     except recommender.RecommendationError as exc:
         STORE.fail_recommendation(user_id, str(exc))
@@ -381,6 +383,25 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/api/events":
+            user, headers = self._resolve_current_user(allow_debug_fallback=True)
+            if user is None:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {
+                        "ok": False,
+                        "reason": "No active session. iOS client must resolve a session first.",
+                    },
+                )
+                return
+
+            self._send_json(
+                HTTPStatus.OK,
+                {"ok": True, "user": user, "events": STORE.list_events(int(user["id"]))},
+                extra_headers=headers,
+            )
+            return
+
         if path == "/api/coach/signals":
             user, headers = self._resolve_current_user(allow_debug_fallback=True)
             if user is None:
@@ -527,6 +548,14 @@ class MiniAppHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
                 return
 
+            # Новая сегодняшняя тренировка закрывает открытое событие вчерашним
+            # днём: перерыв кончился в тот день, когда атлет снова пришёл в зал.
+            # Правка тренировки и запись задним числом состояние не переключают —
+            # история меняется, «сейчас не тренируюсь» остаётся как было.
+            today = date.today()
+            if created and workout["workout_date"] == today.isoformat():
+                STORE.close_open_event(int(user["id"]), (today - timedelta(days=1)).isoformat())
+
             self._send_json(
                 HTTPStatus.CREATED if created else HTTPStatus.OK,
                 {"ok": True, "created": created, "user": user, "workout": workout},
@@ -592,6 +621,39 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             self._send_json(
                 HTTPStatus.CREATED if created else HTTPStatus.OK,
                 {"ok": True, "created": created, "user": user, "entry": entry},
+                extra_headers=headers,
+            )
+            return
+
+        if path == "/api/events":
+            payload = self._read_json_body()
+            if payload is None:
+                return
+
+            user, headers = self._resolve_current_user(allow_debug_fallback=True)
+            if user is None:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {
+                        "ok": False,
+                        "reason": "No active session. iOS client must resolve a session first.",
+                    },
+                )
+                return
+
+            try:
+                event = STORE.save_event(int(user["id"]), payload)
+            except ValueError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
+                return
+
+            # Событие уезжает в промпт тренера текстом, поэтому любая его правка
+            # обесценивает готовый совет ровно так же, как новый замер.
+            trigger_recommendation_async(int(user["id"]))
+            # Всегда 201: ключа дедупа у события нет, save_event только вставляет.
+            self._send_json(
+                HTTPStatus.CREATED,
+                {"ok": True, "user": user, "event": event},
                 extra_headers=headers,
             )
             return
@@ -747,6 +809,41 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         path = urlparse(self.path).path
+        event_id = self._parse_event_id(path)
+        if event_id is not None:
+            payload = self._read_json_body()
+            if payload is None:
+                return
+
+            user, headers = self._resolve_current_user(allow_debug_fallback=True)
+            if user is None:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {
+                        "ok": False,
+                        "reason": "No active session. iOS client must resolve a session first.",
+                    },
+                )
+                return
+
+            try:
+                event = STORE.update_event(int(user["id"]), event_id, payload)
+            except ValueError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
+                return
+
+            if event is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Event not found"})
+                return
+
+            trigger_recommendation_async(int(user["id"]))
+            self._send_json(
+                HTTPStatus.OK,
+                {"ok": True, "user": user, "event": event},
+                extra_headers=headers,
+            )
+            return
+
         workout_id = self._parse_workout_id(path)
         if workout_id is None:
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Not found"})
@@ -838,6 +935,32 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             self._send_json(
                 HTTPStatus.OK,
                 {"ok": True, "user": user, "entry": entry, "deleted": True},
+                extra_headers=headers,
+            )
+            return
+
+        event_id = self._parse_event_id(path)
+        if event_id is not None:
+            user, headers = self._resolve_current_user(allow_debug_fallback=True)
+            if user is None:
+                self._send_json(
+                    HTTPStatus.UNAUTHORIZED,
+                    {
+                        "ok": False,
+                        "reason": "No active session. iOS client must resolve a session first.",
+                    },
+                )
+                return
+
+            event = STORE.delete_event(int(user["id"]), event_id)
+            if event is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Event not found"})
+                return
+
+            trigger_recommendation_async(int(user["id"]))
+            self._send_json(
+                HTTPStatus.OK,
+                {"ok": True, "user": user, "event": event, "deleted": True},
                 extra_headers=headers,
             )
             return
@@ -977,6 +1100,20 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
     def _parse_body_weight_id(self, path: str) -> int | None:
         prefix = "/api/body-weights/"
+        if not path.startswith(prefix):
+            return None
+
+        raw_id = path.removeprefix(prefix).strip("/")
+        if not raw_id or "/" in raw_id:
+            return None
+
+        try:
+            return int(raw_id)
+        except ValueError:
+            return None
+
+    def _parse_event_id(self, path: str) -> int | None:
+        prefix = "/api/events/"
         if not path.startswith(prefix):
             return None
 

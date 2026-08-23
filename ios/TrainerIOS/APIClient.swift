@@ -146,6 +146,32 @@ final class APIClient {
         try await delete("/api/waists/\(id)")
     }
 
+    func fetchEvents() async throws -> EventsResponse {
+        try await get("/api/events")
+    }
+
+    func saveEvent(startDate: String, endDate: String?, text: String) async throws
+        -> EventMutationResponse
+    {
+        try await post(
+            "/api/events",
+            body: EventSaveRequest(startDate: startDate, endDate: endDate, text: text)
+        )
+    }
+
+    func updateEvent(id: Int, startDate: String, endDate: String?, text: String) async throws
+        -> EventMutationResponse
+    {
+        try await put(
+            "/api/events/\(id)",
+            body: EventSaveRequest(startDate: startDate, endDate: endDate, text: text)
+        )
+    }
+
+    func deleteEvent(id: Int) async throws -> EventMutationResponse {
+        try await delete("/api/events/\(id)")
+    }
+
     func fetchCoachSignals() async throws -> CoachSignalsResponse {
         try await get("/api/coach/signals")
     }
@@ -272,6 +298,28 @@ private struct WaistSaveRequest: Encodable {
     enum CodingKeys: String, CodingKey {
         case entryDate = "entry_date"
         case waist
+    }
+}
+
+/// `end_date` уезжает явным `null`, а не пропущенным ключом: «ещё идёт» —
+/// это значение, а не отсутствие значения, и на PUT только оно снимает уже
+/// проставленный конец.
+private struct EventSaveRequest: Encodable {
+    var startDate: String
+    var endDate: String?
+    var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case startDate = "start_date"
+        case endDate = "end_date"
+        case text
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(startDate, forKey: .startDate)
+        try container.encode(endDate, forKey: .endDate)
+        try container.encode(text, forKey: .text)
     }
 }
 
