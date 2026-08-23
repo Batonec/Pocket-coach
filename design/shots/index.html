@@ -29,7 +29,9 @@
 <script type="text/babel" src="../screens/coach.jsx"></script>
 <script type="text/babel" src="../screens/quickadd.jsx"></script>
 <script type="text/babel" src="../screens/picker.jsx"></script>
+<script type="text/babel" src="../screens/signals.jsx"></script>
 <script type="text/babel" src="../screens/history.jsx"></script>
+<script type="text/babel" src="../screens/events.jsx"></script>
 <script type="text/babel" src="../screens/progress.jsx"></script>
 <script type="text/babel" src="../screens/exercise.jsx"></script>
 <script type="text/babel" src="../screens/weight.jsx"></script>
@@ -105,6 +107,9 @@ const SHOTS = [
   ['quickadd',     <QuickAddScreen accent={A} />],
   ['picker',       <PickerScreen accent={A} />],
   ['history',      <HistoryScreen accent={A} />],
+  // Лента с событиями: разрыв объяснён карточкой, у тренировки видны обе
+  // заметки — к подходу (трицепс) и ко всей сессии.
+  ['events',       <HistoryEventsScreen accent={A} feed="aug" />],
   ['progress',     <ProgressScreen accent={A} />],
   ['exercise',     <ExerciseDetailScreen accent={A} />],
   ['weight',       <WeightScreen accent={A} />],
