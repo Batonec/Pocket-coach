@@ -1358,7 +1358,7 @@ private struct TodayScreen: View {
     @State private var editor: SetEditorState?
     @State private var pendingActionExercise: DraftDisplayExercise?
     @State private var isConfirmingReset = false
-    @State private var showRareCatalog = false
+    @State private var showAddCatalog = false
     @State private var showRationale = false
     @State private var confirmRegen = false
     @State private var eventComposer: EventComposerMode?
@@ -1430,14 +1430,14 @@ private struct TodayScreen: View {
                         }
                     }
 
-                    AddExerciseButton(isExpanded: $showRareCatalog)
+                    AddExerciseButton(isExpanded: $showAddCatalog)
 
-                    if showRareCatalog {
-                        RareCatalogList(
-                            exercises: store.rareExercises(),
+                    if showAddCatalog {
+                        AddExerciseCatalog(
+                            exercises: store.addableExercises(),
                             onSelect: { exercise in
                                 openEditor(exerciseID: exercise.id, setIndex: nil)
-                                withAnimation { showRareCatalog = false }
+                                withAnimation { showAddCatalog = false }
                             }
                         )
                     }
@@ -2010,7 +2010,7 @@ private struct TodayExerciseCard: View {
     }
 }
 
-// MARK: Add exercise + rare catalog
+// MARK: Add exercise + catalog
 
 private struct AddExerciseButton: View {
     @Binding var isExpanded: Bool
@@ -2024,7 +2024,7 @@ private struct AddExerciseButton: View {
             HStack(spacing: 8) {
                 Image(systemName: isExpanded ? "chevron.up" : "plus")
                     .font(.jbm(12, weight: .bold))
-                Text(isExpanded ? "Скрыть редкие" : "Добавить упражнение")
+                Text(isExpanded ? "Скрыть каталог" : "Добавить упражнение")
                     .font(.jbm(14, weight: .semibold))
                     .tracking(-0.2)
             }
@@ -2046,7 +2046,9 @@ private struct AddExerciseButton: View {
     }
 }
 
-private struct RareCatalogList: View {
+/// Полный каталог за вычетом того, что уже стоит карточкой на экране:
+/// добавить можно любое упражнение из базы, а не только «редкое».
+private struct AddExerciseCatalog: View {
     var exercises: [ExerciseDefinition]
     var onSelect: (ExerciseDefinition) -> Void
 
@@ -2055,7 +2057,7 @@ private struct RareCatalogList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if exercises.isEmpty {
-                Text("Все упражнения уже в плане")
+                Text("Все упражнения уже на экране")
                     .mono(13)
                     .foregroundStyle(DesignPalette.ink3)
                     .padding(.vertical, 12)

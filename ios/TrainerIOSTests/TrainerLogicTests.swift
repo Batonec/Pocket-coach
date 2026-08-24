@@ -181,6 +181,47 @@ final class TrainerLogicTests: XCTestCase {
         XCTAssertEqual(cards.last?.isPreview, false)
     }
 
+    /// Регрессия: план тренера показывает свои упражнения, а «Добавить
+    /// упражнение» обязано отдать ВСЁ остальное из каталога. Раньше список
+    /// строился как дополнение к основной шестёрке, и частое упражнение вне
+    /// плана (жим ногами) не появлялось ни карточкой, ни в каталоге — записать
+    /// его было нечем.
+    func testAddableCatalogOffersEveryExerciseMissingFromTheScreen() {
+        let workouts = popularHistory()
+        // На экране только план: тяга горизонт. + сгибания ног.
+        let shown: Set<Int> = [10, 15]
+
+        let addable = TrainerLogic.addableExercises(
+            exercises: TestFixtures.catalog,
+            workouts: workouts,
+            shownExerciseIDs: shown
+        )
+
+        XCTAssertEqual(
+            Set(addable.map(\.id)),
+            Set(TestFixtures.catalog.map(\.id)).subtracting(shown)
+        )
+        XCTAssertTrue(addable.map(\.name).contains("Жим ногами"))
+        XCTAssertTrue(addable.map(\.name).contains("Жим гор."))
+
+        // Частое идёт выше того, чего в истории не было ни разу.
+        let names = addable.map(\.name)
+        XCTAssertLessThan(
+            names.firstIndex(of: "Жим ногами") ?? .max,
+            names.firstIndex(of: "Разгибания ног") ?? .max
+        )
+    }
+
+    func testAddableCatalogIsEmptyWhenEveryExerciseIsAlreadyOnScreen() {
+        let addable = TrainerLogic.addableExercises(
+            exercises: TestFixtures.catalog,
+            workouts: popularHistory(),
+            shownExerciseIDs: Set(TestFixtures.catalog.map(\.id))
+        )
+
+        XCTAssertTrue(addable.isEmpty)
+    }
+
     func testDraftProgressIsInvisibleUntilRealSetsAndCountsFractionalPlanProgress() {
         let workouts =
             popularHistory() + [
