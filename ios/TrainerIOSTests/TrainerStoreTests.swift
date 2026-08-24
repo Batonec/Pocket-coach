@@ -130,6 +130,32 @@ final class TrainerStoreTests: XCTestCase {
         XCTAssertTrue(cards.allSatisfy(\.isPreview))
     }
 
+    /// Под планом тренера «Добавить упражнение» обязано отдавать весь каталог
+    /// минус то, что уже стоит карточкой: атлет делает лишнее упражнение и
+    /// должен иметь возможность его записать.
+    func testAddableExercisesUnderAppliedPlanCoverTheWholeCatalog() {
+        let store = TrainerStore(defaults: .isolatedTestDefaults())
+        store.exercises = TestFixtures.catalog
+        store.recommendation = readyRecommendation()
+        store.applyRecommendationAsPlan()
+
+        let addable = store.addableExercises()
+
+        XCTAssertEqual(
+            Set(addable.map(\.id)),
+            Set(TestFixtures.catalog.map(\.id)).subtracting([8, 9])
+        )
+
+        // Записали упражнение из каталога — оно ушло из каталога в карточки.
+        store.applySet(
+            DraftSet(reps: 12, weight: 20, effort: nil, notes: nil),
+            exerciseID: 13,
+            setIndex: nil
+        )
+        XCTAssertFalse(store.addableExercises().map(\.id).contains(13))
+        XCTAssertTrue(store.displayCards().map(\.exerciseID).contains(13))
+    }
+
     func testAutoApplyAppliesReadyRecommendationAndIsIdempotent() {
         let store = TrainerStore(defaults: .isolatedTestDefaults())
         store.exercises = TestFixtures.catalog

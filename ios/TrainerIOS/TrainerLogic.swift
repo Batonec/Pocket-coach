@@ -380,19 +380,35 @@ enum TrainerLogic {
         return cards
     }
 
-    static func availableRareExercises(
+    /// Каталог под кнопкой «Добавить упражнение»: всё, чего сейчас нет на
+    /// экране, от самого частого к самому редкому.
+    ///
+    /// Отсекаются именно ПОКАЗАННЫЕ карточки, а не «основная шестёрка». Пока
+    /// список был её дополнением, он ломался тихо, как только карточки начинал
+    /// задавать план тренера: частое упражнение вне плана пропадало отовсюду —
+    /// ни карточки с «+», ни строчки в каталоге, — и добавить его в тренировку
+    /// было нечем.
+    static func addableExercises(
         exercises: [ExerciseDefinition],
         workouts: [Workout],
-        draftExercises: [DraftExercise]
+        shownExerciseIDs: Set<Int>
     ) -> [ExerciseDefinition] {
-        let usedIDs = Set(draftExercises.map(\.exerciseID))
-        let available = exercises.filter { !usedIDs.contains($0.id) }
-        return exercisePickerGroups(
-            available: available,
-            catalog: exercises,
-            workouts: workouts,
-            draftExercises: draftExercises
-        ).secondary
+        let stats = exerciseUsageStats(workouts)
+        return
+            exercises
+            .enumerated()
+            .filter { !shownExerciseIDs.contains($0.element.id) }
+            .map { index, exercise in
+                RankedExercise(
+                    exercise: exercise,
+                    count: stats[exercise.id]?.count ?? 0,
+                    averagePosition: stats[exercise.id]?.averagePosition ?? .infinity,
+                    latestWorkoutDate: stats[exercise.id]?.latestWorkoutDate ?? "",
+                    catalogIndex: index
+                )
+            }
+            .sorted(by: compareSecondaryDisplay)
+            .map(\.exercise)
     }
 
     static func draftProgressRatio(

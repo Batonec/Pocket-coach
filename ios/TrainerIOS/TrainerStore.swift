@@ -1115,11 +1115,14 @@ final class TrainerStore: ObservableObject {
         )
     }
 
-    func rareExercises() -> [ExerciseDefinition] {
-        TrainerLogic.availableRareExercises(
+    /// Что можно добавить сверх уже показанного. Отсечение считается ровно от
+    /// `displayCards()`: карточки задаёт то план тренера, то основная шестёрка,
+    /// и каталог обязан следовать за экраном, а не за шестёркой.
+    func addableExercises() -> [ExerciseDefinition] {
+        TrainerLogic.addableExercises(
             exercises: exercises,
             workouts: workouts,
-            draftExercises: draft.exercises
+            shownExerciseIDs: Set(displayCards().map(\.exerciseID))
         )
     }
 
