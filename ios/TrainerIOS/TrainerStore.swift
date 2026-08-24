@@ -1020,8 +1020,12 @@ final class TrainerStore: ObservableObject {
 
     /// The coach's one-line note for an exercise in the applied plan (why this
     /// weight/reps) — shown on each plan card now that the expanded card is gone.
+    /// Заметка тренера — про СЕГОДНЯШНИЙ план, поэтому в правке прошлой
+    /// тренировки её нет: там она подписывала бы чужую сессию. Ровно та же
+    /// оговорка стоит в `planningContext(for:)`.
     func coachNote(for exerciseID: Int) -> String? {
-        guard let note = appliedPlan?.exercises.first(where: { $0.exerciseID == exerciseID })?.note,
+        guard draft.editingWorkoutID == nil,
+            let note = appliedPlan?.exercises.first(where: { $0.exerciseID == exerciseID })?.note,
             !note.isEmpty
         else { return nil }
         return note
@@ -1105,7 +1109,13 @@ final class TrainerStore: ObservableObject {
     }
 
     func displayCards() -> [DraftDisplayExercise] {
-        if let appliedPlan, draft.editingWorkoutID == nil {
+        // Правка записанной тренировки показывает ровно её состав. Ни план
+        // тренера (он про сегодня, а правят прошлое), ни preview-карточки
+        // шестёрки: в прошлой сессии они врут про то, что в ней было.
+        if draft.editingWorkoutID != nil {
+            return TrainerLogic.loggedDisplayCards(draftExercises: draft.exercises)
+        }
+        if let appliedPlan {
             return TrainerLogic.planDisplayCards(plan: appliedPlan, draftExercises: draft.exercises)
         }
         return TrainerLogic.draftDisplayCards(

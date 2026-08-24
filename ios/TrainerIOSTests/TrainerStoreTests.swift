@@ -74,6 +74,25 @@ final class TrainerStoreTests: XCTestCase {
         XCTAssertFalse(store.isWorkoutBuilderPresented)
     }
 
+    /// Шесть регулярных упражнений — ровно та «основная шестёрка», которую
+    /// конструктор показывает preview-карточками для НОВОЙ тренировки.
+    private func frequentHistory() -> [Workout] {
+        let core = [
+            (8, "Жим ногами"), (1, "Жим гор."), (9, "Тяга верт."),
+            (13, "Дельты"), (11, "Бицепс"), (12, "Трицепс"),
+        ]
+        return ["2026-08-01", "2026-08-03", "2026-08-05"].enumerated().map { offset, date in
+            TestFixtures.workout(
+                id: 200 + offset,
+                clientID: "frequent-\(offset)",
+                date: date,
+                exercises: core.map {
+                    TestFixtures.exercise(id: $0.0, name: $0.1, sets: [TestFixtures.set()])
+                }
+            )
+        }
+    }
+
     private func readyRecommendation() -> RecommendationResponse {
         RecommendationResponse(
             ok: true,
@@ -154,6 +173,40 @@ final class TrainerStoreTests: XCTestCase {
         )
         XCTAssertFalse(store.addableExercises().map(\.id).contains(13))
         XCTAssertTrue(store.displayCards().map(\.exerciseID).contains(13))
+    }
+
+    /// Правка записанной тренировки показывает ровно её состав. Preview-карточки
+    /// основной шестёрки предлагали дописать в прошлую сессию то, чего в ней не
+    /// было, и заодно съедали каталог: «уже на экране» — значит не предлагается.
+    func testEditingLoggedWorkoutShowsOnlyItsExercisesAndOffersTheRestInCatalog() {
+        let store = TrainerStore(defaults: .isolatedTestDefaults())
+        store.exercises = TestFixtures.catalog
+        let workout = TestFixtures.workout(
+            id: 42,
+            date: "2026-08-24",
+            exercises: [
+                TestFixtures.exercise(id: 10, name: "Тяга горизонт.", sets: [TestFixtures.set()]),
+                TestFixtures.exercise(id: 15, name: "Сгибания ног", sets: [TestFixtures.set()]),
+                TestFixtures.exercise(id: 8, name: "Жим ногами", sets: [TestFixtures.set()]),
+            ]
+        )
+        // История нужна такая, чтобы «основная шестёрка» НЕ совпала с составом
+        // правимой тренировки: иначе тест проходит и на старом поведении.
+        store.workouts = frequentHistory() + [workout]
+        // План тренера — про сегодня, и в чужую прошлую сессию он тоже не лезет.
+        store.recommendation = readyRecommendation()
+        store.applyRecommendationAsPlan()
+
+        store.startEditing(workout)
+
+        XCTAssertEqual(store.displayCards().map(\.exerciseID), [10, 15, 8])
+        XCTAssertTrue(store.displayCards().allSatisfy { !$0.isPreview })
+        XCTAssertEqual(
+            Set(store.addableExercises().map(\.id)),
+            Set(TestFixtures.catalog.map(\.id)).subtracting([10, 15, 8])
+        )
+        // Заметка тренера подписывает сегодняшний план, а не правимую сессию.
+        XCTAssertNil(store.coachNote(for: 8))
     }
 
     func testAutoApplyAppliesReadyRecommendationAndIsIdempotent() {

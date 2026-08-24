@@ -268,20 +268,30 @@ enum TrainerLogic {
         )
     }
 
+    /// Карточки записанной тренировки: ровно её состав и ничего сверх.
+    ///
+    /// Preview-карточки основной шестёрки существуют, чтобы НОВАЯ тренировка не
+    /// начиналась с пустого экрана. В открытой на правку сессии они врут про её
+    /// состав и приглашают дописать то, чего не было; всё остальное из каталога
+    /// добирается кнопкой «Добавить упражнение».
+    static func loggedDisplayCards(draftExercises: [DraftExercise]) -> [DraftDisplayExercise] {
+        draftExercises.map {
+            DraftDisplayExercise(
+                exerciseID: $0.exerciseID,
+                exerciseName: $0.exerciseName,
+                sets: $0.sets,
+                isPreview: false
+            )
+        }
+    }
+
     static func draftDisplayCards(
         exercises: [ExerciseDefinition],
         workouts: [Workout],
         draftExercises: [DraftExercise]
     ) -> [DraftDisplayExercise] {
         guard !exercises.isEmpty else {
-            return draftExercises.map {
-                DraftDisplayExercise(
-                    exerciseID: $0.exerciseID,
-                    exerciseName: $0.exerciseName,
-                    sets: $0.sets,
-                    isPreview: false
-                )
-            }
+            return loggedDisplayCards(draftExercises: draftExercises)
         }
 
         let groups = exercisePickerGroups(
@@ -292,14 +302,7 @@ enum TrainerLogic {
         )
 
         guard !groups.primary.isEmpty else {
-            return draftExercises.map {
-                DraftDisplayExercise(
-                    exerciseID: $0.exerciseID,
-                    exerciseName: $0.exerciseName,
-                    sets: $0.sets,
-                    isPreview: false
-                )
-            }
+            return loggedDisplayCards(draftExercises: draftExercises)
         }
 
         let actualByID = Dictionary(
