@@ -438,8 +438,9 @@ class MiniAppStore:
                 CREATE INDEX IF NOT EXISTS idx_events_user_date
                 ON events(user_id, start_date DESC, id DESC);
 
-                -- Cached coach weekly reports: generated once (by the Sunday
-                -- timer or on demand), then served instantly and token-free.
+                -- Cached coach weekly reports: generated once per closed week
+                -- (by the Monday-midnight timer or on demand), then served
+                -- instantly and token-free.
                 CREATE TABLE IF NOT EXISTS coach_reports (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

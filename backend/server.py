@@ -355,8 +355,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
                 )
                 return
 
-            # Cache-only by design: the Sunday timer (weekly_report.py) or the
-            # Coach MCP tool generate reports; this endpoint never spends tokens.
+            # Cache-only by design: the Monday-midnight timer (weekly_report.py)
+            # or the Coach MCP tool generate reports; this endpoint never spends
+            # tokens.
             self._send_json(
                 HTTPStatus.OK,
                 {"ok": True, "report": STORE.get_latest_coach_report(int(user["id"]))},

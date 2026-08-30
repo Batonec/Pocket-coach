@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Generate and cache the coach weekly report.
 
-Run by deploy/trainer-weekly-report.timer every Sunday evening so the athlete
-opens an instant, token-free report in the Coach MCP chat. Standalone like
-refresh_recommendation.py: no HTTP, reads the same env, talks to SQLite and
-the Claude API directly.
+Run by deploy/trainer-weekly-report.timer in the night from Sunday to Monday,
+once the week is actually over, so the athlete opens an instant, token-free
+report in the Coach MCP chat. Standalone like refresh_recommendation.py: no
+HTTP, reads the same env, talks to SQLite and the Claude API directly.
 
-    python3 weekly_report.py            # generate unless today's is cached
+    python3 weekly_report.py            # generate unless that week is cached
     python3 weekly_report.py --force    # regenerate unconditionally
 """
 
@@ -34,9 +34,18 @@ USER_ID = int(os.getenv("MINIAPP_TELEGRAM_RECOVERY_USER_ID", "3") or "3")
 REPORT_DAYS = int(os.getenv("WEEKLY_REPORT_DAYS", "7"))
 
 
-def run(store: backend_store.MiniAppStore, user_id: int, force: bool = False) -> bool:
+def run(
+    store: backend_store.MiniAppStore,
+    user_id: int,
+    force: bool = False,
+    today: date | None = None,
+) -> bool:
     """Returns True if a report was generated."""
-    period_end = date.today().isoformat()
+    # Отчёт всегда про ЗАКРЫТУЮ неделю, а не про последние 7 дней: таймер
+    # просыпается уже в понедельник, поэтому и период, и окно данных модели
+    # якорятся на прошедшее воскресенье, а не на сегодня.
+    period = coach_state.last_closed_week_end(today or date.today())
+    period_end = period.isoformat()
     if not force and store.get_coach_report(user_id, period_end, REPORT_DAYS):
         print(f"[weekly] отчёт за {period_end} уже в кэше")
         return False
@@ -51,6 +60,7 @@ def run(store: backend_store.MiniAppStore, user_id: int, force: bool = False) ->
             strategy=recommender.load_strategy(STRATEGY_PATH),
             state=coach_state.load_state(STATE_PATH),
             events=store.list_events(user_id),
+            today=period,
             days=REPORT_DAYS,
         )
     except recommender.RecommendationError as exc:
