@@ -46,7 +46,7 @@ validator violations and the auto-reprompt, token usage and cost).
 | `coach_preview_prompt(limit=20)` | The exact system+user prompt and JSON schema — **no API call** (free). Includes phase, block week and cycle info |
 | `coach_debug_recommendation(limit=20)` | Full generation run with the semantic validator: every attempt (raw output + violations + reprompt), final result, tokens/cost. Does not write to the DB |
 | `coach_generate_recommendation(limit=20, store=false)` | Generate a validated recommendation; `store=true` overwrites the app's cached recommendation |
-| `coach_weekly_report(days=7, fresh=false)` | Coach-style weekly retrospective (Markdown): week totals vs targets, PRs, weight/waist trends, discipline, next-week focus. Today's report is served from the cache instantly (a Sunday-evening timer pre-generates it); `fresh=true` regenerates for tokens |
+| `coach_weekly_report(days=7, fresh=false)` | Coach-style weekly retrospective (Markdown): week totals vs targets, PRs, weight/waist trends, discipline, next-week focus. Always covers the last **closed** calendar week (Mon–Sun), served from the cache instantly (a Monday-midnight timer pre-generates it); `fresh=true` regenerates for tokens |
 | `coach_phase_summary(history_index?)` | What a preparation phase delivered: duration, sessions + frequency, weight/waist start→finish with rate, PRs, discipline. No args — the current phase; an index — a closed phase from the journal |
 | `coach_costs()` | Monthly Claude API spend: recommendation generations + weekly reports (calls, tokens, estimated USD) |
 

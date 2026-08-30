@@ -33,7 +33,7 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
   Ни одного числа из событий не считается: это текст в промпт тренера
 - `GET /api/coach/signals` · `POST /api/coach/signals/dismiss`
 - `GET /api/recommendations/next` · `POST /api/recommendations/refresh`
-- `GET /api/reports/weekly` — кэшированный недельный отчёт тренера (без генерации; отчёт пишет воскресный таймер или Coach MCP)
+- `GET /api/reports/weekly` — кэшированный недельный отчёт тренера (без генерации; отчёт пишет ночной таймер понедельника или Coach MCP)
 
 Каталог упражнений отдаётся как статика по `GET /data/exercises.json` (его читает и iOS-клиент,
 и `recommender.py`).
@@ -131,10 +131,24 @@ per-exercise сводки за всю историю (топ-сет, e1RM по �
 сессии), без нотаций. **Недельный отчёт**: `generate_weekly_report()` собирает итоги
 недели (объём vs цель, ПР, тренды веса/талии, дисциплина, фокус следующей недели) и
 одним вызовом модели пишет Markdown-ретроспективу — MCP-инструмент `coach_weekly_report`.
-Отчёт кэшируется в таблице `coach_reports`: воскресный systemd-таймер
-([deploy/trainer-weekly-report.timer](./deploy/trainer-weekly-report.timer), 18:00 МСК,
+Период отчёта — последняя **закрытая** календарная неделя (пн–вс), а не «последние 7
+дней от сегодня»: дату считает `coach_state.last_closed_week_end`, и её же зовёт Coach
+MCP, когда ищет отчёт в кэше. Якорь общий не для красоты: разъедутся — инструмент
+промахнётся мимо кэша и молча перегенерирует отчёт за токены. Отчёт кэшируется в
+таблице `coach_reports`: systemd-таймер в ночь на понедельник
+([deploy/trainer-weekly-report.timer](./deploy/trainer-weekly-report.timer), 00:00 МСК,
 скрипт [weekly_report.py](./weekly_report.py)) генерирует его заранее, и инструмент
-отдаёт кэш мгновенно и бесплатно (`fresh=true` — перегенерация).
+отдаёт кэш мгновенно и бесплатно (`fresh=true` — перегенерация). Полночь, а не
+воскресный вечер, потому что вечерняя воскресная тренировка обязана попасть в отчёт
+о своей неделе.
+
+**Юниты таймеров ставятся на VPS руками**: ни CI, ни `deploy.sh` их не возят, они
+кладут только `trainer-miniapp-backend.service`. Для недельного отчёта это не мелочь,
+а условие работоспособности: старый воскресный юнит с новым кодом будит скрипт в день,
+когда последняя закрытая неделя уже в кэше, тот честно пишет «уже в кэше» и выходит —
+и отчёт перестаёт появляться совсем, молча. Код и `OnCalendar` едут вместе:
+`scp backend/deploy/trainer-weekly-report.timer <vps>:/etc/systemd/system/` +
+`systemctl daemon-reload && systemctl restart trainer-weekly-report.timer`.
 
 **Журнал фаз и итоги**: `coach_set_phase` закрывает уходящую фазу записью
 `{phase, started, ended}` в `phase_history`; `coach_phase_summary` считает «что дала

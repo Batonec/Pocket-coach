@@ -743,11 +743,14 @@ def coach_weekly_report(
     days: int = 7, fresh: bool = False, user_id: int | None = None
 ) -> CallToolResult:
     """Недельный отчёт тренера (Markdown): итоги недели, прогресс/ПР, вес и талия, дисциплина, фокус
-    следующей недели. Сегодняшний отчёт отдаётся из кэша мгновенно и бесплатно (воскресный таймер
-    генерирует его сам); fresh=true — перегенерировать за токены."""
+    следующей недели. Отчёт всегда про последнюю ЗАКРЫТУЮ неделю (пн–вс) и отдаётся из кэша
+    мгновенно и бесплатно (таймер в ночь на понедельник генерирует его сам); fresh=true —
+    перегенерировать за токены."""
     try:
         uid = _uid(user_id)
-        period_end = date.today().isoformat()
+        # Тот же якорь, что и у таймера (weekly_report.py), иначе промах мимо кэша.
+        period = coach_state.last_closed_week_end(date.today())
+        period_end = period.isoformat()
         if not fresh:
             cached = STORE.get_coach_report(uid, period_end, days)
             if cached:
@@ -774,6 +777,7 @@ def coach_weekly_report(
             strategy=recommender.load_strategy(_STRATEGY_PATH),
             state=coach_state.load_state(_STATE_PATH),
             events=STORE.list_events(uid),
+            today=period,
             days=days,
         )
         STORE.save_coach_report(

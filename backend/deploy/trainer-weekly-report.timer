@@ -1,11 +1,12 @@
 [Unit]
-Description=Trainer: Sunday-evening coach weekly report
+Description=Trainer: coach weekly report for the week that just closed
 
 [Timer]
-# VPS runs Europe/Moscow — Sunday 18:00 local: the training week is over and
-# the athlete reads an instant cached report. Persistent=true catches up after
-# VPS downtime.
-OnCalendar=Sun *-*-* 18:00:00
+# VPS runs Europe/Moscow — midnight from Sunday to Monday: the week is over for
+# real, so a Sunday-evening session still makes it into its own report. The
+# athlete finds the banner ready on Monday morning. Persistent=true catches up
+# after VPS downtime.
+OnCalendar=Mon *-*-* 00:00:00
 Persistent=true
 RandomizedDelaySec=300
 
