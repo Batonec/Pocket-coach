@@ -330,7 +330,9 @@ def _quoted(value: object) -> str:
 
 def _serialize_workout(workout: dict[str, Any], names_by_id: dict[int, str] | None = None) -> str:
     data = workout.get("data", {}) or {}
-    load_type = data.get("load_type") or "?"
+    # A session logged without a coach card has no load label — say so, rather
+    # than print «?», which the model reads as missing data.
+    load_type = data.get("load_type") or "без плана"
     parts: list[str] = []
     for exercise in data.get("exercises", []) or []:
         name = str(exercise.get("name", "")).strip() or "?"
@@ -456,6 +458,44 @@ def _serialize_history(
     rows += [(str(e.get("start_date") or ""), 0, _serialize_event(e)) for e in events or []]
     rows.sort(key=lambda row: row[:2])
     return "\n".join(row[2] for row in rows)
+
+
+def _render_attendance(workouts: list[dict[str, Any]], today: date) -> str:
+    """Training days per calendar week — the fact behind both the split switch
+    («каркас включается, когда атлет держит частоту») and the attendance gate
+    of the programme. Shared by the plan and the weekly report."""
+    rows = coach_features.weekly_attendance(workouts, today)
+    return _block(
+        "attendance",
+        weeks=coach_features.render_weekly_attendance(rows, today),
+        streak_three=str(coach_features.attendance_streak(rows, 3)),
+        streak_four=str(coach_features.attendance_streak(rows, 4)),
+    )
+
+
+def _render_stall(
+    workouts: list[dict[str, Any]],
+    summaries: list[dict[str, Any]],
+    matrix: dict[str, Any],
+    params: dict[str, Any],
+    state: dict[str, Any],
+    today: date,
+) -> str:
+    """Preconditions and stall over the ACTIVE window: it starts at the block
+    anchor (phase start / return after a ≥14-day break), so a vacation cannot
+    dilute the frequency, and volume thresholds come from the phase's own
+    per-group targets."""
+    report = coach_features.stall_report(
+        workouts,
+        summaries,
+        matrix.get("trend_per_week"),
+        params["phase"],
+        params.get("rate_kg_per_week"),
+        today,
+        since=coach_state._block_anchor(state, workouts, today),
+        group_targets=params.get("group_targets"),
+    )
+    return coach_features.render_stall_report(report)
 
 
 def _days_since_last(workouts: list[dict[str, Any]], today: date) -> int | None:
@@ -650,6 +690,7 @@ def _build_user_prompt(
             volume, week_target, maintenance_sets, params.get("group_targets")
         )
     )
+    chunks.append(_render_attendance(workouts, today))
 
     measurement_lines = coach_features.render_measurements(body_weights, waists, today)
     matrix = coach_features.nutrition_matrix(state, params, body_weights, waists, today)
@@ -667,17 +708,7 @@ def _build_user_prompt(
             _block("summaries_header") + "\n" + coach_features.render_exercise_summaries(summaries)
         )
 
-    stall = coach_features.stall_report(
-        workouts,
-        summaries,
-        matrix.get("trend_per_week"),
-        phase,
-        params.get("rate_kg_per_week"),
-        today,
-    )
-    stall_line = coach_features.render_stall_report(stall)
-    if stall_line:
-        chunks.append(stall_line)
+    chunks.append(_render_stall(workouts, summaries, matrix, params, state, today))
 
     if returning and days is not None:
         pre_break = coach_features.render_pre_break_weights(
@@ -686,9 +717,19 @@ def _build_user_prompt(
         if pre_break:
             chunks.append(pre_break)
 
-    ramp_lines = coach_features.comeback_ramp(workouts, catalog or [], today)
-    if ramp_lines:
-        chunks.append(_block("comeback_ramp_header") + "\n" + "\n".join(ramp_lines))
+    ramp_items = coach_features.comeback_ramp_steps(workouts, catalog or [], today)
+    if ramp_items:
+        first = ramp_items[0]
+        chunks.append(
+            _block(
+                "comeback_ramp_header",
+                start=first["break_start"].isoformat(),
+                end=first["break_end"].isoformat(),
+                days=str((first["break_end"] - first["break_start"]).days - 1),
+            )
+            + "\n"
+            + "\n".join(coach_features.render_comeback_ramp(ramp_items))
+        )
 
     discipline_lines: list[str] = []
     discipline = coach_features.render_adherence_stats(
@@ -1073,18 +1114,35 @@ def _comeback_ceilings(
     }
 
 
+def _session_cap(params: dict[str, Any]) -> int | None:
+    """Upper bound of the phase's session corridor (`session_sets`), or None
+    when the parameter is not a usable range — then the size is not checked."""
+    bounds = params.get("session_sets")
+    if isinstance(bounds, (list, tuple)) and len(bounds) == 2:
+        try:
+            return int(bounds[1])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _planned_sets(recommendation: dict[str, Any]) -> int:
+    return sum(len(exercise["sets"]) for exercise in recommendation.get("exercises", []) or [])
+
+
 def _semantic_violations(
     recommendation: dict[str, Any],
     catalog: list[dict[str, Any]],
     workouts: list[dict[str, Any]],
     today: date,
+    session_cap: int | None = None,
 ) -> list[str]:
-    """The two hard bounds the JSON schema cannot express: the comeback
-    no-progression ceiling and muscle-group coverage. Rep ranges, session
-    size, weight jumps and load sequencing are deliberately NOT checked —
-    that is the model's coaching judgement, guided by the prompt. Each
-    violation is a human-readable line — the list goes verbatim into the
-    reprompt."""
+    """The three hard bounds the JSON schema cannot express: the comeback
+    no-progression ceiling, muscle-group coverage and the session-size cap of
+    the phase. Rep ranges, weight jumps, load sequencing and the LOWER bound
+    of the session corridor are deliberately NOT checked — that is the
+    model's coaching judgement, guided by the prompt. Each violation is a
+    human-readable line — the list goes verbatim into the reprompt."""
     violations: list[str] = []
 
     # 1) return from a break: no weight above the pre-break working weight.
@@ -1121,7 +1179,44 @@ def _semantic_violations(
                 "и отсутствует в плане — добавь хотя бы 1–2 подхода"
             )
 
+    # 3) session size: the phase corridor's upper bound is a hard cap. The
+    # athlete's ~60-minute sessions overran on 19–22-set cards built «по
+    # дефициту объёма»; the corridor is the phase's own parameter, so the
+    # server holds the line. The lower bound stays unchecked — a short
+    # session can be a decision.
+    if session_cap is not None:
+        total = _planned_sets(recommendation)
+        if total > session_cap:
+            violations.append(
+                f"в плане {total} рабочих подходов при потолке сессии {session_cap} для этой "
+                f"фазы — сократи до {session_cap}, начиная с изоляции"
+            )
+
     return violations
+
+
+def _trim_to_cap(recommendation: dict[str, Any], cap: int) -> list[str]:
+    """Drop sets from the tail of the plan until it fits the cap: the last
+    exercise first, one set per pass, never below one set per exercise — so
+    the coverage rule (≥1 set for a dry group) survives the cut. Removing sets
+    invents no numbers, which is why this bound gets a real resolution and
+    coverage only gets a note."""
+    exercises = recommendation.get("exercises", []) or []
+    removed: dict[str, int] = {}
+    total = _planned_sets(recommendation)
+    while total > cap:
+        progressed = False
+        for exercise in reversed(exercises):
+            if total <= cap:
+                break
+            if len(exercise["sets"]) > 1:
+                exercise["sets"].pop()
+                removed[exercise["name"]] = removed.get(exercise["name"], 0) + 1
+                total -= 1
+                progressed = True
+        if not progressed:
+            break
+    return [f"{name} −{count}" for name, count in removed.items()]
 
 
 def _resolve_violations(
@@ -1129,12 +1224,13 @@ def _resolve_violations(
     catalog: list[dict[str, Any]],
     workouts: list[dict[str, Any]],
     today: date,
+    session_cap: int | None = None,
 ) -> list[str]:
     """Deterministic last resort after the reprompt also failed: clamp comeback
-    weights to their pre-break ceilings and surface anything unfixable (group
-    coverage) as an honest note in the rationale. A slightly imperfect plan
-    with a visible note beats an error card — generation must not fail over
-    methodology."""
+    weights to their pre-break ceilings, trim an oversized session to the cap,
+    and surface anything unfixable (group coverage) as an honest note in the
+    rationale. A slightly imperfect plan with a visible note beats an error
+    card — generation must not fail over methodology."""
     adjustments: list[str] = []
     ceilings = _comeback_ceilings(workouts, catalog, today)
     for exercise in recommendation.get("exercises", []) or []:
@@ -1157,7 +1253,17 @@ def _resolve_violations(
             "**Проверка методики:** возвратные веса ограничены доперерывными "
             "рабочими: " + "; ".join(adjustments) + "."
         )
-    remaining = _semantic_violations(recommendation, catalog, workouts, today)
+    if session_cap is not None and _planned_sets(recommendation) > session_cap:
+        trimmed = _trim_to_cap(recommendation, session_cap)
+        if trimmed:
+            adjustments.extend(trimmed)
+            notes.append(
+                f"**Проверка методики:** сессия сокращена до {session_cap} рабочих подходов "
+                "(потолок фазы): " + ", ".join(trimmed) + "."
+            )
+    remaining = _semantic_violations(
+        recommendation, catalog, workouts, today, session_cap=session_cap
+    )
     if remaining:
         notes.append(
             "**Проверка методики:** сервер не смог согласовать с моделью: "
@@ -1215,6 +1321,7 @@ def generate_with_trace(
 
     today = today or date.today()
     state = state if state is not None else coach_state.load_state(None)
+    session_cap = _session_cap(coach_state.phase_params(state))
     system = _build_system_prompt(catalog, profile, state, strategy)
     user = _build_user_prompt(
         workouts,
@@ -1242,7 +1349,9 @@ def generate_with_trace(
     trace: list[dict[str, Any]] = []
     parsed, usage = call(user)
     recommendation = _validate(parsed, catalog)
-    violations = _semantic_violations(recommendation, catalog, workouts, today)
+    violations = _semantic_violations(
+        recommendation, catalog, workouts, today, session_cap=session_cap
+    )
     trace.append(
         {
             "raw": parsed,
@@ -1270,10 +1379,14 @@ def generate_with_trace(
         ]
         parsed, usage_retry = call(messages)
         recommendation = _validate(parsed, catalog)
-        violations = _semantic_violations(recommendation, catalog, workouts, today)
+        violations = _semantic_violations(
+            recommendation, catalog, workouts, today, session_cap=session_cap
+        )
         adjustments: list[str] = []
         if violations:
-            adjustments = _resolve_violations(recommendation, catalog, workouts, today)
+            adjustments = _resolve_violations(
+                recommendation, catalog, workouts, today, session_cap=session_cap
+            )
         trace.append(
             {
                 "raw": parsed,
@@ -1477,6 +1590,7 @@ def _build_report_prompt(
             params.get("group_targets"),
         )
     )
+    chunks.append(_render_attendance(workouts, today))
 
     summaries = coach_features.exercise_summaries(workouts, catalog, today)
     prs = [
@@ -1489,17 +1603,7 @@ def _build_report_prompt(
     )
 
     matrix = coach_features.nutrition_matrix(state, params, body_weights, waists, today)
-    stall = coach_features.stall_report(
-        workouts,
-        summaries,
-        matrix.get("trend_per_week"),
-        params["phase"],
-        params.get("rate_kg_per_week"),
-        today,
-    )
-    stall_line = coach_features.render_stall_report(stall)
-    if stall_line:
-        chunks.append(stall_line)
+    chunks.append(_render_stall(workouts, summaries, matrix, params, state, today))
 
     measurements = coach_features.render_measurements(body_weights, waists, today)
     nutrition = list(measurements)
