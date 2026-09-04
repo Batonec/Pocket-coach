@@ -6,11 +6,15 @@ volumes on every call — anchoring on whatever the recent sessions happened to
 be. This module pre-computes those facts on the server so the prompt feeds the
 model *data*, not homework:
 
-- per-exercise all-time summaries (top set, Epley e1RM, last PR, recent sessions);
-- a stall detector with explicit "resource exhausted" preconditions;
-- return-from-break ramp steps (current → peak over 3–4 sessions);
+- per-exercise all-time summaries (top set, Epley e1RM, last PR, recent sessions
+  with the movement's position in each session);
+- a stall detector with explicit "resource exhausted" preconditions, measured
+  over the ACTIVE window of the current block (never across a vacation);
+- attendance by calendar week (the programme's gate and split switch);
+- return-from-break ramp steps (current → PRE-BREAK working weight, not peak);
 - weekly volume per muscle group in direct AND effective sets (secondary load);
-- body-weight / waist trends and the phase nutrition decision matrix.
+- body-weight / waist trends and the nutrition decision matrix keyed on the
+  phase's weight-rate corridor.
 
 Stdlib-only, like the rest of the backend.
 """
@@ -21,6 +25,9 @@ from collections import Counter
 from datetime import date, timedelta
 from itertools import pairwise
 from typing import Any
+
+import coach_state
+from coach_state import BREAK_DAYS
 
 # Catalog id 1 («Жим гор.») and id 18 («Жим в тренажере») are the same machine;
 # old history rows still carry id 1, so every consumer maps through this alias.
@@ -134,11 +141,20 @@ MAX_PLAUSIBLE_WAIST_CM = 160.0
 STALE_MEASUREMENT_DAYS = 14
 
 # Stall-detector calibration ("resource exhausted" preconditions, section 4.2).
+# Everything is measured over the ACTIVE window: at most 6 weeks back, but never
+# across the start of the current block (phase start / return after a ≥14-day
+# break). A window that includes a vacation reports a frequency the athlete
+# never had and a volume he never trained — the model then builds fullbody
+# sessions «по дефициту» that does not exist.
 STALL_WINDOW_DAYS = 42  # 6 weeks
-STALL_MIN_WORKOUTS = 15  # ≥2.5 sessions/week over the window
-STALL_MIN_WEEKLY_SETS = 10.0  # per BIG group, averaged over the window
-STALL_NO_PR_DAYS = 28  # ≥4 weeks without a PR
+STALL_MIN_WEEKLY_FREQUENCY = 2.5  # sessions per week over the active window
+STALL_MIN_WEEKLY_SETS = 10.0  # per BIG group when the phase names no group target
+STALL_MIN_WINDOW_DAYS = 21  # under three weeks there is nothing to judge yet
+STALL_NO_PR_DAYS = 28  # ≥4 weeks without an improvement INSIDE the window
 STALL_MIN_EXERCISE_SESSIONS = 3  # can't stall a lift you barely visit
+# Weight-rate tolerance around the phase corridor (kg/week) shared by the
+# preconditions and the nutrition matrix.
+RATE_TOLERANCE = 0.15
 
 _EFFORT_MARK = {"easy": "-", "ok": "", "hard": "+"}
 
@@ -207,6 +223,17 @@ def _session_top(sets: list[dict[str, Any]], *, inverted: bool) -> dict[str, Any
     return max(sets, key=lambda s: epley_e1rm(s["weight"], s["reps"]))
 
 
+def _beats(top: dict[str, Any], best: dict[str, Any], *, inverted: bool) -> bool:
+    """Is `top` a better set than `best`: higher e1RM, or for the gravitron a
+    lower counterweight (more reps break the tie)? One comparison for the
+    summary, the peak and the in-window stall clock — they must not drift."""
+    if inverted:
+        return top["weight"] < best["weight"] or (
+            top["weight"] == best["weight"] and top["reps"] > best["reps"]
+        )
+    return epley_e1rm(top["weight"], top["reps"]) > epley_e1rm(best["weight"], best["reps"]) + 1e-9
+
+
 def _best_set(
     sessions: list[tuple[date, list[dict[str, Any]]]], *, inverted: bool
 ) -> tuple[dict[str, Any], date]:
@@ -218,21 +245,29 @@ def _best_set(
     best_when: date | None = None
     for when, sets in sessions:
         top = _session_top(sets, inverted=inverted)
-        if best is None:
-            best, best_when = top, when
-            continue
-        if inverted:
-            is_better = top["weight"] < best["weight"] or (
-                top["weight"] == best["weight"] and top["reps"] > best["reps"]
-            )
-        else:
-            is_better = (
-                epley_e1rm(top["weight"], top["reps"])
-                > epley_e1rm(best["weight"], best["reps"]) + 1e-9
-            )
-        if is_better:
+        if best is None or _beats(top, best, inverted=inverted):
             best, best_when = top, when
     return best, best_when
+
+
+def _exercise_positions(workouts: list[dict[str, Any]]) -> dict[tuple[date, int], tuple[int, int]]:
+    """{(date, canonical exercise id): (position, exercises in that session)}.
+
+    The working weight depends on WHERE the movement stood: a row done first
+    on fresh legs and the same row sixth after a leg press are two different
+    numbers, and the model must not read the second as lost strength."""
+    positions: dict[tuple[date, int], tuple[int, int]] = {}
+    for workout in workouts:
+        when = _workout_date(workout)
+        if when is None:
+            continue
+        exercises = (workout.get("data", {}) or {}).get("exercises", []) or []
+        total = len(exercises)
+        for index, exercise in enumerate(exercises, start=1):
+            exercise_id = canonical_exercise_id(exercise.get("exercise_id"))
+            if exercise_id is not None:
+                positions[(when, exercise_id)] = (index, total)
+    return positions
 
 
 # Anomalous-set filter thresholds for the current-working-weight metric: a
@@ -308,6 +343,14 @@ def _format_set(workout_set: dict[str, Any]) -> str:
     return f"{workout_set['weight']:g}×{workout_set['reps']}{mark}{rir_repr}"
 
 
+def _position_tag(position: tuple[int, int] | None) -> str:
+    """«[#3/7] » — the movement was third of seven in that session."""
+    if position is None:
+        return ""
+    index, total = position
+    return f"[#{index}/{total}] "
+
+
 # --------------------------------------------------------------------------- #
 # Per-exercise summaries (4.1)
 # --------------------------------------------------------------------------- #
@@ -318,6 +361,7 @@ def exercise_summaries(
 ) -> list[dict[str, Any]]:
     names = {item["id"]: item["name"] for item in catalog}
     sessions_by_exercise = _iter_exercise_sessions(workouts)
+    positions = _exercise_positions(workouts)
 
     summaries: list[dict[str, Any]] = []
     for exercise_id, sessions in sessions_by_exercise.items():
@@ -334,16 +378,7 @@ def exercise_summaries(
             if best is None:
                 best, best_when, last_pr = top, when, when
                 continue
-            if inverted:
-                is_pr = top["weight"] < best["weight"] or (
-                    top["weight"] == best["weight"] and top["reps"] > best["reps"]
-                )
-            else:
-                is_pr = (
-                    epley_e1rm(top["weight"], top["reps"])
-                    > epley_e1rm(best["weight"], best["reps"]) + 1e-9
-                )
-            if is_pr:
+            if _beats(top, best, inverted=inverted):
                 best, best_when, last_pr = top, when, when
                 pr_dates.append(when.isoformat())
 
@@ -376,7 +411,11 @@ def exercise_summaries(
                 "current_date": current_when.isoformat(),
                 "pct_of_peak": pct,
                 "recent_sessions": [
-                    (when.isoformat(), ", ".join(_format_set(s) for s in sets))
+                    (
+                        when.isoformat(),
+                        _position_tag(positions.get((when, exercise_id)))
+                        + ", ".join(_format_set(s) for s in sets),
+                    )
                     for when, sets in sessions[-3:]
                 ],
             }
@@ -459,20 +498,33 @@ def render_weekly_volume(
     lines = []
     for group, counts in volume.items():
         effective = f"{counts['effective']:g}"
-        line = f"  {group}: {counts['direct']} прямых / {effective} эффективных"
         goal = targets.get(group)
         if goal:
-            line += f" (цель блока {goal[0]}–{goal[1]})"
+            # The goal is stated in DIRECT sets — that is how the programme's
+            # table counts — so it stands next to the direct number, and the
+            # effective count is labelled as the reference it is. One number
+            # in the wrong column and the model picks the smaller of two goals.
+            line = (
+                f"  {group}: {counts['direct']} прямых (цель {goal[0]:g}–{goal[1]:g}) / "
+                f"{effective} эффективных (справочно)"
+            )
+        else:
+            line = f"  {group}: {counts['direct']} прямых / {effective} эффективных"
         lines.append(line)
     if group_targets:
         lines.append(
-            "  Цели выше — объём ЗРЕЛОГО блока по программе; на неделях разгона "
-            "идём к ним снизу, ориентир недели — в разделе ПРОГРАММА."
+            "  Цели — в ПРЯМЫХ сетах и на объём ЗРЕЛОГО блока по программе; на неделях "
+            "разгона идём к ним снизу, ориентир недели — в разделе ПРОГРАММА. Эффективные "
+            "сеты справочные: показывают, сколько косвенной работы группа уже получила, "
+            "но цель не закрывают."
         )
     elif week_target:
+        small = ", ".join(
+            f"{group} {low}–{high}" for group, (low, high) in SMALL_GROUP_TARGETS.items()
+        )
         lines.append(
             f"  Цель этой недели блока для крупных групп: {week_target[0]}–{week_target[1]} "
-            "эффективных сетов; малые группы — пропорционально ниже своих потолков."
+            f"эффективных сетов; ориентиры малых групп (прямых): {small}."
         )
     elif maintenance_sets:
         lines.append(
@@ -485,83 +537,241 @@ def render_weekly_volume(
 # --------------------------------------------------------------------------- #
 # Stall detector (4.2)
 # --------------------------------------------------------------------------- #
+def _rate_bounds(rate_range: Any, phase: str) -> tuple[float, float]:
+    """The phase's weekly weight corridor as floats. A caller without an
+    explicit range gets the defaults of that phase — every phase has one, so
+    no branch below has to key on the phase NAME."""
+    if isinstance(rate_range, (list, tuple)) and len(rate_range) == 2:
+        return float(rate_range[0]), float(rate_range[1])
+    fallback = coach_state.PHASE_DEFAULTS.get(phase, {}).get("rate_kg_per_week") or (0.0, 0.0)
+    return float(fallback[0]), float(fallback[1])
+
+
+def _in_window_progress(
+    sessions: list[tuple[date, list[dict[str, Any]]]],
+    window_start: date,
+    today: date,
+    *,
+    inverted: bool,
+) -> tuple[int, int] | None:
+    """(sessions inside the window, days since the last improvement there).
+
+    The all-time PR date is the wrong stall clock after a break: the athlete
+    sits legitimately below a peak set months ago while climbing back session
+    by session, and «ПР 110 дн. назад» would flag every lift the day the
+    preconditions turn green. Progress is therefore measured INSIDE the
+    active window — the first session there is the baseline, each later
+    session that beats the best-so-far is an improvement, and the clock runs
+    from the last one."""
+    inside = [(when, sets) for when, sets in sessions if window_start <= when <= today]
+    if not inside:
+        return None
+    best: dict[str, Any] | None = None
+    last_improvement = inside[0][0]
+    for when, sets in inside:
+        top = _session_top(sets, inverted=inverted)
+        if best is not None and _beats(top, best, inverted=inverted):
+            last_improvement = when
+        if best is None or _beats(top, best, inverted=inverted):
+            best = top
+    return len(inside), (today - last_improvement).days
+
+
 def stall_report(
     workouts: list[dict[str, Any]],
     summaries: list[dict[str, Any]],
-    weight_trend_per_week: float | None,
+    trend: float | None,
     phase: str,
     rate_range: tuple[float, float] | None,
     today: date,
+    *,
+    since: date | None = None,
+    group_targets: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Preconditions first: a plateau only counts as «ресурс исчерпан» when the
     athlete actually trained enough, ate enough and slept the volume in. If the
     preconditions are red, the flag is withheld ON PURPOSE — the model must
-    explain the plateau through attendance/food, not through a «potолок»."""
-    window_dates = [
+    explain the plateau through attendance/food, not through a «потолок».
+
+    `since` is the start of the current block (phase start, or the first
+    session after a ≥14-day break): the window never reaches across it, so a
+    vacation cannot dilute the frequency. Volume thresholds are the lower
+    bounds of the phase's own per-group targets when it names them — a quad
+    target of 8–10 must not be judged against a flat 10."""
+    window_start = today - timedelta(days=STALL_WINDOW_DAYS - 1)
+    if since is not None and window_start < since <= today:
+        window_start = since
+    window_days = (today - window_start).days + 1
+    weeks = window_days / 7
+
+    window_dates = {
         when
         for when in (_workout_date(w) for w in workouts)
-        if when is not None and 0 <= (today - when).days < STALL_WINDOW_DAYS
-    ]
-    reasons: list[str] = []
-    frequency = len(window_dates) / (STALL_WINDOW_DAYS / 7)
-    if len(window_dates) < STALL_MIN_WORKOUTS:
-        reasons.append(f"частота {frequency:.1f}/нед за 6 недель (нужно ≥2.5)")
+        if when is not None and window_start <= when <= today
+    }
+    frequency = len(window_dates) / weeks
 
-    volume = weekly_volume(workouts, today, days=STALL_WINDOW_DAYS)
-    weeks = STALL_WINDOW_DAYS / 7
+    volume = weekly_volume(workouts, today, days=window_days)
+    volume_per_week: dict[str, tuple[float, float]] = {}
+    for group in BIG_GROUPS:
+        threshold = STALL_MIN_WEEKLY_SETS
+        target = (group_targets or {}).get(group)
+        if isinstance(target, (list, tuple)) and len(target) == 2:
+            threshold = float(target[0])
+        volume_per_week[group] = (volume[group]["direct"] / weeks, threshold)
+
+    reasons: list[str] = []
+    if frequency < STALL_MIN_WEEKLY_FREQUENCY:
+        reasons.append(f"частота {frequency:.1f}/нед (нужно ≥{STALL_MIN_WEEKLY_FREQUENCY:g})")
     low_groups = [
-        f"{group} {volume[group]['direct'] / weeks:.1f}"
-        for group in BIG_GROUPS
-        if volume[group]["direct"] / weeks < STALL_MIN_WEEKLY_SETS
+        f"{group} {value:.1f} < {threshold:g}"
+        for group, (value, threshold) in volume_per_week.items()
+        if value < threshold
     ]
     if low_groups:
-        reasons.append(f"объём ниже {STALL_MIN_WEEKLY_SETS:g} сетов/нед: {', '.join(low_groups)}")
+        reasons.append("объём/нед ниже порога: " + ", ".join(low_groups))
 
-    if weight_trend_per_week is None:
+    if trend is None:
         reasons.append("нет свежего тренда веса")
-    elif phase == "cut_recomp":
-        if rate_range and not (
-            rate_range[0] - 0.15 <= weight_trend_per_week <= rate_range[1] + 0.15
-        ):
-            reasons.append(f"вес вне целевого темпа среза ({weight_trend_per_week:+.2f} кг/нед)")
-    else:  # lean_bulk / maintenance: the weight must not be falling
-        if weight_trend_per_week < -0.1:
-            reasons.append(f"вес падает ({weight_trend_per_week:+.2f} кг/нед)")
-
-    ok = not reasons
-    stalled: list[dict[str, Any]] = []
-    if ok:
-        for summary in summaries:
-            recent_sessions = sum(
-                1
-                for when, _ in ((date.fromisoformat(w), s) for w, s in summary["recent_sessions"])
-                if (today - when).days < STALL_WINDOW_DAYS
+    else:
+        low, high = _rate_bounds(rate_range, phase)
+        corridor = f"{low:+.2f}…{high:+.2f}"
+        if low > 0.0:
+            # Gaining: only a FALLING weight says the surplus is not there.
+            if trend < low - RATE_TOLERANCE:
+                reasons.append(f"вес падает ({trend:+.2f} кг/нед при коридоре {corridor})")
+        elif not (low - RATE_TOLERANCE <= trend <= high + RATE_TOLERANCE):
+            # Cutting or holding: the weight has to stay inside its corridor.
+            reasons.append(
+                f"вес вне целевого темпа фазы ({trend:+.2f} кг/нед при коридоре {corridor})"
             )
-            if (
-                summary["days_since_pr"] >= STALL_NO_PR_DAYS
-                and summary["sessions_total"] >= STALL_MIN_EXERCISE_SESSIONS
-                and recent_sessions >= 2
-            ):
-                stalled.append(summary)
-    return {"preconditions_ok": ok, "reasons": reasons, "stalled": stalled}
+
+    too_short = window_days < STALL_MIN_WINDOW_DAYS
+    ok = not reasons and not too_short
+    stalled: list[dict[str, Any]] = []
+    if ok and window_days >= STALL_NO_PR_DAYS:
+        sessions_by_exercise = _iter_exercise_sessions(workouts)
+        for summary in summaries:
+            progress = _in_window_progress(
+                sessions_by_exercise.get(summary["exercise_id"]) or [],
+                window_start,
+                today,
+                inverted=summary["inverted"],
+            )
+            if progress is None:
+                continue
+            count, quiet_days = progress
+            if count >= STALL_MIN_EXERCISE_SESSIONS and quiet_days >= STALL_NO_PR_DAYS:
+                stalled.append(
+                    {
+                        "exercise_id": summary["exercise_id"],
+                        "name": summary["name"],
+                        "quiet_days": quiet_days,
+                    }
+                )
+    return {
+        "window_start": window_start,
+        "window_days": window_days,
+        "frequency": frequency,
+        "volume_per_week": volume_per_week,
+        "too_short": too_short,
+        "preconditions_ok": ok,
+        "reasons": reasons,
+        "stalled": stalled,
+    }
 
 
-def render_stall_report(report: dict[str, Any]) -> str | None:
-    if report["preconditions_ok"] and report["stalled"]:
-        names = ", ".join(
-            f"{s['name']} (ПР {s['days_since_pr']} дн. назад)" for s in report["stalled"]
+def render_stall_report(report: dict[str, Any]) -> str:
+    """Two lines: the facts of the active window (always — «фактическая
+    частота приходит в данных» is a promise the programme header makes), then
+    the verdict on preconditions and stall."""
+    volume = ", ".join(
+        f"{group} {value:.1f} (порог {threshold:g})"
+        for group, (value, threshold) in report["volume_per_week"].items()
+    )
+    facts = (
+        f"Активное окно {report['window_days']} дн. (с {report['window_start'].isoformat()}; "
+        "перерыв ≥14 дней и прошлая фаза в него не входят): "
+        f"частота {report['frequency']:.1f}/нед; прямых сетов/нед: {volume}."
+    )
+    if report["too_short"]:
+        verdict = (
+            f"Окно короче {STALL_MIN_WINDOW_DAYS} дней — предусловия прогресса и застой "
+            "пока не оцениваются."
         )
-        return (
-            f"ЗАСТОЙ при выполненных предусловиях (частота/объём/питание в норме): {names}. "
-            "Предложи deload −10% с разгоном или вариацию по этим движениям."
-        )
-    if not report["preconditions_ok"] and report["reasons"]:
-        return (
+    elif not report["preconditions_ok"]:
+        verdict = (
             "Предусловия прогресса НЕ выполнены ("
             + "; ".join(report["reasons"])
             + ") — плато, если оно есть, объясняй посещаемостью/питанием, а не потолком."
         )
-    return None
+    elif report["stalled"]:
+        names = ", ".join(
+            f"{s['name']} (без прироста {s['quiet_days']} дн.)" for s in report["stalled"]
+        )
+        verdict = (
+            f"ЗАСТОЙ при выполненных предусловиях (частота/объём/питание в норме): {names}. "
+            "Предложи deload −10% с разгоном или вариацию по этим движениям."
+        )
+    elif report["window_days"] < STALL_NO_PR_DAYS:
+        verdict = (
+            f"Предусловия прогресса выполнены; окну меньше {STALL_NO_PR_DAYS} дней — "
+            "застой ещё не оценивается."
+        )
+    else:
+        verdict = "Предусловия прогресса выполнены, застоя по упражнениям нет."
+    return f"{facts}\n{verdict}"
+
+
+# --------------------------------------------------------------------------- #
+# Attendance by calendar week (the gate's «явка» and the split switch)
+# --------------------------------------------------------------------------- #
+def weekly_attendance(
+    workouts: list[dict[str, Any]], today: date, weeks: int = 4
+) -> list[dict[str, Any]]:
+    """Training days per calendar week (Mon–Sun): the last `weeks` closed
+    weeks plus the current one, oldest first. Pure calendar facts — events
+    that explain an empty week stay in the chronicle, no number here reads
+    them."""
+    training_days = {when for when in (_workout_date(w) for w in workouts) if when is not None}
+    monday = today - timedelta(days=today.weekday())
+    rows: list[dict[str, Any]] = []
+    for offset in range(weeks, -1, -1):
+        start = monday - timedelta(days=7 * offset)
+        end = start + timedelta(days=6)
+        rows.append(
+            {
+                "start": start,
+                "end": end,
+                "sessions": sum(1 for when in training_days if start <= when <= end),
+                "closed": offset > 0,
+            }
+        )
+    return rows
+
+
+def attendance_streak(rows: list[dict[str, Any]], minimum: int) -> int:
+    """Consecutive CLOSED weeks, counted back from the latest closed one, with
+    at least `minimum` sessions each. The running week is not counted: a
+    Wednesday cannot fail a week that still has four days."""
+    streak = 0
+    for row in reversed(rows):
+        if not row["closed"]:
+            continue
+        if row["sessions"] < minimum:
+            break
+        streak += 1
+    return streak
+
+
+def render_weekly_attendance(rows: list[dict[str, Any]], today: date) -> str:
+    parts = []
+    for row in rows:
+        label = f"{row['start'].isoformat()}…{row['end'].isoformat()}"
+        if not row["closed"]:
+            label += f" (текущая, по {today.isoformat()})"
+        parts.append(f"{label}: {row['sessions']}")
+    return ", ".join(parts)
 
 
 # --------------------------------------------------------------------------- #
@@ -570,15 +780,6 @@ def render_stall_report(report: dict[str, Any]) -> str | None:
 def _top_weight_diffs(sessions: list[tuple[date, list[dict[str, Any]]]]) -> list[float]:
     tops = [_session_top(sets, inverted=False)["weight"] for _, sets in sessions]
     return [round(abs(b - a), 2) for a, b in pairwise(tops) if abs(b - a) > 0.01]
-
-
-def _weight_step_hint(sessions: list[tuple[date, list[dict[str, Any]]]]) -> float:
-    """The step the athlete actually uses on this machine (most common diff
-    between consecutive distinct session top-weights)."""
-    diffs = _top_weight_diffs(sessions)
-    if not diffs:
-        return 5.0
-    return Counter(diffs).most_common(1)[0][0]
 
 
 def _weight_granularity(sessions: list[tuple[date, list[dict[str, Any]]]]) -> float:
@@ -591,13 +792,18 @@ def _weight_granularity(sessions: list[tuple[date, list[dict[str, Any]]]]) -> fl
     return max(0.5, min(diffs))
 
 
-# Ramp-ladder invariants: no jump above ~13% (their acceptance regression uses
-# a 12.5% first step, so «10–12%» gets a hair of headroom), and after a LARGE
-# gap the first rung must sit at or below ~90% of the peak. A ladder violating
-# them is rebuilt as three equal steps — never served as-is.
-_RAMP_MAX_JUMP = 0.13
-_RAMP_BIG_GAP = 0.15
-_RAMP_FIRST_STEP_CAP = 0.90
+# Ramp-ladder rules. Rungs are the machine's own plate step, even where that
+# step is coarser than the programme's «≤10%» (a 10-kg plate on an 80-kg leg
+# press is a real rung — growing by reps between rungs is the model's call).
+# The one rebuild: a LONE rung above this jump is not a ladder but a history
+# artefact (the athlete once skipped plates), and equal thirds serve better.
+# More rungs than the cap are compressed into equal steps: the ladder is a
+# hint for the next few weeks, not a session-by-session script.
+_RAMP_LONE_JUMP = 0.20
+_RAMP_MAX_RUNGS = 6
+# The return ladder is a fact about the current block: once the comeback is
+# older than this, an unregained weight is ordinary history, not a ramp.
+RETURN_LADDER_DAYS = 56
 
 
 def _round_half(value: float) -> float:
@@ -623,92 +829,97 @@ def _equal_steps(current: float, peak: float, count: int, granularity: float = 2
     return steps
 
 
-def _ramp_valid(current: float, steps: list[float], peak: float, inverted: bool) -> bool:
-    if not steps:
+def _lone_jump(current: float, steps: list[float], inverted: bool) -> bool:
+    """A single rung that jumps more than _RAMP_LONE_JUMP of the current weight."""
+    if len(steps) != 1 or current <= 0:
         return False
-    gap = (current - peak) if inverted else (peak - current)
-    big_gap = peak > 0 and gap > _RAMP_BIG_GAP * peak
-    previous = current
-    for step in steps:
-        if previous <= 0:
-            return False
-        jump = (previous - step) / previous if inverted else (step - previous) / previous
-        if jump > _RAMP_MAX_JUMP + 1e-9:
-            return False
-        previous = step
-    if big_gap:
-        first = steps[0]
-        if inverted:
-            if first < peak * (2 - _RAMP_FIRST_STEP_CAP) - 1e-9:  # ≥110% of peak
-                return False
-        elif first > peak * _RAMP_FIRST_STEP_CAP + 1e-9:
-            return False
-    return True
+    jump = (current - steps[0]) / current if inverted else (steps[0] - current) / current
+    return jump > _RAMP_LONE_JUMP + 1e-9
+
+
+def last_break(
+    workouts: list[dict[str, Any]], min_days: int = BREAK_DAYS
+) -> tuple[date, date] | None:
+    """(last session before, first session after) the most recent gap of at
+    least `min_days` between two LOGGED sessions — the break the athlete has
+    already come back from. A break still running (no session after it yet)
+    is `coach_state.is_return_from_break` territory, not reported here."""
+    dates = sorted({when for when in (_workout_date(w) for w in workouts) if when is not None})
+    found: tuple[date, date] | None = None
+    for previous, current in pairwise(dates):
+        if (current - previous).days >= min_days:
+            found = (previous, current)
+    return found
 
 
 def comeback_ramp_steps(
     workouts: list[dict[str, Any]],
     catalog: list[dict[str, Any]],
-    # Здесь today не используется, но сигнатура (workouts, catalog, today)
-    # общая у всех десяти фич-функций модуля — вызывающий код передаёт их
-    # единообразно. Убрать аргумент = сломать симметрию ради одной функции.
-    today: date,  # noqa: ARG001
+    today: date,
 ) -> list[dict[str, Any]]:
-    """For each main movement noticeably below its peak: precomputed return
-    steps current → peak over 3–4 sessions.
+    """For each main movement still below its PRE-BREAK working weight: return
+    steps current → pre-break working, one machine step at a time.
 
-    The peak is THE SAME real set the per-exercise summary reports (best e1RM;
-    lowest counterweight for the gravitron) — one source of truth, no phantom
-    «max weight × someone else's reps» rows. The start is the anomaly-filtered
-    current working weight. The rung size is the machine's own historical step
-    capped at ~10% of the peak, and every ladder must pass the jump invariant
-    or it is rebuilt as three equal steps."""
+    The target is what the athlete actually lifted before the pause, not the
+    all-time peak: a peak set months earlier at another frequency says nothing
+    about today's reserve, and the programme brings peaks back by ordinary
+    progression later. The ladder exists only while there is something to
+    regain — a movement back at its pre-break weight prints nothing — and only
+    for a young comeback (RETURN_LADDER_DAYS). On the comeback day itself the
+    block stays empty: the pre-break weights are printed as the reference and
+    the model chooses the entry."""
     names = {item["id"]: item["name"] for item in catalog}
+    gap = last_break(workouts)
+    if gap is None:
+        return []
+    before, after = gap
+    newest = max(when for when in (_workout_date(w) for w in workouts) if when is not None)
+    if (today - newest).days >= BREAK_DAYS or (today - after).days > RETURN_LADDER_DAYS:
+        return []
+
     sessions_by_exercise = _iter_exercise_sessions(workouts)
     items: list[dict[str, Any]] = []
     for exercise_id in MAIN_MOVEMENT_IDS:
-        sessions = sessions_by_exercise.get(exercise_id)
-        if not sessions or len(sessions) < 2:
+        sessions = sessions_by_exercise.get(exercise_id) or []
+        pre = [session for session in sessions if session[0] <= before]
+        post = [session for session in sessions if session[0] >= after]
+        if not pre or not post:
             continue
         inverted = exercise_id == GRAVITRON_ID
-        best, _best_when = _best_set(sessions, inverted=inverted)
-        peak = best["weight"]
-        current = current_working_weight(sessions, inverted=inverted)
-        if current is None or peak <= 0:
+        target = current_working_weight(pre, inverted=inverted)
+        current = current_working_weight(post, inverted=inverted)
+        if not target or not current or target <= 0 or current <= 0:
             continue
-        gap = (current - peak) if inverted else (peak - current)
-        if gap <= max(peak * 0.07, 0.01):
+        remaining = (current - target) if inverted else (target - current)
+        if remaining <= 0.01:
             continue
 
-        # Rung size: the athlete's usual step, capped at ~10% of the peak, and
-        # snapped DOWN to a multiple of the machine's plate granularity (a
-        # 7.5-kg rung on a 5-kg-plate machine cannot be loaded).
+        # Rung = the machine's own plate granularity (the stack step).
         granularity = _weight_granularity(sessions)
-        base = min(_weight_step_hint(sessions), max(_round_half(peak * 0.10), 0.5))
-        step = max(granularity, int(base / granularity) * granularity)
         direction = -1 if inverted else 1
         steps: list[float] = []
         weight = current
         while len(steps) < 12:
-            weight = _round_half(weight + direction * step)
-            if (not inverted and weight >= peak - 0.01) or (inverted and weight <= peak + 0.01):
+            weight = _round_half(weight + direction * granularity)
+            if (not inverted and weight >= target - 0.01) or (inverted and weight <= target + 0.01):
                 break
             steps.append(weight)
-        steps.append(peak)
-        if len(steps) > 4:
-            steps = _equal_steps(current, peak, 4, granularity)
-        if not _ramp_valid(current, steps, peak, inverted):
-            steps = _equal_steps(current, peak, 3, granularity)
+        steps.append(target)
+        if len(steps) > _RAMP_MAX_RUNGS:
+            steps = _equal_steps(current, target, _RAMP_MAX_RUNGS, granularity)
+        if _lone_jump(current, steps, inverted):
+            steps = _equal_steps(current, target, 3, granularity)
 
         items.append(
             {
                 "exercise_id": exercise_id,
                 "name": names.get(exercise_id, f"#{exercise_id}"),
                 "inverted": inverted,
-                "peak_weight": peak,
-                "peak_reps": best["reps"],
+                "target": target,
                 "current": current,
                 "steps": steps,
+                "break_start": before,
+                "break_end": after,
             }
         )
     return items
@@ -717,6 +928,8 @@ def comeback_ramp_steps(
 def pre_break_working_weights(
     workouts: list[dict[str, Any]],
     catalog: list[dict[str, Any]],
+    *,
+    until: date | None = None,
 ) -> list[dict[str, Any]]:
     """Each exercise's working weight as of the last session before the break.
 
@@ -724,10 +937,18 @@ def pre_break_working_weights(
     should sit is the model's call (it sees the lay-off length, the athlete's
     profile and the recovery context). The server only states what the athlete
     was actually lifting, and — via the validator — that a comeback session is
-    not the place for a new PR."""
+    not the place for a new PR. `until` looks at the history as it stood on
+    that day (the last pre-break session) for a comeback already under way."""
     names = {item["id"]: item["name"] for item in catalog}
     items: list[dict[str, Any]] = []
-    for exercise_id, sessions in _iter_exercise_sessions(workouts).items():
+    for exercise_id, all_sessions in _iter_exercise_sessions(workouts).items():
+        sessions = (
+            [session for session in all_sessions if session[0] <= until]
+            if until is not None
+            else all_sessions
+        )
+        if not sessions:
+            continue
         inverted = exercise_id == GRAVITRON_ID
         current = current_working_weight(sessions, inverted=inverted)
         if not current or current <= 0:
@@ -765,9 +986,9 @@ def render_comeback_ramp(items: list[dict[str, Any]]) -> list[str]:
     lines: list[str] = []
     for item in items:
         arrow = " → ".join(f"{step:g}" for step in item["steps"])
-        what = "противовес" if item["inverted"] else "пик"
+        unit = " противовеса" if item["inverted"] else ""
         lines.append(
-            f"  {item['name']}: {what} {item['peak_weight']:g}×{item['peak_reps']}, "
+            f"  {item['name']}: доперерывный рабочий {item['target']:g}{unit}, "
             f"сейчас {item['current']:g}. Ступени: {arrow}"
         )
     return lines
@@ -849,7 +1070,27 @@ def weight_trend_per_week(
     span_days = (window[-1][0] - window[0][0]).days
     if span_days < TREND_MIN_SPAN_DAYS:
         return None
-    return (window[-1][1] - window[0][1]) / span_days * 7
+    # Least-squares slope over EVERY point in the window, not the two end
+    # points: with sparse weigh-ins one heavy morning at either end would
+    # otherwise define the whole week. With two points this is the same line.
+    xs = [(when - window[0][0]).days for when, _ in window]
+    ys = [value for _, value in window]
+    mean_x = sum(xs) / len(xs)
+    mean_y = sum(ys) / len(ys)
+    sxx = sum((x - mean_x) ** 2 for x in xs)
+    if sxx <= 0:
+        return None
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True)) / sxx
+    return slope * 7
+
+
+# The athlete's protocol decides by the 7-day mean; fewer points than this in
+# a week make that mean a coin toss, and the prompt says so out loud.
+WEEKLY_MEAN_MIN_POINTS = 4
+
+
+def weigh_ins_in_window(points: list[tuple[date, float]], today: date, days: int = 7) -> int:
+    return sum(1 for when, _ in points if 0 <= (today - when).days < days)
 
 
 def _is_fresh(points: list[tuple[date, float]], today: date) -> bool:
@@ -918,67 +1159,47 @@ def nutrition_matrix(
     waist_limit = state.get("waist_limit_cm")
     last_waist = waist[-1][1] if waist else None
 
+    # The branches key on the phase's weekly weight CORRIDOR, never on its
+    # name: «Ф0 · возврат» is a cut_recomp that asks to HOLD weight, and a
+    # matrix reading the name would cut calories for the correct behaviour.
+    rate_low, rate_high = _rate_bounds(params.get("rate_kg_per_week"), phase)
+    holding = rate_low <= 0.0 <= rate_high
+    cutting = rate_high < 0.0
+    gaining = rate_low > 0.0
+    corridor = f"{rate_low:+.2f}…{rate_high:+.2f} кг/нед, допуск ±{RATE_TOLERANCE:.2f}"
+
     if fresh_weight:
         trend_missing_line = (
             "данных для тренда веса недостаточно (замеры редкие, с разрывом или "
             "из прошлой фазы) — попроси сделать ещё 1–2 замера в ближайшие дни, "
             "калории пока не корректируй"
         )
-        if phase == "cut_recomp":
-            # Целевой темп фазы, а не зашитый «−0.5…−0.1»: этап может просить
-            # ДЕРЖАТЬ вес (возврат, разгон объёма), и тогда «вес стоит» — это
-            # выполненная задача, а не повод срезать калории. Захардкоженный
-            # коридор советовал бы дефицит ровно за правильное поведение.
-            rate = params.get("rate_kg_per_week")
-            if isinstance(rate, (list, tuple)) and len(rate) == 2:
-                rate_low, rate_high = float(rate[0]), float(rate[1])
-            else:
-                rate_low, rate_high = -0.5, -0.1
-            holding = rate_low <= 0.0 <= rate_high
+        # Phase goals: reached → the model SUGGESTS the switch, the athlete decides.
+        target = params.get("target_weight_kg")
+        if cutting and target and ma_now is not None and ma_now <= float(target):
+            goal = (
+                f"цель фазы достигнута (средний вес {ma_now:.1f} ≤ {target:g} кг) — "
+                "предложи в rationale переход в lean_bulk; фазу переключает атлет"
+            )
+        ceiling = params.get("ceiling_weight_kg")
+        if gaining and ceiling and ma_now is not None and ma_now >= float(ceiling):
+            goal = (
+                f"потолок набора достигнут (средний вес {ma_now:.1f} ≥ {ceiling:g} кг) — "
+                "предложи мини-кат/смену фазы; фазу переключает атлет"
+            )
 
-            target = params.get("target_weight_kg")
-            if not holding and target and ma_now is not None and ma_now <= float(target):
-                goal = (
-                    f"цель фазы достигнута (средний вес {ma_now:.1f} ≤ {target:g} кг) — "
-                    "предложи в rationale переход в lean_bulk; фазу переключает атлет"
-                )
-            if trend is None:
-                lines.append(trend_missing_line)
-            elif stalled_2w and holding:
-                lines.append("вес стоит ≥2 недель — это и есть задача этапа, калории НЕ трогай")
-            elif stalled_2w and fresh_waist and waist_down:
-                lines.append(
-                    "вес стоит ≥2 недель, но талия идёт вниз — это рекомп-бонус, калории НЕ снижай"
-                )
-            elif stalled_2w:
-                lines.append("вес стоит ≥2 недель — посоветуй −100–150 ккал")
-            else:
-                in_plan = rate_low - 0.15 <= trend <= rate_high + 0.15
-                lines.append(
-                    f"тренд веса {trend:+.2f} кг/нед — в рамках плана, калории не трогай"
-                    if in_plan
-                    else f"тренд веса {trend:+.2f} кг/нед — сверь с целевым темпом"
-                )
-        elif phase == "lean_bulk":
-            ceiling = params.get("ceiling_weight_kg")
-            if ceiling and ma_now is not None and ma_now >= float(ceiling):
-                goal = (
-                    f"потолок набора достигнут (средний вес {ma_now:.1f} ≥ {ceiling:g} кг) — "
-                    "предложи мини-кат/смену фазы; фазу переключает атлет"
-                )
-            if (
-                fresh_waist
-                and waist_limit
-                and last_waist is not None
-                and last_waist >= float(waist_limit)
-            ):
+        # On a gain the waist speaks first: a hard limit or a creeping waist
+        # decides the calories regardless of what the scale says.
+        weight_line_due = True
+        if gaining and fresh_waist:
+            if waist_limit and last_waist is not None and last_waist >= float(waist_limit):
                 goal = (
                     f"талия {last_waist:g} см у жёсткого лимита {waist_limit:g} см — "
                     "жёсткий сигнал: предложи мини-кат или смену фазы; решает атлет"
                 )
+                weight_line_due = False
             elif (
-                fresh_waist
-                and waist_pair_valid
+                waist_pair_valid
                 and waist_base
                 and waist[-1][1] >= float(waist_base) + 1
                 and waist[-2][1] >= float(waist_base) + 1
@@ -987,25 +1208,77 @@ def nutrition_matrix(
                     f"талия +1 см от базовой ({waist_base:g} см) два замера подряд — "
                     "посоветуй −100–150 ккал или паузу набора"
                 )
-            elif trend is None:
-                lines.append(trend_missing_line)
-            elif fresh_waist and waist_pair_valid and not waist_down and 0.05 <= trend <= 0.25:
-                lines.append(
-                    "вес растёт в целевом темпе, талия стабильна — чистый набор, не трогай"
-                )
-        else:  # maintenance
+                weight_line_due = False
+
+        if weight_line_due:
             if trend is None:
                 lines.append(trend_missing_line)
-            elif abs(trend) > 0.15:
-                direction = "вверх" if trend > 0 else "вниз"
+            elif stalled_2w and holding:
+                lines.append("вес стоит ≥2 недель — это и есть задача этапа, калории НЕ трогай")
+            elif stalled_2w and cutting and fresh_waist and waist_down:
                 lines.append(
-                    f"вес уползает {direction} ({trend:+.2f} кг/нед) — мягкая коррекция "
-                    "±100–150 ккал"
+                    "вес стоит ≥2 недель, но талия идёт вниз — это рекомп-бонус, калории НЕ снижай"
                 )
+            elif stalled_2w and cutting:
+                lines.append("вес стоит ≥2 недель — посоветуй −100–150 ккал")
+            elif stalled_2w:
+                lines.append("вес стоит ≥2 недель при плане набора — посоветуй +100–150 ккал")
             else:
-                lines.append("вес и талия стабильны — калории не трогай")
+                lines.append(
+                    _rate_line(
+                        trend,
+                        rate_low,
+                        rate_high,
+                        corridor,
+                        ma_now,
+                        ma_before,
+                        cutting=cutting,
+                        gaining=gaining,
+                    )
+                )
 
     return {"lines": lines, "goal": goal, "trend_per_week": trend}
+
+
+def _rate_line(
+    trend: float,
+    rate_low: float,
+    rate_high: float,
+    corridor: str,
+    ma_now: float | None,
+    ma_before: float | None,
+    *,
+    cutting: bool,
+    gaining: bool,
+) -> str:
+    """The weight-trend branch against the phase corridor.
+
+    A calorie change needs the deviation confirmed by two independent
+    readings — the 3-week slope AND the difference of the 7-day means two
+    weeks apart — which is what «две недели подряд» means without the server
+    keeping a history of its own verdicts. Unconfirmed, the line names the
+    deviation and asks for daily weigh-ins instead of a number."""
+    if rate_low - RATE_TOLERANCE <= trend <= rate_high + RATE_TOLERANCE:
+        return f"тренд веса {trend:+.2f} кг/нед — в коридоре фазы ({corridor}), калории не трогай"
+    above = trend > rate_high + RATE_TOLERANCE
+    two_week = (ma_now - ma_before) / 2 if ma_now is not None and ma_before is not None else None
+    confirmed = two_week is not None and (
+        two_week > rate_high + RATE_TOLERANCE if above else two_week < rate_low - RATE_TOLERANCE
+    )
+    side = "выше" if above else "ниже"
+    if not confirmed:
+        return (
+            f"тренд веса {trend:+.2f} кг/нед {side} коридора фазы ({corridor}), но средние "
+            "двух недель этого ещё не подтверждают — калории не трогай, взвешиваться ежедневно"
+        )
+    if above:
+        advice = "−100–150 ккал" + (" или паузу набора" if gaining else "")
+    else:
+        advice = "+100–150 ккал" + (" или неделю поддержки" if cutting else "")
+    return (
+        f"тренд веса {trend:+.2f} кг/нед {side} коридора фазы ({corridor}) и по средним "
+        f"двух недель тоже — посоветуй {advice}"
+    )
 
 
 def render_measurements(
@@ -1020,7 +1293,13 @@ def render_measurements(
         tail = ", ".join(f"{when.isoformat()}: {value:g}кг" for when, value in weights[-6:])
         age = (today - weights[-1][0]).days
         dropped = len(body_weights) - len(weights)
-        line = f"Вес тела: {tail}. Дней с последнего замера: {age}."
+        count = weigh_ins_in_window(weights, today)
+        line = f"Вес тела: {tail}. Дней с последнего замера: {age}. Замеров за последние 7 дней: {count}"
+        line += (
+            f" (для недельной средней нужно ≥{WEEKLY_MEAN_MIN_POINTS})."
+            if count < WEEKLY_MEAN_MIN_POINTS
+            else "."
+        )
         if dropped:
             line += f" (отброшено неправдоподобных записей: {dropped})"
         lines.append(line)

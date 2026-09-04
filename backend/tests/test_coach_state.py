@@ -236,5 +236,8 @@ class GroupTargetOverrideTests(unittest.TestCase):
     def test_render_prints_the_group_goal_inline(self):
         volume = coach_features.weekly_volume([], date(2026, 8, 16))
         text = coach_features.render_weekly_volume(volume, (6, 9), None, {"спина": (16, 16)})
-        self.assertIn("спина: 0 прямых / 0 эффективных (цель блока 16–16)", text)
+        # The goal stands next to the DIRECT count — that is the column the
+        # programme's table uses — and the effective count is marked reference.
+        self.assertIn("спина: 0 прямых (цель 16–16) / 0 эффективных (справочно)", text)
         self.assertIn("ЗРЕЛОГО блока", text)
+        self.assertIn("ПРЯМЫХ", text)

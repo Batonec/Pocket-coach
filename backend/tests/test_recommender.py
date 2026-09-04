@@ -303,6 +303,12 @@ class ProfileTests(unittest.TestCase):
         self.assertIn("Объём за последние 7 дней", prompt)
         self.assertIn("квадрицепс/ягодичные: 1 прямых / 1 эффективных", prompt)
         self.assertIn("Дней с последней тренировки: 2", prompt)
+        # The attendance and the active window are always in the data — the
+        # programme header sends the model there for the real frequency.
+        self.assertIn("Тренировки по календарным неделям (пн–вс", prompt)
+        self.assertIn("2026-06-08…2026-06-14 (текущая, по 2026-06-12): 1", prompt)
+        self.assertIn("Активное окно", prompt)
+        self.assertIn("ориентиры малых групп (прямых): дельты 6–12", prompt)
 
     def test_user_prompt_flags_return_after_break(self) -> None:
         from datetime import date
@@ -588,11 +594,24 @@ class SemanticValidatorTests(unittest.TestCase):
         low = recommender._validate(self._rec(weight=60, sets=14), self.CATALOG)
         self.assertEqual(self._violations(low), [])
 
-    def test_session_size_is_the_models_call(self) -> None:
+    def test_session_size_is_capped_by_the_phase_but_never_padded(self) -> None:
+        from datetime import date as _date
+
         tiny = recommender._validate(self._rec(sets=5), self.CATALOG)
-        self.assertEqual(self._violations(tiny), [])
         big = recommender._validate(self._rec(sets=24), self.CATALOG)
+        # Without a cap (no phase parameters) the size is the model's call.
+        self.assertEqual(self._violations(tiny), [])
         self.assertEqual(self._violations(big), [])
+        # With the phase cap only the UPPER bound is enforced: a short session
+        # can be a decision, an oversized one is not.
+        capped = lambda rec: recommender._semantic_violations(  # noqa: E731
+            rec, self.CATALOG, self._history(), _date(2026, 6, 12), session_cap=20
+        )
+        self.assertEqual(capped(tiny), [])
+        violations = capped(big)
+        self.assertEqual(len(violations), 1)
+        self.assertIn("24 рабочих подходов при потолке сессии 20", violations[0])
+        self.assertIn("начиная с изоляции", violations[0])
 
     def test_rep_ranges_and_load_sequencing_are_the_models_call(self) -> None:
         pump_heavy = recommender._validate(
@@ -1317,7 +1336,30 @@ class GenerateRepromptTests(unittest.TestCase):
         self.assertEqual(len(calls[1]), 3)
         self.assertIn("жёсткие границы", calls[1][2]["content"])
 
-    def test_clean_plan_is_served_as_is_without_corridor_trimming(self) -> None:
+    def test_clean_plan_within_the_cap_is_served_as_is(self) -> None:
+        from datetime import date as _date
+
+        calls = 0
+
+        def fake_call(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return self._fullbody_raw(), {"input_tokens": 10, "output_tokens": 5}
+
+        recommender._call_anthropic = fake_call
+        # 13 sets under the default cut_recomp cap of 20: served untouched — the
+        # lower bound of the corridor is not policed, and nothing is trimmed.
+        rec, _usage, _model, trace = recommender.generate_with_trace(
+            self._history(), [], self.CATALOG, today=_date(2026, 6, 12)
+        )
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(sum(len(exercise["sets"]) for exercise in rec["exercises"]), 13)
+        self.assertEqual(trace[0]["adjustments"], [])
+        self.assertEqual(trace[0]["violations"], [])
+        self.assertNotIn("Проверка методики", rec["rationale"])
+
+    def test_oversized_session_is_reprompted_then_trimmed_to_the_cap(self) -> None:
         from datetime import date as _date
 
         import coach_state
@@ -1330,22 +1372,20 @@ class GenerateRepromptTests(unittest.TestCase):
             return self._fullbody_raw(), {"input_tokens": 10, "output_tokens": 5}
 
         recommender._call_anthropic = fake_call
-        # 13 sets in maintenance (old corridor was 8–12): served untouched —
-        # session size is the model's call now.
+        # 13 sets against the maintenance cap of 12, twice: one reprompt names
+        # the cap, then the server drops a set from the tail and says so.
         state = dict(coach_state.load_state(None), phase="maintenance")
         rec, _usage, _model, trace = recommender.generate_with_trace(
-            self._history(),
-            [],
-            self.CATALOG,
-            today=_date(2026, 6, 12),
-            state=state,
+            self._history(), [], self.CATALOG, today=_date(2026, 6, 12), state=state
         )
 
-        self.assertEqual(calls, 1)
-        self.assertEqual(sum(len(exercise["sets"]) for exercise in rec["exercises"]), 13)
-        self.assertEqual(trace[0]["adjustments"], [])
-        self.assertEqual(trace[0]["violations"], [])
-        self.assertNotIn("Проверка методики", rec["rationale"])
+        self.assertEqual(calls, 2)
+        self.assertTrue(any("потолке сессии 12" in v for v in trace[0]["violations"]))
+        self.assertEqual(sum(len(exercise["sets"]) for exercise in rec["exercises"]), 12)
+        self.assertEqual(trace[1]["adjustments"], ["Сгибания ног −1"])
+        hamstrings = next(e for e in rec["exercises"] if e["exercise_id"] == 15)
+        self.assertEqual(len(hamstrings["sets"]), 1)  # trimmed, never removed
+        self.assertIn("сокращена до 12 рабочих подходов", rec["rationale"])
 
     def test_unresolved_coverage_is_served_with_an_honest_note(self) -> None:
         from datetime import date as _date

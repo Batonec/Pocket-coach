@@ -50,6 +50,9 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
         "title": "lean bulk",
         "calories": (2400, 2500),
         "rate_text": "+0.5–0.8 кг/мес",
+        # ≈ +0.1…+0.2 кг/нед: the nutrition matrix and the stall preconditions
+        # steer by this corridor, not by the phase name.
+        "rate_kg_per_week": (0.1, 0.2),
         "frequency_text": "3 тренировки в неделю (2–4 допустимо)",
         "sessions_per_week": 3,
         "session_sets": (14, 20),
@@ -64,6 +67,8 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
         "title": "поддержание",
         "calories": (2300, 2400),
         "rate_text": "±0 кг (вес держим)",
+        # Zero-width corridor: the matrix adds its own ±0.15 tolerance.
+        "rate_kg_per_week": (0.0, 0.0),
         "frequency_text": "1 тренировка в неделю, fullbody heavy",
         "sessions_per_week": 1,
         "session_sets": (8, 12),
