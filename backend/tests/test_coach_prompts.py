@@ -82,6 +82,37 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertNotIn("{{", built)
         self.assertNotIn("=== ПРОГРАММА", built)
 
+    def test_header_comment_is_stripped_on_load(self):
+        """Шапка «<!-- … -->» в начале файла — для человека: у цельного шаблона без
+        среза она уехала бы в системный промпт, а слот, упомянутый в ней, стал бы
+        «незаполненным»."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = coach_prompts.PROMPTS_DIR
+            coach_prompts.PROMPTS_DIR = pathlib.Path(tmp)
+            try:
+                (pathlib.Path(tmp) / "capped.md").write_text(
+                    "<!--\nШапка про {{slot}} и <!-- вложенную стрелку.\n-->\n\nТекст {{one}}.\n",
+                    "utf-8",
+                )
+                loaded = coach_prompts.load("capped")
+            finally:
+                coach_prompts.PROMPTS_DIR = saved
+        self.assertEqual(loaded, "Текст {{one}}.\n")
+        self.assertEqual(coach_prompts.slots(loaded), {"one"})
+        # Комментарий не в начале файла — обычный текст, срезать его не просили.
+        self.assertIn("<!--", coach_prompts._HEADER_RE.sub("", "Текст\n<!-- x -->\n", count=1))
+
+    def test_report_header_does_not_reach_the_model(self):
+        """report.md несёт шапку для человека; собранный промпт начинается с роли."""
+        self.assertTrue(
+            (coach_prompts.PROMPTS_DIR / "report.md").read_text("utf-8").startswith("<!--")
+        )
+        built = prompt_builder._build_report_system_prompt()
+        self.assertNotIn("<!--", built)
+        self.assertTrue(built.startswith("Ты — персональный силовой тренер"))
+
     def test_every_declared_block_is_used_by_the_code(self):
         """Фрагмент, оставшийся в файле без единого вызова _block(), — мёртвый
         текст: его правят, а в промпт он не едет."""

@@ -14,6 +14,12 @@ markdown, который человек открывает и читает це�
 диапазоны) экранировать не нужно. Шаблон с незаполненным или лишним слотом падает:
 промпт, молча уехавший в модель с ``{{phase_policy}}``, хуже, чем ошибка на старте.
 
+Шапка файла — HTML-комментарий ``<!-- … -->`` в самом начале — написана для
+человека, который открыл файл: что это за промпт, кто и когда его собирает.
+``load`` её срезает, так что модель шапку не видит ни у цельного шаблона
+(``report.md``), ни у файла фрагментов; комментарий не в начале файла — обычный
+текст, он уедет в модель как есть.
+
 Кто зовёт: ``prompt_builder`` (шаблоны и подписи блоков), ``coach_signals``
 (тексты баннеров из ``resources/signals.md``) и ``rule_engine`` (правила плана и
 пометки к ним). Только stdlib, как весь backend.
@@ -32,6 +38,10 @@ PROMPTS_DIR = BACKEND_DIR / "prompts"
 COPY_DIR = BACKEND_DIR / "resources"
 
 _SLOT_RE = re.compile(r"\{\{([a-zа-яё_]+)\}\}")
+# Шапка для человека: один HTML-комментарий строго в начале файла и пустые
+# строки вокруг него. Срезается при загрузке, иначе у цельного шаблона она
+# уехала бы в системный промпт вместе с прозой.
+_HEADER_RE = re.compile(r"\A\s*<!--.*?-->\s*", re.S)
 
 
 class PromptError(RuntimeError):
@@ -39,16 +49,18 @@ class PromptError(RuntimeError):
 
 
 def load(name: str, *, directory: Path | None = None) -> str:
-    """Сырой текст шаблона по имени файла (``"system"`` → ``prompts/system.md``).
+    """Текст шаблона по имени файла (``"system"`` → ``prompts/system.md``) без
+    шапки-комментария в начале.
 
     ``directory`` переопределяет папку: так ``coach_signals`` читает баннеры из
     ``resources/``. Нет файла — ``PromptError``.
     """
     path = (directory or PROMPTS_DIR) / f"{name}.md"
     try:
-        return path.read_text("utf-8")
+        text = path.read_text("utf-8")
     except OSError as exc:  # файла нет: backend задеплоен наполовину
         raise PromptError(f"промпт {name!r} не найден: {path}") from exc
+    return _HEADER_RE.sub("", text, count=1)
 
 
 def slots(template: str) -> set[str]:
