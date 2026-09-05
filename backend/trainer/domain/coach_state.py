@@ -319,7 +319,8 @@ def phase_params(state: dict[str, Any]) -> dict[str, Any]:
     Единственный способ узнать параметры фазы: зовут ``prompt_builder``,
     ``recommender``, ``coach_signals`` и Coach MCP.
     """
-    phase = state.get("phase") if state.get("phase") in PHASES else "cut_recomp"
+    raw_phase = state.get("phase")
+    phase = raw_phase if isinstance(raw_phase, str) and raw_phase in PHASES else "cut_recomp"
     merged = dict(PHASE_DEFAULTS[phase])
     overrides = (state.get("phase_params") or {}).get(phase) or {}
     for key, value in overrides.items():

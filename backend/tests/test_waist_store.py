@@ -86,6 +86,7 @@ class WaistStoreTests(unittest.TestCase):
         self.assertEqual(entries[-1]["waist"], 84.0)
 
         deleted = self.store.delete_waist(self.user["id"], entry["id"])
+        assert deleted is not None
         self.assertEqual(deleted["entry_date"], "2026-08-14")
         self.assertIsNone(self.store.delete_waist(self.user["id"], entry["id"]))
         self.assertEqual(len(self.store.list_waists(self.user["id"])), 1)

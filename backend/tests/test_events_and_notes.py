@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 from support import JsonHttpClient, running_miniapp_server, sample_workout_payload
 
@@ -33,9 +34,9 @@ def _workout(
     *,
     exercise_id: int = 8,
     name: str = "Жим ногами",
-    sets: list[dict[str, object]] | None = None,
+    sets: list[dict[str, Any]] | None = None,
     notes: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     """Тренировка на дату с одним упражнением и заметкой."""
     return {
         "workout_date": when,
@@ -128,7 +129,7 @@ class EventStoreTests(unittest.TestCase):
         self.store = backend_store.MiniAppStore(Path(self.temp_dir.name) / "trainer.db")
         self.user = self.store.ensure_debug_user("event-tests")
 
-    def _save(self, start: str, end: str | None, text: str) -> dict[str, object]:
+    def _save(self, start: str, end: str | None, text: str) -> dict[str, Any]:
         """Записать событие через стор."""
         return self.store.save_event(
             self.user["id"], {"start_date": start, "end_date": end, "text": text}
@@ -160,12 +161,14 @@ class EventStoreTests(unittest.TestCase):
             event["id"],
             {"start_date": "2026-08-02", "end_date": "2026-08-06", "text": "  болел, теперь ок  "},
         )
+        assert updated is not None
         self.assertEqual(updated["id"], event["id"])
         self.assertEqual(updated["start_date"], "2026-08-02")
         self.assertEqual(updated["end_date"], "2026-08-06")
         self.assertEqual(updated["text"], "болел, теперь ок")
 
         deleted = self.store.delete_event(self.user["id"], event["id"])
+        assert deleted is not None
         self.assertEqual(deleted["id"], event["id"])
         self.assertEqual(self.store.list_events(self.user["id"]), [])
 
@@ -192,6 +195,7 @@ class EventStoreTests(unittest.TestCase):
         still_open = self.store.update_event(
             self.user["id"], open_event["id"], {"start_date": "2026-08-09", "text": "болею дальше"}
         )
+        assert still_open is not None
         self.assertIsNone(still_open["end_date"])
 
     def test_close_open_event_is_idempotent(self) -> None:
@@ -199,6 +203,7 @@ class EventStoreTests(unittest.TestCase):
         opened = self._save("2026-08-10", None, "болею")
 
         closed = self.store.close_open_event(self.user["id"], "2026-08-15")
+        assert closed is not None
         self.assertEqual(closed["id"], opened["id"])
         self.assertEqual(closed["end_date"], "2026-08-15")
         # Вызывается на каждой созданной тренировке — второй раз закрывать нечего.
@@ -213,6 +218,7 @@ class EventStoreTests(unittest.TestCase):
         closed = self.store.close_open_event(
             self.user["id"], (today - timedelta(days=1)).isoformat()
         )
+        assert closed is not None
         self.assertEqual(closed["start_date"], today.isoformat())
         self.assertEqual(closed["end_date"], today.isoformat())
 
@@ -304,7 +310,7 @@ class WorkoutClosesOpenEventTests(unittest.TestCase):
     """Состояние «сейчас не тренируюсь» переключает только новая сегодняшняя
     тренировка: правка истории — это правка истории, а не выход из перерыва."""
 
-    def _open_event(self, client: JsonHttpClient) -> dict[str, object]:
+    def _open_event(self, client: JsonHttpClient) -> dict[str, Any]:
         """Открыть событие 10 дней назад через API."""
         started = (date.today() - timedelta(days=10)).isoformat()
         response = client.request_json(
@@ -313,7 +319,7 @@ class WorkoutClosesOpenEventTests(unittest.TestCase):
         self.assertEqual(response.status, 201)
         return response.payload["event"]
 
-    def _current(self, client: JsonHttpClient, event_id: int) -> dict[str, object]:
+    def _current(self, client: JsonHttpClient, event_id: int) -> dict[str, Any]:
         """Текущее состояние события по id через API."""
         events = client.request_json("GET", "/api/events").payload["events"]
         return next(event for event in events if event["id"] == event_id)
@@ -462,7 +468,7 @@ class EventPromptTests(unittest.TestCase):
         {"start_date": "2026-06-11", "end_date": None, "text": "командировка"},
     ]
 
-    def _prompt(self, events: list[dict[str, object]] | None) -> str:
+    def _prompt(self, events: list[dict[str, Any]] | None) -> str:
         """User-промпт на фиксированной истории с заданными событиями."""
         return prompt_builder._build_user_prompt(
             self.WORKOUTS, [], TODAY, 20, catalog=CATALOG, events=events
@@ -493,6 +499,7 @@ class EventPromptTests(unittest.TestCase):
                 {"start_date": "2026-06-11", "end_date": None, "text": "свежее"},
             ]
         )
+        assert picked is not None
         self.assertEqual(picked["text"], "свежее")
 
     def test_chronicle_stands_between_the_workouts(self) -> None:
@@ -589,7 +596,7 @@ class WeeklyReportEventTests(unittest.TestCase):
 
     DAYS = 7  # период отчёта: 2026-06-06 … 2026-06-12
 
-    def _report(self, events: list[dict[str, object]] | None) -> str:
+    def _report(self, events: list[dict[str, Any]] | None) -> str:
         """Промпт отчёта на одной тренировке с заданными событиями."""
         return prompt_builder._build_report_prompt(
             [_workout("2026-06-10")],
@@ -664,7 +671,7 @@ class EventsReachGenerationTests(unittest.TestCase):
         store.save_event(uid, {"start_date": "2026-06-01", "text": "болел"})
         return store, uid
 
-    def _capture_generate(self, seen: dict[str, object]):
+    def _capture_generate(self, seen: dict[str, Any]):
         """Подмена ``generate``, запоминающая kwargs."""
 
         def capture(workouts, body_weights, catalog, **kwargs):
@@ -673,13 +680,13 @@ class EventsReachGenerationTests(unittest.TestCase):
 
         return capture
 
-    def _texts(self, seen: dict[str, object]) -> list[str]:
+    def _texts(self, seen: dict[str, Any]) -> list[str]:
         """Тексты событий, дошедших до генерации."""
         return [str(event["text"]) for event in seen.get("events") or []]
 
     def test_backend_generation_passes_events(self) -> None:
         """Главный путь: генерация, которую видит iOS."""
-        seen: dict[str, object] = {}
+        seen: dict[str, Any] = {}
         with running_miniapp_server(allow_debug_user=True) as app:
             module = app.module
             client = JsonHttpClient(app.base_url)
@@ -699,7 +706,7 @@ class EventsReachGenerationTests(unittest.TestCase):
         self.assertEqual(self._texts(seen), ["болел"])
 
     def test_scheduled_refresh_passes_events(self) -> None:
-        seen: dict[str, object] = {}
+        seen: dict[str, Any] = {}
         store, uid = self._store_with_event()
         original = recommender.generate
         recommender.generate = self._capture_generate(seen)
@@ -709,7 +716,7 @@ class EventsReachGenerationTests(unittest.TestCase):
         self.assertEqual(self._texts(seen), ["болел"])
 
     def test_weekly_report_passes_events(self) -> None:
-        seen: dict[str, object] = {}
+        seen: dict[str, Any] = {}
         store, uid = self._store_with_event()
 
         def capture(workouts, body_weights, waists, catalog, **kwargs):

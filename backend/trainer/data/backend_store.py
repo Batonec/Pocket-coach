@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from collections.abc import Iterator
 from contextlib import closing, contextmanager, suppress
 from pathlib import Path
 from typing import Any
@@ -49,7 +50,7 @@ class MiniAppStore:
         return connection
 
     @contextmanager
-    def _connection(self) -> sqlite3.Connection:
+    def _connection(self) -> Iterator[sqlite3.Connection]:
         """Транзакция на вызов: commit при выходе, rollback при исключении, соединение закрыто."""
         with closing(self._connect()) as connection:
             try:
@@ -969,7 +970,9 @@ class MiniAppStore:
                     timestamp,
                 ),
             )
-            row = self._get_event_row(connection, user_id, int(cursor.lastrowid))
+            row = None
+            if cursor.lastrowid is not None:
+                row = self._get_event_row(connection, user_id, cursor.lastrowid)
 
         if row is None:
             raise RuntimeError("Failed to persist event")

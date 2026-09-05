@@ -11,7 +11,10 @@ import sqlite3
 import tempfile
 import unittest
 import urllib.error
+import urllib.request
+from email.message import Message
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import support  # noqa: F401 — кладёт backend в sys.path
@@ -47,7 +50,7 @@ def _http_error(code: int, detail: bytes = b"detail") -> urllib.error.HTTPError:
         "https://api.anthropic.test/messages",
         code,
         "failure",
-        None,
+        Message(),
         io.BytesIO(detail),
     )
 
@@ -102,7 +105,7 @@ class AnthropicClientEdgeCaseTests(unittest.TestCase):
         self.assertEqual(anthropic_client._cacheable_messages(messages), messages)
 
     def test_request_sets_transport_metadata_and_defaults_null_usage(self) -> None:
-        captured: dict[str, object] = {}
+        captured: dict[str, Any] = {}
 
         def fake_urlopen(request: object, timeout: float) -> _Response:
             captured["request"] = request
@@ -241,7 +244,7 @@ class AnthropicClientEdgeCaseTests(unittest.TestCase):
                 ),
             ):
                 anthropic_client._fetch_anthropic(
-                    object(),
+                    urllib.request.Request("https://api.anthropic.test/messages"),
                     timeout=1,
                     max_retries=1,
                     backoff=0.25,
@@ -263,7 +266,7 @@ class AnthropicClientEdgeCaseTests(unittest.TestCase):
             ),
         ):
             anthropic_client._fetch_anthropic(
-                object(),
+                urllib.request.Request("https://api.anthropic.test/messages"),
                 timeout=1,
                 max_retries=0,
                 backoff=1,
@@ -281,7 +284,7 @@ class AnthropicClientEdgeCaseTests(unittest.TestCase):
             self.assertRaises(anthropic_client.RecommendationError) as context,
         ):
             anthropic_client._fetch_anthropic(
-                object(),
+                urllib.request.Request("https://api.anthropic.test/messages"),
                 timeout=1,
                 max_retries=3,
                 backoff=1,
@@ -637,10 +640,9 @@ class StoreEdgeCaseTests(unittest.TestCase):
         )
 
         self.assertIsNone(self.store.get_workout_by_id(other_id, newest_date["id"]))
-        self.assertEqual(
-            self.store.get_workout_by_id(self.user_id, newest_date["id"])["client_id"],
-            "new-date",
-        )
+        found = self.store.get_workout_by_id(self.user_id, newest_date["id"])
+        assert found is not None
+        self.assertEqual(found["client_id"], "new-date")
         self.assertEqual(self.store.get_latest_workout_id(self.user_id), same_date_later["id"])
 
     def test_failed_recommendation_error_is_capped_in_cache_and_log(self) -> None:
@@ -649,6 +651,7 @@ class StoreEdgeCaseTests(unittest.TestCase):
         self.store.fail_recommendation(self.user_id, long_error)
 
         cached = self.store.get_recommendation(self.user_id)
+        assert cached is not None
         logged = self.store.list_recommendation_log(self.user_id)
         self.assertEqual(cached["error"], long_error[:500])
         self.assertEqual(logged[0]["error"], long_error[:500])
@@ -723,11 +726,14 @@ class StoreEdgeCaseTests(unittest.TestCase):
         )
 
         latest = self.store.get_latest_coach_report(self.user_id, days=7)
+        assert latest is not None
         self.assertEqual(latest["report"], "new weekly")
         self.assertIsNone(latest["read_at"])
         self.assertTrue(self.store.mark_coach_report_read(self.user_id, days=7))
         self.assertFalse(self.store.mark_coach_report_read(self.user_id, days=7))
-        self.assertIsNotNone(self.store.get_coach_report(self.user_id, "2026-01-11", 7)["read_at"])
+        read_report = self.store.get_coach_report(self.user_id, "2026-01-11", 7)
+        assert read_report is not None
+        self.assertIsNotNone(read_report["read_at"])
         self.assertIsNone(self.store.get_coach_report(self.user_id, "2026-01-11", 30))
 
     def test_signal_snoozes_upsert_and_remain_isolated_per_user(self) -> None:

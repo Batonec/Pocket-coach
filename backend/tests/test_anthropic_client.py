@@ -8,6 +8,8 @@ import io
 import json
 import unittest
 import urllib.error
+import urllib.request
+from email.message import Message
 
 import support  # noqa: F401 — кладёт backend в sys.path
 
@@ -187,7 +189,7 @@ class _FakeResponse:
 
 def _http_error(code: int) -> urllib.error.HTTPError:
     """``HTTPError`` с кодом и телом «detail», как от API."""
-    return urllib.error.HTTPError("http://x", code, "msg", None, io.BytesIO(b"detail"))
+    return urllib.error.HTTPError("http://x", code, "msg", Message(), io.BytesIO(b"detail"))
 
 
 class FetchRetryTests(unittest.TestCase):
@@ -201,14 +203,14 @@ class FetchRetryTests(unittest.TestCase):
     def _fetch(self, max_retries: int = 2):
         """Вызвать ``_fetch_anthropic`` с записью пауз вместо реального сна."""
         return anthropic_client._fetch_anthropic(
-            object(),
+            urllib.request.Request("https://api.anthropic.test/messages"),
             timeout=1,
             max_retries=max_retries,
             backoff=0.5,
             sleep=self.slept.append,
         )
 
-    def _patch(self, sequence) -> list[int]:
+    def _patch(self, sequence) -> dict[str, int]:
         """Подменить urlopen последовательностью ответов и исключений; вернуть счётчик вызовов."""
         calls = {"n": 0}
         it = iter(sequence)

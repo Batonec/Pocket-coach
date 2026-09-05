@@ -21,6 +21,7 @@ class RetryAndEditSnapshotTests(unittest.TestCase):
         incoming = {"workout_date": "2026-09-05", "data": {"recommendation": {"focus": "ноги"}}}
 
         patched = rules.retry_backfills_snapshot(existing, incoming)
+        assert patched is not None
 
         self.assertEqual(patched["data"]["recommendation"], {"focus": "ноги"})
         self.assertNotIn("recommendation", existing["data"], "исходная запись не мутирует")

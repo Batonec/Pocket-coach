@@ -156,8 +156,11 @@ def _waist_limit_signal(
     """
     if state.get("phase") != "lean_bulk":
         return None
+    raw_limit = state.get("waist_limit_cm")
+    if raw_limit is None:
+        return None
     try:
-        limit = float(state.get("waist_limit_cm"))
+        limit = float(raw_limit)
     except (TypeError, ValueError):
         return None
     if limit <= 0:
@@ -391,11 +394,15 @@ def _trainings_signal(
             if plan_state == "failed":
                 body = _text("return_mode_failed_body")
                 action_label = _text("action_retry")
-                recommendation_fact = f"failed:{recommendation.get('updated_at') or 'unknown'}"
+                recommendation_fact = (
+                    f"failed:{(recommendation or {}).get('updated_at') or 'unknown'}"
+                )
             elif plan_state == "outdated":
                 body = _text("return_mode_outdated_body")
                 action_label = _text("action_refresh")
-                recommendation_fact = f"outdated:{recommendation.get('updated_at') or 'unknown'}"
+                recommendation_fact = (
+                    f"outdated:{(recommendation or {}).get('updated_at') or 'unknown'}"
+                )
             else:
                 body = _text("return_mode_none_body")
                 action_label = _text("action_create")
@@ -622,9 +629,7 @@ class CriticalSignalDismissed(ValueError):
     """Критический сигнал не откладывается — он гаснет только действием."""
 
 
-def snooze_until_for(
-    matched: dict[str, Any] | None, snooze_hours: object, now_ts: int
-) -> int | None:
+def snooze_until_for(matched: dict[str, Any] | None, snooze_hours: Any, now_ts: int) -> int | None:
     """Решение по дисмиссу баннера. Критический не откладывается; явный срок в
     часах — как попросили; иначе дефолт по severity (``SNOOZE_DEFAULT_HOURS``), а
     сигнал, которого уже нет в списке, откладывается как info. Зовёт

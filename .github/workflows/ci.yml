@@ -96,6 +96,15 @@ jobs:
       - name: Check Python formatting
         run: ruff format --check --diff .
 
+      # Версия pyright закреплена по той же причине, что и ruff. coach_mcp
+      # проверяется против настоящего пакета mcp, поэтому его зависимости
+      # ставятся здесь же — иначе импорты FastMCP не разрешатся.
+      - name: Install pyright
+        run: pip install pyright==1.1.411 -r coach_mcp/requirements.txt
+
+      - name: Check Python types
+        run: pyright
+
       # shellcheck предустановлен на ubuntu-раннерах, actionlint — нет.
       - name: Install actionlint
         env:

@@ -828,7 +828,7 @@ def coach_phase_summary(
         history = state.get("phase_history") or []
 
         if history_index is None:
-            phase = state.get("phase")
+            phase = str(state.get("phase") or "cut_recomp")
             started_raw = state.get("phase_started")
             if not started_raw:
                 return _result(_err("У текущей фазы нет даты старта (phase_started)."))

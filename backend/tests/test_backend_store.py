@@ -277,6 +277,7 @@ class MiniAppStoreTest(unittest.TestCase):
                 notes=" Updated set ",
             ),
         )
+        assert updated_workout is not None
 
         self.assertIsNotNone(updated_workout)
         self.assertEqual(updated_workout["id"], created_workout["id"])
@@ -305,6 +306,7 @@ class MiniAppStoreTest(unittest.TestCase):
         stored_workout = self.store.get_workout_by_id(
             int(first_user["id"]), int(created_workout["id"])
         )
+        assert stored_workout is not None
         self.assertIsNotNone(stored_workout)
         self.assertEqual(stored_workout["data"]["exercises"][0]["sets"][0]["weight"], 80.0)
 
@@ -316,6 +318,7 @@ class MiniAppStoreTest(unittest.TestCase):
         )
 
         deleted_workout = self.store.delete_workout(int(user["id"]), int(created_workout["id"]))
+        assert deleted_workout is not None
 
         self.assertIsNotNone(deleted_workout)
         self.assertEqual(deleted_workout["id"], created_workout["id"])
@@ -397,6 +400,7 @@ class MiniAppStoreTest(unittest.TestCase):
         )
 
         deleted_entry = self.store.delete_body_weight(int(user["id"]), int(entry["id"]))
+        assert deleted_entry is not None
 
         self.assertIsNotNone(deleted_entry)
         self.assertEqual(deleted_entry["id"], entry["id"])

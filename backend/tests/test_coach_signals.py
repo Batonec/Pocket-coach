@@ -77,6 +77,7 @@ class WaistLimitSignalTests(unittest.TestCase):
 
     def test_two_consecutive_limit_readings_are_critical(self) -> None:
         signal = coach_signals._waist_limit_signal(self._points(88.0, 88.5), self._state(), TODAY)
+        assert signal is not None
         self.assertIsNotNone(signal)
         self.assertEqual(signal["id"], "waist_limit")
         self.assertEqual(signal["severity"], "critical")
@@ -112,6 +113,7 @@ class MeasurementsSignalTests(unittest.TestCase):
 
     def test_due_stage_counts_down_to_the_deadline(self) -> None:
         signal = coach_signals._measurements_signal(_weights(11), _waists(2), STATE, TODAY)
+        assert signal is not None
         self.assertEqual(signal["id"], "measurements_due")
         self.assertEqual(signal["severity"], "info")
         self.assertEqual(signal["title"], "Обнови вес — талия свежая")
@@ -121,6 +123,7 @@ class MeasurementsSignalTests(unittest.TestCase):
 
     def test_overdue_and_never_measured_collapse_into_warn(self) -> None:
         signal = coach_signals._measurements_signal(_weights(27), [], STATE, TODAY)
+        assert signal is not None
         self.assertEqual(signal["id"], "measurements_overdue")
         self.assertEqual(signal["severity"], "warn")
         self.assertEqual(signal["glyph"], "nutrition")
@@ -128,6 +131,7 @@ class MeasurementsSignalTests(unittest.TestCase):
 
     def test_only_waist_due_targets_the_waist_segment(self) -> None:
         signal = coach_signals._measurements_signal(_weights(2), _waists(12), STATE, TODAY)
+        assert signal is not None
         self.assertEqual(signal["id"], "measurements_due")
         self.assertEqual(signal["title"], "Обнови талию — вес свежий")
         self.assertEqual(signal["action"]["target"], "waist")
@@ -137,6 +141,7 @@ class MeasurementsSignalTests(unittest.TestCase):
         # образует тренд, по которому матрица ведёт калории, и взвешивание
         # сегодня — первое, которое может его оживить.
         signal = coach_signals._measurements_signal(_weights(6), _waists(2), STATE, TODAY)
+        assert signal is not None
         self.assertEqual(signal["id"], "weight_trend_stale")
         self.assertEqual(signal["severity"], "info")
         self.assertIn("тренд", signal["title"].lower())
@@ -169,6 +174,7 @@ class TrainingsSignalTests(unittest.TestCase):
     def test_return_soon_names_the_deadline(self) -> None:
         last = TODAY - timedelta(days=12)
         signal = coach_signals._trainings_signal([_workout(last.isoformat())], TODAY)
+        assert signal is not None
         self.assertEqual(signal["id"], "return_soon")
         self.assertEqual(signal["severity"], "warn")
         deadline = last + timedelta(days=13)
@@ -185,6 +191,7 @@ class TrainingsSignalTests(unittest.TestCase):
             TODAY,
             recommendation,
         )
+        assert signal is not None
         self.assertEqual(signal["id"], "return_mode")
         self.assertEqual(signal["severity"], "accent")
         self.assertEqual(
@@ -208,6 +215,7 @@ class TrainingsSignalTests(unittest.TestCase):
             TODAY,
             {"status": "failed", "updated_at": 456},
         )
+        assert signal is not None
         self.assertEqual(signal["title"], "После перерыва нужен облегчённый старт")
         self.assertEqual(signal["body"], "План пока не готов — повтори генерацию")
         self.assertEqual(
@@ -229,6 +237,7 @@ class TrainingsSignalTests(unittest.TestCase):
                 "updated_at": 789,
             },
         )
+        assert signal is not None
         self.assertEqual(signal["body"], "Текущий план не учитывает перерыв — обнови его")
         self.assertEqual(signal["action"]["type"], "refresh_recommendation")
 
@@ -246,6 +255,7 @@ class DeloadSignalTests(unittest.TestCase):
         workouts = self._dense(start, 14)  # 6 недель набора, неделя 7 — разгрузка
         today = start + timedelta(days=43)  # день внутри 7-й недели без тренировки
         signal = coach_signals._deload_signal(state, workouts, today)
+        assert signal is not None
         self.assertIsNotNone(signal)
         self.assertEqual(signal["severity"], "accent")
 
@@ -281,6 +291,7 @@ class WeekDoneSignalTests(unittest.TestCase):
             self._planned_workout("2026-08-07", done=5, planned=5),
         ]
         signal = coach_signals._week_done_signal(workouts, self._state(2), monday)
+        assert signal is not None
         self.assertIsNotNone(signal)
         self.assertEqual(signal["severity"], "positive")
         self.assertIn("100%", signal["title"])

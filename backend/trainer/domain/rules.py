@@ -57,7 +57,7 @@ def normalize_set_effort(value: object) -> str | None:
     return text
 
 
-def normalize_set_rir(value: object) -> int | None:
+def normalize_set_rir(value: Any) -> int | None:
     """Повторы в запасе (RIR, 0–4), обычно на последнем подходе упражнения.
 
     Точнее меток тяжести; промпт тренера предпочитает его. Пусто — ``None``,
@@ -124,14 +124,17 @@ def normalize_recommendation_snapshot(value: object) -> dict[str, Any] | None:
         for raw_set in raw_sets[:12]:
             if not isinstance(raw_set, dict):
                 continue
-            if isinstance(raw_set.get("reps"), bool) or isinstance(raw_set.get("weight"), bool):
-                continue
             raw_reps = raw_set.get("reps")
+            raw_weight = raw_set.get("weight")
+            if raw_reps is None or raw_weight is None:
+                continue
+            if isinstance(raw_reps, bool) or isinstance(raw_weight, bool):
+                continue
             if isinstance(raw_reps, float) and not raw_reps.is_integer():
                 continue
             try:
                 reps = int(raw_reps)
-                weight = float(raw_set.get("weight"))
+                weight = float(raw_weight)
             except (TypeError, ValueError, OverflowError):
                 continue
             if reps < 1 or not math.isfinite(weight):
