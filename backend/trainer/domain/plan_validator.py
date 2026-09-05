@@ -23,19 +23,7 @@ from datetime import date
 from typing import Any
 
 from trainer.data.anthropic_client import RecommendationError
-from trainer.domain import coach_features, coach_state
-
-# Серверные границы здравого смысла: JSON-схема не умеет числовых диапазонов,
-# поэтому ответ модели клампится и фильтруется после разбора. Это гигиена, а
-# не методика: диапазоны повторов, размер сессии и шаги весов — суждение
-# модели, и они сознательно НЕ проверяются.
-MAX_REPS = 100
-MAX_WEIGHT = 1000.0
-MAX_EXERCISES = 10
-MAX_SETS_PER_EXERCISE = 12
-MAX_REST_DAYS = 4  # rest_days клампится в 0–4 молча, без репромпта
-
-ALLOWED_LOAD_TYPES = ("heavy", "medium", "light")
+from trainer.domain import coach_features, coach_state, limits
 
 
 # --------------------------------------------------------------------------- #
@@ -44,9 +32,9 @@ ALLOWED_LOAD_TYPES = ("heavy", "medium", "light")
 def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, Any]:
     """Санитизация ответа модели по границам, которых нет в JSON-схеме.
 
-    Метка нагрузки только из допустимых (иначе medium), ``rest_days`` в 0–4, только
-    канонические id каталога (дубль id 1 переводится в 18), повторы от 1 до 100,
-    вес 0–1000, не больше 12 подходов на упражнение и 10 упражнений; имя берётся из
+    Метка нагрузки только из допустимых (иначе medium); ``rest_days``, повторы, вес,
+    число подходов и упражнений клампятся по потолкам из ``limits``; только
+    канонические id каталога (дубль id 1 переводится в 18); имя берётся из
     каталога, а не то, что вернула модель. Ни одного валидного упражнения —
     ``RecommendationError``. Зовёт ``recommender.generate_with_trace`` после
     каждого вызова модели.
@@ -57,7 +45,7 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
     names_by_id = {item["id"]: item["name"] for item in catalog}
 
     load_type = raw.get("load_type")
-    if load_type not in ALLOWED_LOAD_TYPES:
+    if load_type not in limits.PLANNED_LOAD_TYPES:
         load_type = "medium"
 
     raw_rest_days = raw.get("rest_days")
@@ -65,7 +53,7 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
         rest_days = int(raw_rest_days) if raw_rest_days is not None else 1
     except (TypeError, ValueError, OverflowError):
         rest_days = 1
-    rest_days = min(max(rest_days, 0), MAX_REST_DAYS)
+    rest_days = min(max(rest_days, 0), limits.MAX_REST_DAYS)
 
     raw_exercises = raw.get("exercises", [])
     if not isinstance(raw_exercises, list):
@@ -109,10 +97,10 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
                 continue
             if reps < 1 or not math.isfinite(weight):
                 continue
-            reps = min(reps, MAX_REPS)
-            weight = min(max(weight, 0.0), MAX_WEIGHT)
+            reps = min(reps, limits.MAX_REPS)
+            weight = min(max(weight, 0.0), limits.MAX_WEIGHT)
             sets_out.append({"reps": reps, "weight": weight})
-            if len(sets_out) >= MAX_SETS_PER_EXERCISE:
+            if len(sets_out) >= limits.MAX_SETS_PER_EXERCISE:
                 break
 
         if not sets_out:
@@ -127,7 +115,7 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
                 "sets": sets_out,
             }
         )
-        if len(exercises_out) >= MAX_EXERCISES:
+        if len(exercises_out) >= limits.MAX_EXERCISES:
             break
 
     if not exercises_out:

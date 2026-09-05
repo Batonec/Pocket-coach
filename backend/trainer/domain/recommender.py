@@ -35,10 +35,8 @@ from trainer.domain import coach_features, coach_state, plan_validator, prompt_b
 DEFAULT_HISTORY_LIMIT = int(os.getenv("RECOMMENDATION_HISTORY_LIMIT", "20"))
 
 
-# Реэкспорт из coach_features: единственный источник правды о группах и границах.
+# Реэкспорт из coach_features: единственный источник правды о группах.
 MUSCLE_GROUPS = coach_features.MUSCLE_GROUPS
-MIN_PLAUSIBLE_BODY_WEIGHT = coach_features.MIN_PLAUSIBLE_BODY_WEIGHT
-MAX_PLAUSIBLE_BODY_WEIGHT = coach_features.MAX_PLAUSIBLE_BODY_WEIGHT
 
 
 # --------------------------------------------------------------------------- #

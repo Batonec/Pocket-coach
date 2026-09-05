@@ -7,6 +7,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 from support import MINIAPP_DIR, sample_workout_payload
@@ -15,9 +16,8 @@ if str(MINIAPP_DIR) not in sys.path:
     sys.path.insert(0, str(MINIAPP_DIR))
 
 from trainer.data.backend_store import MiniAppStore
+from trainer.domain.limits import MAX_WAIST_CM, MIN_WAIST_CM
 from trainer.domain.rules import (
-    MAX_WAIST_CM,
-    MIN_WAIST_CM,
     normalize_set_rir,
     normalize_waist_payload,
     normalize_workout_payload,
@@ -44,19 +44,17 @@ class WaistNormalizationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_waist_payload({"entry_date": "2026-08-14", "waist": "мало"})
 
-    def test_write_bounds_match_the_coach_plausibility_filter(self) -> None:
+    def test_write_bounds_and_the_coach_filter_share_one_limit(self) -> None:
+        # Запись и аналитика читают одну пару констант из limits: замер ровно на
+        # границе и сохраняется, и остаётся в точках коуча — состояние «сохранено в
+        # UI, но проигнорировано коучем» невозможно по построению.
         from trainer.domain import coach_features
 
-        self.assertEqual(MIN_WAIST_CM, coach_features.MIN_PLAUSIBLE_WAIST_CM)
-        self.assertEqual(MAX_WAIST_CM, coach_features.MAX_PLAUSIBLE_WAIST_CM)
-        self.assertEqual(
-            normalize_waist_payload({"entry_date": "2026-08-14", "waist": MIN_WAIST_CM})["waist"],
-            MIN_WAIST_CM,
-        )
-        self.assertEqual(
-            normalize_waist_payload({"entry_date": "2026-08-14", "waist": MAX_WAIST_CM})["waist"],
-            MAX_WAIST_CM,
-        )
+        for waist in (MIN_WAIST_CM, MAX_WAIST_CM):
+            with self.subTest(waist=waist):
+                entry = {"entry_date": "2026-08-14", "waist": waist}
+                self.assertEqual(normalize_waist_payload(entry)["waist"], waist)
+                self.assertEqual(coach_features.waist_points([entry]), [(date(2026, 8, 14), waist)])
 
 
 class WaistStoreTests(unittest.TestCase):

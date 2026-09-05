@@ -2,13 +2,14 @@
 """Правила формы и границ входных данных.
 
 Всё, что сервер решает о присланном клиентом или MCP, до того как оно попадёт
-в базу: какие поля и в каких пределах допустимы у тренировки, замера и
-события, что считается валидной датой, чем ограничен снапшот совета.
+в базу: какие поля допустимы у тренировки, замера и события, что считается
+валидной датой, как санитизируется снапшот совета. Сами пределы — словари
+меток, диапазоны и потолки — лежат в ``limits`` с объяснением каждого числа.
 Хранилище (``data/backend_store``) зовёт эти функции и записывает то, что
 они вернули; само оно ничего не решает.
 
 Механика разбора — типы, границы, тексты ошибок — вынесена в ``parsing``,
-чтобы здесь остались только границы и решения, то есть сама методика.
+чтобы здесь остались только правила и решения, то есть сама методика.
 """
 
 from __future__ import annotations
@@ -31,9 +32,7 @@ from trainer.data.parsing import (
     maybe_int,
     required_text,
 )
-
-ALLOWED_LOAD_TYPES = ("heavy", "medium", "light", "deload")
-ALLOWED_SET_EFFORTS = ("easy", "ok", "hard")
+from trainer.domain import limits
 
 
 def normalize_load_type(value: object) -> str | None:
@@ -44,12 +43,12 @@ def normalize_load_type(value: object) -> str | None:
     реальную сессию. Выдуманный сигнал хуже честного «неизвестно», а тяжесть
     сессии модель и так видит по весам и повторам.
     """
-    return value if isinstance(value, str) and value in ALLOWED_LOAD_TYPES else None
+    return value if isinstance(value, str) and value in limits.LOGGED_LOAD_TYPES else None
 
 
 def normalize_set_effort(value: object) -> str | None:
     """Тяжесть подхода: ``easy`` / ``ok`` / ``hard`` без учёта регистра."""
-    return as_choice(value, "Set effort", ALLOWED_SET_EFFORTS)
+    return as_choice(value, "Set effort", limits.ALLOWED_SET_EFFORTS)
 
 
 def normalize_set_rir(value: Any) -> int | None:
@@ -59,17 +58,12 @@ def normalize_set_rir(value: Any) -> int | None:
     """
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
-    return as_int(value, "Set rir", minimum=0, maximum=4)
+    return as_int(value, "Set rir", minimum=limits.MIN_SET_RIR, maximum=limits.MAX_SET_RIR)
 
 
 # --------------------------------------------------------------------------- #
 # Снапшот совета: копия плана, приложенная к тренировке
 # --------------------------------------------------------------------------- #
-MAX_RECOMMENDATION_SNAPSHOT_BYTES = 8192
-MAX_SNAPSHOT_EXERCISES = 10
-MAX_SNAPSHOT_SETS = 12
-
-
 def _snapshot_text(value: object, limit: int) -> str | None:
     """Строка из снапшота: не строка — мусор, поле опускается.
 
@@ -89,7 +83,10 @@ def _snapshot_set(raw: object) -> dict[str, Any] | None:
         weight = as_float(raw.get("weight"), "weight")
     except ValueError:
         return None
-    return {"reps": min(reps, 1000), "weight": min(max(weight, 0.0), 10000.0)}
+    return {
+        "reps": min(reps, limits.SNAPSHOT_MAX_REPS),
+        "weight": min(max(weight, 0.0), limits.SNAPSHOT_MAX_WEIGHT),
+    }
 
 
 def _snapshot_exercise(raw: object) -> dict[str, Any] | None:
@@ -99,14 +96,14 @@ def _snapshot_exercise(raw: object) -> dict[str, Any] | None:
     exercise_id = maybe_int(raw.get("exercise_id"))
     sets = [
         normalized
-        for normalized in (_snapshot_set(item) for item in raw["sets"][:MAX_SNAPSHOT_SETS])
+        for normalized in (_snapshot_set(item) for item in raw["sets"][: limits.MAX_SNAPSHOT_SETS])
         if normalized is not None
     ]
     if exercise_id is None or not sets:
         return None
     return {
         "exercise_id": exercise_id,
-        "name": _snapshot_text(raw.get("name"), 120) or "",
+        "name": _snapshot_text(raw.get("name"), limits.SNAPSHOT_TEXT_LIMITS["name"]) or "",
         "sets": sets,
     }
 
@@ -116,8 +113,8 @@ def normalize_recommendation_snapshot(value: object) -> dict[str, Any] | None:
     (``data.recommendation``) ради статистики «факт против плана».
 
     Намеренно best-effort: любая кривизна даёт ``None``, и тренировка сохраняется
-    без снапшота — связка не имеет права уронить запись. Белый список полей,
-    ≤10 упражнений, ≤12 подходов, ≤8 КБ.
+    без снапшота — связка не имеет права уронить запись. Белый список полей и
+    потолки из ``limits``: упражнения, подходы, длины строк, байты.
     """
     if not isinstance(value, dict) or not isinstance(value.get("exercises"), list):
         return None
@@ -125,28 +122,29 @@ def normalize_recommendation_snapshot(value: object) -> dict[str, Any] | None:
     exercises = [
         normalized
         for normalized in (
-            _snapshot_exercise(item) for item in value["exercises"][:MAX_SNAPSHOT_EXERCISES]
+            _snapshot_exercise(item) for item in value["exercises"][: limits.MAX_SNAPSHOT_EXERCISES]
         )
         if normalized is not None
     ]
     if not exercises:
         return None
 
+    caps = limits.SNAPSHOT_TEXT_LIMITS
     snapshot = {
         "schema": maybe_int(value.get("schema")) or 1,
-        "source": _snapshot_text(value.get("source"), 32) or "coach",
-        "model": _snapshot_text(value.get("model"), 64),
+        "source": _snapshot_text(value.get("source"), caps["source"]) or "coach",
+        "model": _snapshot_text(value.get("model"), caps["model"]),
         "generated_at": maybe_int(value.get("generated_at")),
-        "applied_at": _snapshot_text(value.get("applied_at"), 40),
+        "applied_at": _snapshot_text(value.get("applied_at"), caps["applied_at"]),
         "based_on_workout_id": maybe_int(value.get("based_on_workout_id")),
         "based_on_workout_count": maybe_int(value.get("based_on_workout_count")),
-        "focus": _snapshot_text(value.get("focus"), 200),
+        "focus": _snapshot_text(value.get("focus"), caps["focus"]),
         "load_type": normalize_load_type(value.get("load_type")),
         "exercises": exercises,
     }
 
     encoded = json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
-    return snapshot if len(encoded) <= MAX_RECOMMENDATION_SNAPSHOT_BYTES else None
+    return snapshot if len(encoded) <= limits.MAX_RECOMMENDATION_SNAPSHOT_BYTES else None
 
 
 # --------------------------------------------------------------------------- #
@@ -215,23 +213,9 @@ def normalize_workout_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
 # --------------------------------------------------------------------------- #
 # Замеры
 # --------------------------------------------------------------------------- #
-# Правдоподобные границы веса тела. За ними запись почти наверняка описка:
-# вес с тренажёра, вбитый в поле взвешивания, — так у атлета в 77 кг появлялись
-# замеры по 22 кг. Отсекается на записи, чтобы мусор не доехал ни до базы,
-# ни до расчёта калорий у коуча.
-MIN_BODY_WEIGHT_KG = 30.0
-MAX_BODY_WEIGHT_KG = 400.0
-
-# Границы записи обязаны совпадать с coach_features.waist_points. Принять
-# значение здесь и молча выбросить его из совета по калориям потом — значит
-# создать невозможное состояние: пользователь видит сохранённый замер, а коуч
-# видит «талии нет» и держит предупреждение о старом замере.
-MIN_WAIST_CM = 50.0
-MAX_WAIST_CM = 160.0
-
-
 def normalize_body_weight_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Замер веса тела в форму для базы: дата, вес в границах 30–400 кг, заметка.
+    """Замер веса тела в форму для базы: дата, вес в границах записи из ``limits``,
+    заметка.
 
     Вне границ — ``ValueError``: такое значение почти наверняка описка. Зовёт
     ``backend_store.save_body_weight``.
@@ -241,8 +225,8 @@ def normalize_body_weight_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "weight": as_float(
             payload.get("weight"),
             "weight",
-            minimum=MIN_BODY_WEIGHT_KG,
-            maximum=MAX_BODY_WEIGHT_KG,
+            minimum=limits.MIN_BODY_WEIGHT_KG,
+            maximum=limits.MAX_BODY_WEIGHT_KG,
             unit="kg",
         ),
         "notes": as_text(payload.get("notes")),
@@ -250,15 +234,20 @@ def normalize_body_weight_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_waist_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Замер талии в форму для базы: дата, обхват в границах 50–160 см, заметка.
+    """Замер талии в форму для базы: дата, обхват в границах из ``limits``, заметка.
 
-    Границы те же, что у аналитики (``coach_features``): значение не может быть
-    «сохранено в UI, но проигнорировано коучем». Зовёт ``backend_store.save_waist``.
+    Константа одна и для записи, и для аналитики (``coach_features.waist_points``):
+    значение не может быть «сохранено в UI, но проигнорировано коучем». Зовёт
+    ``backend_store.save_waist``.
     """
     return {
         "entry_date": as_date(payload.get("entry_date"), "entry_date").isoformat(),
         "waist": as_float(
-            payload.get("waist"), "waist", minimum=MIN_WAIST_CM, maximum=MAX_WAIST_CM, unit="cm"
+            payload.get("waist"),
+            "waist",
+            minimum=limits.MIN_WAIST_CM,
+            maximum=limits.MAX_WAIST_CM,
+            unit="cm",
         ),
         "notes": as_text(payload.get("notes")),
     }

@@ -29,7 +29,7 @@ from datetime import date, timedelta
 from itertools import pairwise
 from typing import Any
 
-from trainer.domain import coach_state
+from trainer.domain import coach_state, limits
 from trainer.domain.coach_state import BREAK_DAYS
 
 # Id 1 («Жим гор.») и id 18 («Жим в тренажере») в каталоге — один тренажёр; старые
@@ -131,14 +131,6 @@ def group_volume_targets(
             targets[group] = SMALL_GROUP_TARGETS[group]
     return targets
 
-
-# Правдоподобные границы веса взрослого: записи вне их — шум логирования
-# (например, вес с тренажёра, сохранённый в таблицу веса тела) и до логики
-# советов по калориям доходить не должны.
-MIN_PLAUSIBLE_BODY_WEIGHT = 40.0
-MAX_PLAUSIBLE_BODY_WEIGHT = 150.0
-MIN_PLAUSIBLE_WAIST_CM = 50.0
-MAX_PLAUSIBLE_WAIST_CM = 160.0
 
 # Общее правило свежести для веса и талии: устаревшие данные → без советов по калориям.
 STALE_MEASUREMENT_DAYS = 14
@@ -897,13 +889,13 @@ def _measurement_points(
 def weight_points(body_weights: list[dict[str, Any]]) -> list[tuple[date, float]]:
     """Правдоподобные взвешивания как точки ``(дата, кг)``. Зовут промпт, сигналы и rules."""
     return _measurement_points(
-        body_weights, "weight", MIN_PLAUSIBLE_BODY_WEIGHT, MAX_PLAUSIBLE_BODY_WEIGHT
+        body_weights, "weight", limits.MIN_PLAUSIBLE_BODY_WEIGHT, limits.MAX_PLAUSIBLE_BODY_WEIGHT
     )
 
 
 def waist_points(waists: list[dict[str, Any]]) -> list[tuple[date, float]]:
     """Правдоподобные замеры талии как точки ``(дата, см)``. Зовут промпт, сигналы и rules."""
-    return _measurement_points(waists, "waist", MIN_PLAUSIBLE_WAIST_CM, MAX_PLAUSIBLE_WAIST_CM)
+    return _measurement_points(waists, "waist", limits.MIN_WAIST_CM, limits.MAX_WAIST_CM)
 
 
 def moving_average(

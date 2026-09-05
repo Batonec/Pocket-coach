@@ -13,7 +13,7 @@ from support import (
 )
 
 from trainer.data import backend_store  # support кладёт backend/ в sys.path
-from trainer.domain import rules
+from trainer.domain import limits, rules
 
 
 def sample_snapshot(**overrides):
@@ -108,7 +108,7 @@ class NormalizeSnapshotTests(unittest.TestCase):
         if result is not None:
             self.assertLessEqual(
                 len(backend_store.json.dumps(result, ensure_ascii=False)),
-                rules.MAX_RECOMMENDATION_SNAPSHOT_BYTES,
+                limits.MAX_RECOMMENDATION_SNAPSHOT_BYTES,
             )
 
 
