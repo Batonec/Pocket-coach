@@ -640,7 +640,7 @@ def _build_system_prompt(
     state: dict[str, Any] | None = None,
     strategy: str | None = None,
 ) -> str:
-    """Системный промпт из шаблона ``prompts/system.md``.
+    """Системный промпт плана из шаблона ``prompts/next_workout.md``.
 
     Проза живёт в шаблоне; здесь только шесть слотов: профиль, каталог с семантикой
     тренажёров (без дубля id 1), пробелы каталога, политика фаз, жёсткие границы
@@ -654,7 +654,7 @@ def _build_system_prompt(
         if item["id"] not in coach_features.EXERCISE_ALIASES
     )
     return coach_prompts.build(
-        "system",
+        "next_workout",
         profile=_render_profile(profile),
         catalog=catalog_lines,
         catalog_gaps=CATALOG_GAPS,

@@ -26,7 +26,7 @@ class PromptTemplateTests(unittest.TestCase):
         падает громко.
         """
         self.assertEqual(
-            coach_prompts.slots(coach_prompts.load("system")),
+            coach_prompts.slots(coach_prompts.load("next_workout")),
             {"profile", "catalog", "catalog_gaps", "phase_policy", "hard_rules", "program"},
         )
 
@@ -134,11 +134,11 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertNotIn("<!--", built)
         self.assertTrue(built.startswith("Ты — персональный фитнес-тренер"))
 
-    def test_system_header_does_not_reach_the_model(self):
-        """system.md несёт такую же шапку для человека; собранный промпт плана
+    def test_plan_header_does_not_reach_the_model(self):
+        """next_workout.md несёт такую же шапку для человека; собранный промпт плана
         начинается с роли, а не с комментария."""
         self.assertTrue(
-            (coach_prompts.PROMPTS_DIR / "system.md").read_text("utf-8").startswith("<!--")
+            (coach_prompts.PROMPTS_DIR / "next_workout.md").read_text("utf-8").startswith("<!--")
         )
         built = prompt_builder._build_system_prompt([])
         self.assertNotIn("<!--", built)
