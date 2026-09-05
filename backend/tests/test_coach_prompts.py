@@ -7,6 +7,7 @@ import support
 from support import STATIC_DIR
 
 import coach_prompts
+import prompt_builder
 import recommender
 
 
@@ -49,17 +50,17 @@ class PromptTemplateTests(unittest.TestCase):
         import coach_state
 
         expected = coach_prompts.slots(coach_prompts.load("phase_policy"))
-        self.assertEqual(expected, recommender._PHASE_POLICY_SLOTS)
+        self.assertEqual(expected, prompt_builder._PHASE_POLICY_SLOTS)
         for phase in coach_state.PHASES:
             state = coach_state.load_state(None)
             state["phase"] = phase
-            rendered = recommender._render_phase_policy(state)
+            rendered = prompt_builder._render_phase_policy(state)
             self.assertNotIn("{{", rendered, phase)
 
     def test_report_prompt_carries_profile_program_and_gate(self):
         """Отчёт — единственное место, где жёсткий гейт этапа может прозвучать
         вслух, поэтому он получает и профиль, и программу."""
-        built = recommender._build_report_system_prompt(
+        built = prompt_builder._build_report_system_prompt(
             {"blocks": {"Цель": "тело цели"}},
             "## 4. Тренировочные дни\nкаркас\n",
         )
@@ -69,7 +70,7 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertIn("Гейт этапа", built)
 
     def test_report_prompt_without_profile_still_builds(self):
-        built = recommender._build_report_system_prompt()
+        built = prompt_builder._build_report_system_prompt()
         self.assertNotIn("{{", built)
         self.assertNotIn("=== ПРОГРАММА", built)
 
@@ -78,7 +79,10 @@ class PromptTemplateTests(unittest.TestCase):
         текст: его правят, а в промпт он не едет."""
         import re
 
-        source = (support.MINIAPP_DIR / "recommender.py").read_text("utf-8")
+        source = "".join(
+            (support.MINIAPP_DIR / name).read_text("utf-8")
+            for name in ("prompt_builder.py", "recommender.py")
+        )
         used = set(re.findall(r'_block\(\s*\n?\s*"([a-z_]+)"', source))
         used |= set(re.findall(r'"(report_deload_(?:yes|no))"', source))
         declared = set(coach_prompts.fragments("user_blocks"))
@@ -130,11 +134,11 @@ class PromptTemplateTests(unittest.TestCase):
 
     def test_program_slot_is_empty_without_a_strategy(self):
         """Секция появляется целиком или не появляется вовсе."""
-        self.assertEqual(recommender._render_program(None), "")
-        self.assertEqual(recommender._render_program(""), "")
+        self.assertEqual(prompt_builder._render_program(None), "")
+        self.assertEqual(prompt_builder._render_program(""), "")
 
     def test_program_warns_about_renamed_sections(self):
-        rendered = recommender._render_program("## 1. Прогрессия\nтело\n")
+        rendered = prompt_builder._render_program("## 1. Прогрессия\nтело\n")
         self.assertIn("не найдены разделы", rendered)
         self.assertIn("Тренировочные дни", rendered)
         self.assertIn("тело", rendered)
@@ -143,7 +147,7 @@ class PromptTemplateTests(unittest.TestCase):
 class BuiltPromptTests(unittest.TestCase):
     def test_built_system_prompt_has_no_unfilled_slots(self):
         catalog = recommender.load_catalog(STATIC_DIR)
-        prompt = recommender._build_system_prompt(catalog)
+        prompt = prompt_builder._build_system_prompt(catalog)
         self.assertNotIn("{{", prompt)
         self.assertIn("=== ТРЕНАЖЁРЫ (каталог) ===", prompt)
         self.assertIn("=== ФАЗЫ ПОДГОТОВКИ ===", prompt)

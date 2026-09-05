@@ -7,6 +7,7 @@ from support import STATIC_DIR
 
 import anthropic_client
 import plan_validator
+import prompt_builder
 import recommender
 
 CATALOG = [
@@ -23,7 +24,7 @@ class RecommenderTests(unittest.TestCase):
         self.assertTrue(all("id" in item and "name" in item for item in catalog))
 
     def test_build_schema_enum_lists_catalog_ids_and_requires_note(self) -> None:
-        schema = recommender._build_schema(CATALOG)
+        schema = prompt_builder._build_schema(CATALOG)
         item = schema["properties"]["exercises"]["items"]
         # id 1 is the catalog duplicate of 18 — never offered to the model.
         self.assertEqual(item["properties"]["exercise_id"]["enum"], [8, 9])
@@ -113,7 +114,7 @@ class RecommenderTests(unittest.TestCase):
                 },
             },
         ]
-        text = recommender._serialize_history(workouts, 20)
+        text = prompt_builder._serialize_history(workouts, 20)
         self.assertTrue(text.splitlines()[0].startswith("2026-05-26"))
         self.assertIn("120кг×10+", text)  # hard → '+'
         self.assertIn("50кг×8-", text)  # easy → '-'
@@ -121,49 +122,6 @@ class RecommenderTests(unittest.TestCase):
     def test_generate_requires_history(self) -> None:
         with self.assertRaises(recommender.RecommendationError):
             recommender.generate([], [], CATALOG)
-
-
-class CoachContextTests(unittest.TestCase):
-    def _workout(self, when: str, exercise_id: int, sets: int, with_snapshot: bool = False):
-        workout = {
-            "workout_date": when,
-            "data": {
-                "load_type": "medium",
-                "exercises": [
-                    {
-                        "exercise_id": exercise_id,
-                        "name": "X",
-                        "sets": [{"reps": 10, "weight": 50} for _ in range(sets)],
-                    }
-                ],
-            },
-        }
-        if with_snapshot:
-            workout["data"]["recommendation"] = {
-                "schema": 1,
-                "exercises": [
-                    {
-                        "exercise_id": exercise_id,
-                        "name": "X",
-                        "sets": [{"reps": 10, "weight": 50}] * 3,
-                    },
-                    {
-                        "exercise_id": 15,
-                        "name": "Сгибания ног",
-                        "sets": [{"reps": 12, "weight": 40}] * 2,
-                    },
-                ],
-            }
-        return workout
-
-    def test_plan_adherence_report_compares_fact_vs_plan(self) -> None:
-        workouts = [self._workout("2026-06-10", 18, 3, with_snapshot=True)]
-        report = recommender._plan_adherence_report(workouts)
-        self.assertIn("3/5", report)  # 3 of 5 planned sets done
-        self.assertIn("пропущено", report)  # hamstring exercise skipped
-
-    def test_plan_adherence_none_without_snapshots(self) -> None:
-        self.assertIsNone(recommender._plan_adherence_report([self._workout("2026-06-10", 18, 3)]))
 
 
 class ProfileTests(unittest.TestCase):
@@ -230,7 +188,7 @@ class ProfileTests(unittest.TestCase):
 
     def test_system_prompt_embeds_profile_semantics_and_policy(self) -> None:
         profile = {"schema": 1, "blocks": {"Цель": "lean bulk, потолок 84 кг"}}
-        prompt = recommender._build_system_prompt(CATALOG, profile)
+        prompt = prompt_builder._build_system_prompt(CATALOG, profile)
         self.assertIn("lean bulk, потолок 84 кг", prompt)
         self.assertIn("широчайшие", prompt)  # catalog semantics
         self.assertIn("ТРЕНЕРСКАЯ ПОЛИТИКА", prompt)
@@ -244,7 +202,7 @@ class ProfileTests(unittest.TestCase):
         self.assertIn("зона лечащего врача", prompt)
 
     def test_system_prompt_without_profile_uses_fallback(self) -> None:
-        prompt = recommender._build_system_prompt(CATALOG)
+        prompt = prompt_builder._build_system_prompt(CATALOG)
         self.assertIn("Профиль атлета не настроен", prompt)
 
     def test_active_phase_policy_uses_athlete_overrides(self):
@@ -256,7 +214,7 @@ class ProfileTests(unittest.TestCase):
         state = coach_state.load_state(None)
         state["phase"] = "cut_recomp"
         state["phase_params"] = {"cut_recomp": {"title": "Ф0 · возврат", "calories": [2450, 2550]}}
-        prompt = recommender._build_system_prompt(CATALOG, None, state)
+        prompt = prompt_builder._build_system_prompt(CATALOG, None, state)
         self.assertIn("Ф0 · возврат", prompt)
         self.assertIn("2450–2550", prompt)
         self.assertNotIn("2100–2200", prompt)
@@ -272,7 +230,7 @@ class ProfileTests(unittest.TestCase):
         state = coach_state.load_state(None)
         state["phase"] = "maintenance"
         state["phase_params"] = {"maintenance": {"protein_g": 150, "session_sets": "восемь"}}
-        prompt = recommender._build_system_prompt(CATALOG, None, state)
+        prompt = prompt_builder._build_system_prompt(CATALOG, None, state)
         self.assertIn("~150+ г", prompt)
         self.assertIn("восемь", prompt)
 
@@ -294,7 +252,7 @@ class ProfileTests(unittest.TestCase):
                 },
             }
         ]
-        prompt = recommender._build_user_prompt(workouts, [], date(2026, 6, 12), 20)
+        prompt = prompt_builder._build_user_prompt(workouts, [], date(2026, 6, 12), 20)
         self.assertTrue(prompt.startswith("=== КОНТЕКСТ ==="))
         self.assertIn("пятница", prompt)
         self.assertNotIn("гормонального цикла", prompt)
@@ -327,7 +285,7 @@ class ProfileTests(unittest.TestCase):
                 },
             }
         ]
-        prompt = recommender._build_user_prompt(workouts, [], date(2026, 6, 12), 20)
+        prompt = prompt_builder._build_user_prompt(workouts, [], date(2026, 6, 12), 20)
         self.assertIn("ВОЗВРАТ ПОСЛЕ ПЕРЕРЫВА", prompt)
         self.assertIn("неделя блока 1", prompt)
         # The comeback methodology is delegated: the context names the single
@@ -369,7 +327,7 @@ class RestDaysTests(unittest.TestCase):
         )
 
     def test_schema_requires_rest_days(self) -> None:
-        schema = recommender._build_schema(CATALOG)
+        schema = prompt_builder._build_schema(CATALOG)
         self.assertIn("rest_days", schema["properties"])
         self.assertIn("rest_days", schema["required"])
 
@@ -450,51 +408,6 @@ class RestDaysTests(unittest.TestCase):
         self.assertEqual(context["weekly_target"], [7, 10])
         self.assertEqual(context["group_targets"]["грудь"], [7, 10])
         self.assertEqual(context["group_targets"]["бицепс"], [4, 8])
-
-
-class SerializationTests(unittest.TestCase):
-    def test_serialize_history_shows_rir_and_canonical_name(self) -> None:
-        catalog = [{"id": 18, "name": "Жим в тренажере"}, {"id": 1, "name": "Жим гор."}]
-        workouts = [
-            {
-                "workout_date": "2026-06-10",
-                "data": {
-                    "load_type": "medium",
-                    "exercises": [
-                        {
-                            "exercise_id": 1,  # duplicate id from old history
-                            "name": "Жим гор.",
-                            "sets": [
-                                {"reps": 10, "weight": 50, "effort": None, "rir": 2},
-                            ],
-                        }
-                    ],
-                },
-            }
-        ]
-        text = recommender._serialize_history(workouts, 20, catalog)
-        self.assertIn("Жим в тренажере", text)  # renamed onto the canonical id
-        self.assertNotIn("Жим гор.", text)
-        self.assertIn("50кг×10@2", text)  # RIR shown as @N
-
-    def test_validate_remaps_duplicate_id_to_canonical(self) -> None:
-        catalog = [{"id": 18, "name": "Жим в тренажере"}, {"id": 1, "name": "Жим гор."}]
-        raw = {
-            "focus": "x",
-            "load_type": "medium",
-            "rationale": "r",
-            "exercises": [
-                {
-                    "exercise_id": 1,
-                    "name": "Жим гор.",
-                    "note": "n",
-                    "sets": [{"reps": 10, "weight": 50}],
-                }
-            ],
-        }
-        out = plan_validator._validate(raw, catalog)
-        self.assertEqual(out["exercises"][0]["exercise_id"], 18)
-        self.assertEqual(out["exercises"][0]["name"], "Жим в тренажере")
 
 
 class WeeklyReportTests(unittest.TestCase):

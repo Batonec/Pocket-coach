@@ -14,7 +14,7 @@ import support  # noqa: F401 — adds backend to sys.path
 import coach_features
 import coach_state
 import plan_validator
-import recommender
+import prompt_builder
 
 
 class ActiveWindowTests(unittest.TestCase):
@@ -176,7 +176,7 @@ class SessionCapTests(unittest.TestCase):
 
 class AssembledPromptTests(unittest.TestCase):
     def test_plan_prompt_carries_the_fixed_blocks(self) -> None:
-        prompt = recommender._build_user_prompt(
+        prompt = prompt_builder._build_user_prompt(
             fx.workouts(),
             fx.BODY_WEIGHTS,
             fx.TODAY,
@@ -197,7 +197,7 @@ class AssembledPromptTests(unittest.TestCase):
         self.assertNotIn("[?]", prompt)
 
     def test_report_prompt_carries_attendance_and_the_window(self) -> None:
-        prompt = recommender._build_report_prompt(
+        prompt = prompt_builder._build_report_prompt(
             fx.workouts(),
             fx.BODY_WEIGHTS,
             fx.WAISTS,

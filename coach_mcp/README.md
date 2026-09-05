@@ -4,8 +4,8 @@ MCP server over the Trainer mini-app data, plus tools to **debug the
 next-workout recommendations** and manage the **coaching state** (preparation
 phase, waist measurements, injection-cycle config). It reads the same SQLite
 database the backend uses (`backend`) and reuses `recommender.py` /
-`coach_state.py` / `coach_features.py`, so what you see here is exactly what
-the app's backend generates.
+`prompt_builder.py` / `coach_state.py` / `coach_features.py`, so what you see
+here is exactly what the app's backend generates.
 
 Use it to chat with Claude as a "coach" about your training, and to inspect the
 recommendation pipeline (the exact prompt, the model's attempts with semantic-

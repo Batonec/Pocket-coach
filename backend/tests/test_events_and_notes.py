@@ -19,6 +19,7 @@ from support import JsonHttpClient, running_miniapp_server, sample_workout_paylo
 import backend_store
 import coach_prompts
 import coach_state
+import prompt_builder
 import recommender
 import refresh_recommendation
 import weekly_report
@@ -383,7 +384,7 @@ class AthleteNotesInPromptTests(unittest.TestCase):
     относятся: к подходу (вес под ней не сравним с соседними) или ко всей сессии."""
 
     def test_set_note_stands_next_to_its_own_set(self) -> None:
-        line = recommender._serialize_workout(
+        line = prompt_builder._serialize_workout(
             _workout(
                 "2026-06-10",
                 sets=[
@@ -395,7 +396,7 @@ class AthleteNotesInPromptTests(unittest.TestCase):
         self.assertIn("100кг×10+ «канат вместо ручки», 90кг×8", line)
 
     def test_session_note_closes_the_line(self) -> None:
-        line = recommender._serialize_workout(
+        line = prompt_builder._serialize_workout(
             _workout("2026-06-10", notes="спал 5 часов, тяжело шло")
         )
         self.assertTrue(line.endswith(" — «спал 5 часов, тяжело шло»"), line)
@@ -403,7 +404,7 @@ class AthleteNotesInPromptTests(unittest.TestCase):
     def test_note_stays_on_one_line(self) -> None:
         """Одна тренировка — одна строка хроники: заметка в две строки разорвала
         бы формат, по которому модель читает историю."""
-        line = recommender._serialize_workout(
+        line = prompt_builder._serialize_workout(
             _workout(
                 "2026-06-10",
                 sets=[{"reps": 10, "weight": 100, "notes": "новая\n  скамья"}],
@@ -415,14 +416,14 @@ class AthleteNotesInPromptTests(unittest.TestCase):
         self.assertIn("«спал мало устал»", line)
 
     def test_empty_note_leaves_no_empty_quotes(self) -> None:
-        line = recommender._serialize_workout(
+        line = prompt_builder._serialize_workout(
             _workout("2026-06-10", sets=[{"reps": 10, "weight": 100, "notes": "   "}], notes=None)
         )
         self.assertNotIn("«", line)
         self.assertTrue(line.endswith("100кг×10"), line)
 
     def test_notes_reach_the_assembled_prompt(self) -> None:
-        prompt = recommender._build_user_prompt(
+        prompt = prompt_builder._build_user_prompt(
             [
                 _workout(
                     "2026-06-10",
@@ -451,7 +452,7 @@ class EventPromptTests(unittest.TestCase):
     ]
 
     def _prompt(self, events: list[dict[str, object]] | None) -> str:
-        return recommender._build_user_prompt(
+        return prompt_builder._build_user_prompt(
             self.WORKOUTS, [], TODAY, 20, catalog=CATALOG, events=events
         )
 
@@ -474,7 +475,7 @@ class EventPromptTests(unittest.TestCase):
     def test_the_newest_open_event_wins(self) -> None:
         """Хранилище держит открытое событие единственным; если в данных их всё
         же несколько, в контекст идёт самое свежее."""
-        picked = recommender._open_event(
+        picked = prompt_builder._open_event(
             [
                 {"start_date": "2026-06-01", "end_date": None, "text": "старое"},
                 {"start_date": "2026-06-11", "end_date": None, "text": "свежее"},
@@ -483,7 +484,9 @@ class EventPromptTests(unittest.TestCase):
         self.assertEqual(picked["text"], "свежее")
 
     def test_chronicle_stands_between_the_workouts(self) -> None:
-        lines = recommender._serialize_history(self.WORKOUTS, 10, CATALOG, self.EVENTS).splitlines()
+        lines = prompt_builder._serialize_history(
+            self.WORKOUTS, 10, CATALOG, self.EVENTS
+        ).splitlines()
         self.assertEqual(
             [line.split(" [")[0] for line in lines],
             [
@@ -500,7 +503,7 @@ class EventPromptTests(unittest.TestCase):
     def test_event_on_a_workout_day_comes_first(self) -> None:
         """Сначала обстоятельство, потом сессия — иначе строка события читается
         как комментарий к уже прошедшей тренировке."""
-        lines = recommender._serialize_history(
+        lines = prompt_builder._serialize_history(
             [_workout("2026-06-10")],
             10,
             CATALOG,
@@ -523,12 +526,14 @@ class EventPromptTests(unittest.TestCase):
                 "end_date": (date(2026, 1, 1) + timedelta(days=i)).isoformat(),
                 "text": f"событие {i}",
             }
-            for i in range(recommender.MAX_EVENT_LINES + extra)
+            for i in range(prompt_builder.MAX_EVENT_LINES + extra)
         ]
         prompt = self._prompt(events)
 
         self.assertIn("ХРОНИКА СОБЫТИЙ НЕПОЛНАЯ", prompt)
-        self.assertIn(f"показаны последние {recommender.MAX_EVENT_LINES} из {len(events)}", prompt)
+        self.assertIn(
+            f"показаны последние {prompt_builder.MAX_EVENT_LINES} из {len(events)}", prompt
+        )
         # Режутся самые старые: свежее событие объясняет разрыв, до которого
         # модель ещё дойдёт.
         self.assertNotIn("«событие 0»", prompt)
@@ -536,7 +541,7 @@ class EventPromptTests(unittest.TestCase):
         chronicle = [
             line for line in prompt.splitlines() if "[событие]" in line and line[:4].isdigit()
         ]
-        self.assertEqual(len(chronicle), recommender.MAX_EVENT_LINES)
+        self.assertEqual(len(chronicle), prompt_builder.MAX_EVENT_LINES)
 
     def test_chronicle_at_the_ceiling_is_not_flagged_as_clipped(self) -> None:
         events = [
@@ -545,7 +550,7 @@ class EventPromptTests(unittest.TestCase):
                 "end_date": (date(2026, 1, 1) + timedelta(days=i)).isoformat(),
                 "text": f"событие {i}",
             }
-            for i in range(recommender.MAX_EVENT_LINES)
+            for i in range(prompt_builder.MAX_EVENT_LINES)
         ]
         self.assertNotIn("ХРОНИКА СОБЫТИЙ НЕПОЛНАЯ", self._prompt(events))
 
@@ -571,7 +576,7 @@ class WeeklyReportEventTests(unittest.TestCase):
     DAYS = 7  # период отчёта: 2026-06-06 … 2026-06-12
 
     def _report(self, events: list[dict[str, object]] | None) -> str:
-        return recommender._build_report_prompt(
+        return prompt_builder._build_report_prompt(
             [_workout("2026-06-10")],
             [],
             [],
