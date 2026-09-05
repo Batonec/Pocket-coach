@@ -26,8 +26,8 @@ from typing import Any
 # trainer) в sys.path кладём сами.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from trainer.data import backend_store
-from trainer.domain import coach_state, recommender
+from trainer.data import backend_store, files
+from trainer.domain import recommender
 
 BASE_DIR = Path(__file__).resolve().parents[2]  # backend/: там data/ и resources/
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
@@ -36,7 +36,7 @@ CATALOG_PATH = Path(
 )
 PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
 STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))
-STATE_PATH = coach_state.default_state_path(DB_PATH)
+STATE_PATH = files.default_state_path(DB_PATH)
 USER_ID = 3  # personal-build: единственный атлет, см. CLAUDE.md
 MAX_AGE_HOURS = float(os.getenv("REFRESH_MAX_AGE_HOURS", "24"))
 # A 'pending' row older than this is a generation that died mid-flight
@@ -88,14 +88,14 @@ def run(store: backend_store.MiniAppStore, user_id: int, force: bool = False) ->
     body_weights = store.list_body_weights(user_id)
     store.set_recommendation_pending(user_id)
     try:
-        catalog = recommender.load_catalog(CATALOG_PATH)
+        catalog = files.load_catalog(CATALOG_PATH)
         recommendation, usage, model = recommender.generate(
             workouts,
             body_weights,
             catalog,
-            profile=recommender.load_profile(PROFILE_PATH),
-            strategy=recommender.load_strategy(STRATEGY_PATH),
-            state=coach_state.load_state(STATE_PATH),
+            profile=files.load_profile(PROFILE_PATH),
+            strategy=files.load_strategy(STRATEGY_PATH),
+            state=files.load_state(STATE_PATH),
             waists=store.list_waists(user_id),
             events=store.list_events(user_id),
         )

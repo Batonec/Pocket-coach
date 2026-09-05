@@ -9,7 +9,9 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 ## Состав
 
 - [backend/server.py](./server.py) — HTTP API, резолв сессии (iOS fixed-user + browser debug), раздача каталога упражнений
-- [backend/trainer/data/backend_store.py](./trainer/data/backend_store.py) — SQLite-хранилище и нормализация данных
+- [backend/trainer/data/backend_store.py](./trainer/data/backend_store.py) — SQLite-хранилище: только SQL, решения берёт из `domain/rules.py`
+- [backend/trainer/domain/rules.py](./trainer/domain/rules.py) — форма и границы входа: тренировка, замеры, события, снапшот совета, даты
+- [backend/trainer/data/files.py](./trainer/data/files.py) — файлы рядом с базой и каталог упражнений: чтение и запись состояния, профиля, стратегии
 - [backend/trainer/domain/recommender.py](./trainer/domain/recommender.py) — точка входа «Совета тренера»: загрузка каталога, профиля и стратегии, оба вызова модели (план и недельный отчёт), один авто-репромпт по нарушениям валидатора
 - [backend/trainer/domain/prompt_builder.py](./trainer/domain/prompt_builder.py) — всё, что читает модель: системный промпт, user-промпт с вычисленными фичами и историей, JSON-схема ответа, промпт недельного отчёта; проза берётся из [prompts/](./prompts), здесь только слоты
 - [backend/trainer/domain/plan_validator.py](./trainer/domain/plan_validator.py) — проверка плана модели: санитизация по границам, которых нет в JSON-схеме, три жёсткие границы методики и детерминированное разрешение после неудачного репромпта
@@ -221,7 +223,7 @@ Coach MCP); единый допустимый диапазон записи и �
 `recommendations` хранит одну перезаписываемую строку на пользователя, поэтому только копия
 стабильна для статистики «факт vs план».
 
-Серверные правила (`backend_store.py`):
+Серверные правила (`domain/rules.py`, применяет `data/backend_store.py`):
 - `normalize_recommendation_snapshot` — белый список полей и лимиты (≤10 упражнений, ≤12
   подходов, ≤8 КБ); невалидный снапшот **молча отбрасывается**, тренировка сохраняется.
 - `PUT /api/workouts/{id}` без снапшота в payload **сохраняет** уже записанный снапшот

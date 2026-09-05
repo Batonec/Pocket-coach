@@ -18,8 +18,9 @@ from typing import Any
 from urllib.parse import urlparse
 
 from trainer import RESOURCES_DIR
+from trainer.data import files
 from trainer.data.backend_store import MiniAppStore
-from trainer.domain import coach_signals, coach_state, recommender
+from trainer.domain import coach_signals, recommender
 
 BASE_DIR = Path(__file__).resolve().parent
 # Каталог упражнений едет с кодом; путь переопределяется только ради тестов и
@@ -44,7 +45,7 @@ COACH_STRATEGY_PATH = Path(
 )
 # Mutable coaching state (preparation phase, waist limits) —
 # same location policy as the profile; switched via the Coach MCP tools.
-COACH_STATE_PATH = coach_state.default_state_path(DB_PATH)
+COACH_STATE_PATH = files.default_state_path(DB_PATH)
 SESSION_COOKIE_NAME = "trainer_session"
 SESSION_SECRET = os.getenv("MINIAPP_SESSION_SECRET") or "trainer-dev-session-secret"
 SESSION_MAX_AGE_SECONDS = int(os.getenv("MINIAPP_SESSION_MAX_AGE", "2592000"))
@@ -53,7 +54,7 @@ WATCHED_EXTENSIONS = {".py", ".html", ".css", ".js", ".json", ".md"}
 STORE = MiniAppStore(DB_PATH)
 
 try:
-    EXERCISE_CATALOG: list[dict[str, Any]] | None = recommender.load_catalog(CATALOG_PATH)
+    EXERCISE_CATALOG: list[dict[str, Any]] | None = files.load_catalog(CATALOG_PATH)
 except Exception as exc:  # noqa: BLE001
     EXERCISE_CATALOG = None
     print(f"[miniapp] WARNING: exercise catalog not loaded, recommendations disabled: {exc}")
@@ -93,9 +94,9 @@ def _generate_and_store_recommendation(user_id: int) -> dict[str, Any] | None:
             workouts,
             body_weights,
             EXERCISE_CATALOG,
-            profile=recommender.load_profile(COACH_PROFILE_PATH),
-            strategy=recommender.load_strategy(COACH_STRATEGY_PATH),
-            state=coach_state.load_state(COACH_STATE_PATH),
+            profile=files.load_profile(COACH_PROFILE_PATH),
+            strategy=files.load_strategy(COACH_STRATEGY_PATH),
+            state=files.load_state(COACH_STATE_PATH),
             waists=STORE.list_waists(user_id),
             events=STORE.list_events(user_id),
         )
@@ -414,7 +415,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         signals = coach_signals.compute_signals(
             STORE,
             int(user["id"]),
-            coach_state.load_state(COACH_STATE_PATH),
+            files.load_state(COACH_STATE_PATH),
         )
         self._send_json(
             HTTPStatus.OK,
@@ -636,7 +637,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         user_id = int(user["id"])
         now_ts = int(time.time())
         active = coach_signals.compute_signals(
-            STORE, user_id, coach_state.load_state(COACH_STATE_PATH), now_ts=now_ts
+            STORE, user_id, files.load_state(COACH_STATE_PATH), now_ts=now_ts
         )
         matched = next(
             (signal for signal in active if signal["instance_key"] == instance_key),

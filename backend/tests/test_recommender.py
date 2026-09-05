@@ -5,7 +5,7 @@ import unittest
 import support  # noqa: F401 — adds backend to sys.path
 from support import CATALOG_PATH
 
-from trainer.data import anthropic_client
+from trainer.data import anthropic_client, files
 from trainer.domain import plan_validator, prompt_builder, recommender
 
 CATALOG = [
@@ -17,7 +17,7 @@ CATALOG = [
 
 class RecommenderTests(unittest.TestCase):
     def test_load_catalog_reads_the_resources_file(self) -> None:
-        catalog = recommender.load_catalog(CATALOG_PATH)
+        catalog = files.load_catalog(CATALOG_PATH)
         self.assertTrue(catalog)
         self.assertTrue(all("id" in item and "name" in item for item in catalog))
 
@@ -130,7 +130,7 @@ class ProfileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "coach_profile.json"
             path.write_text('{"schema":1,"blocks":{"Цель":"lean bulk до 84"}}', "utf-8")
-            profile = recommender.load_profile(path)
+            profile = files.load_profile(path)
             self.assertIsNotNone(profile)
             self.assertIn("Цель", profile["blocks"])
 
@@ -138,14 +138,14 @@ class ProfileTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        self.assertIsNone(recommender.load_profile(None))
-        self.assertIsNone(recommender.load_profile("/nonexistent/coach_profile.json"))
+        self.assertIsNone(files.load_profile(None))
+        self.assertIsNone(files.load_profile("/nonexistent/coach_profile.json"))
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "broken.json"
             path.write_text("{not json", "utf-8")
-            self.assertIsNone(recommender.load_profile(path))
+            self.assertIsNone(files.load_profile(path))
             path.write_text('{"blocks":{}}', "utf-8")
-            self.assertIsNone(recommender.load_profile(path))
+            self.assertIsNone(files.load_profile(path))
 
     def test_update_profile_block_replaces_deletes_and_backs_up(self) -> None:
         import tempfile
@@ -157,9 +157,9 @@ class ProfileTests(unittest.TestCase):
                 '{"schema":1,"updated":"2026-01-01","blocks":{"Цель":"старый текст","Атлет":"а"}}',
                 "utf-8",
             )
-            updated = recommender.update_profile_block(path, "Цель", "новый текст")
+            updated = files.update_profile_block(path, "Цель", "новый текст")
             self.assertEqual(updated["blocks"]["Цель"], "новый текст")
-            reloaded = recommender.load_profile(path)
+            reloaded = files.load_profile(path)
             self.assertEqual(reloaded["blocks"]["Цель"], "новый текст")
             self.assertEqual(reloaded["blocks"]["Атлет"], "а")  # untouched
             backups = list(Path(tmp).glob("coach_profile.json.bak-*"))
@@ -167,22 +167,22 @@ class ProfileTests(unittest.TestCase):
             self.assertIn("старый текст", backups[0].read_text("utf-8"))
 
             # Empty text deletes the block.
-            recommender.update_profile_block(path, "Атлет", "")
-            self.assertNotIn("Атлет", recommender.load_profile(path)["blocks"])
+            files.update_profile_block(path, "Атлет", "")
+            self.assertNotIn("Атлет", files.load_profile(path)["blocks"])
 
     def test_update_profile_block_rejects_missing_file_and_unknown_delete(self) -> None:
         import tempfile
         from pathlib import Path
 
         with self.assertRaises(recommender.RecommendationError):
-            recommender.update_profile_block(None, "Цель", "x")
+            files.update_profile_block(None, "Цель", "x")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "coach_profile.json"
             with self.assertRaises(recommender.RecommendationError):
-                recommender.update_profile_block(path, "Цель", "x")
+                files.update_profile_block(path, "Цель", "x")
             path.write_text('{"schema":1,"blocks":{"Цель":"т"}}', "utf-8")
             with self.assertRaises(recommender.RecommendationError):
-                recommender.update_profile_block(path, "Нет такого", "")
+                files.update_profile_block(path, "Нет такого", "")
 
     def test_system_prompt_embeds_profile_semantics_and_policy(self) -> None:
         profile = {"schema": 1, "blocks": {"Цель": "lean bulk, потолок 84 кг"}}
@@ -209,7 +209,7 @@ class ProfileTests(unittest.TestCase):
         numbers and the model gets two contradicting methodologies."""
         from trainer.domain import coach_state
 
-        state = coach_state.load_state(None)
+        state = coach_state.default_state()
         state["phase"] = "cut_recomp"
         state["phase_params"] = {"cut_recomp": {"title": "Ф0 · возврат", "calories": [2450, 2550]}}
         prompt = prompt_builder._build_system_prompt(CATALOG, None, state)
@@ -225,7 +225,7 @@ class ProfileTests(unittest.TestCase):
         generation never fails over methodology."""
         from trainer.domain import coach_state
 
-        state = coach_state.load_state(None)
+        state = coach_state.default_state()
         state["phase"] = "maintenance"
         state["phase_params"] = {"maintenance": {"protein_g": 150, "session_sets": "восемь"}}
         prompt = prompt_builder._build_system_prompt(CATALOG, None, state)
@@ -615,7 +615,7 @@ class GenerateRepromptTests(unittest.TestCase):
         anthropic_client._call_anthropic = fake_call
         # 13 sets against the maintenance cap of 12, twice: one reprompt names
         # the cap, then the server drops a set from the tail and says so.
-        state = dict(coach_state.load_state(None), phase="maintenance")
+        state = dict(coach_state.default_state(), phase="maintenance")
         rec, _usage, _model, trace = recommender.generate_with_trace(
             self._history(), [], self.CATALOG, today=_date(2026, 6, 12), state=state
         )

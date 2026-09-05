@@ -22,7 +22,7 @@ from pathlib import Path
 # trainer) в sys.path кладём сами.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from trainer.data import backend_store
+from trainer.data import backend_store, files
 from trainer.domain import coach_state, recommender
 
 BASE_DIR = Path(__file__).resolve().parents[2]  # backend/: там data/ и resources/
@@ -30,7 +30,7 @@ DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db"
 CATALOG_PATH = Path(
     os.getenv("EXERCISE_CATALOG_PATH", str(BASE_DIR / "resources" / "exercises.json"))
 )
-STATE_PATH = coach_state.default_state_path(DB_PATH)
+STATE_PATH = files.default_state_path(DB_PATH)
 PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
 STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))
 USER_ID = 3  # personal-build: единственный атлет, см. CLAUDE.md
@@ -58,10 +58,10 @@ def run(
             store.list_workouts(user_id),
             store.list_body_weights(user_id),
             store.list_waists(user_id),
-            recommender.load_catalog(CATALOG_PATH),
-            profile=recommender.load_profile(PROFILE_PATH),
-            strategy=recommender.load_strategy(STRATEGY_PATH),
-            state=coach_state.load_state(STATE_PATH),
+            files.load_catalog(CATALOG_PATH),
+            profile=files.load_profile(PROFILE_PATH),
+            strategy=files.load_strategy(STRATEGY_PATH),
+            state=files.load_state(STATE_PATH),
             events=store.list_events(user_id),
             today=period,
             days=REPORT_DAYS,

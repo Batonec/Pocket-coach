@@ -54,7 +54,10 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 from mcp.server.transport_security import TransportSecuritySettings  # noqa: E402
 from mcp.types import CallToolResult, TextContent  # noqa: E402
 
-from trainer.data import backend_store  # noqa: E402
+from trainer.data import (  # noqa: E402
+    backend_store,
+    files,
+)
 from trainer.domain import (  # noqa: E402
     coach_features,
     coach_state,
@@ -81,7 +84,7 @@ _STRATEGY_PATH = Path(
 )
 # Mutable coaching state (phase, waist limit, injection day) — next to the DB,
 # same as the profile; COACH_STATE_PATH overrides.
-_STATE_PATH = coach_state.default_state_path(_DB_PATH)
+_STATE_PATH = files.default_state_path(_DB_PATH)
 _DEFAULT_USER_ID = int(os.getenv("COACH_MCP_USER_ID") or "3")
 
 STORE = backend_store.MiniAppStore(_DB_PATH)
@@ -160,7 +163,7 @@ def _uid(user_id: int | None) -> int:
 
 
 def _catalog() -> list[dict[str, Any]]:
-    return recommender.load_catalog(_CATALOG_PATH)
+    return files.load_catalog(_CATALOG_PATH)
 
 
 def _estimate_cost(model: str, usage: dict[str, Any]) -> dict[str, Any] | None:
@@ -249,7 +252,7 @@ def coach_get_state(user_id: int | None = None) -> CallToolResult:
     """Текущее состояние подготовки: фаза + её параметры, неделя блока, целевой объём недели, лимит/база талии."""
     try:
         uid = _uid(user_id)
-        state = coach_state.load_state(_STATE_PATH)
+        state = files.load_state(_STATE_PATH)
         workouts = STORE.list_workouts(uid)
         today = date.today()
         params = coach_state.phase_params(state)
@@ -289,7 +292,7 @@ def coach_set_phase(phase: str, params: dict[str, Any] | None = None) -> CallToo
     сегодня; params — переопределения дефолтов фазы (например {"target_weight_kg": 75}).
     Автопереключений нет: вызывай только по явной просьбе пользователя."""
     try:
-        state = coach_state.set_phase(_STATE_PATH, str(phase).strip(), params)
+        state = files.set_phase(_STATE_PATH, str(phase).strip(), params)
         merged = coach_state.phase_params(state)
         return _result(
             {
@@ -316,7 +319,7 @@ def coach_update_state(
     """Обновить глобальные параметры состояния: жёсткий лимит талии (см), базовую талию фазы (см). Не
     переданные поля не трогаются."""
     try:
-        state = coach_state.load_state(_STATE_PATH)
+        state = files.load_state(_STATE_PATH)
         changed: list[str] = []
         for key, value in (("waist_limit_cm", waist_limit_cm), ("waist_base_cm", waist_base_cm)):
             if value is None:
@@ -328,7 +331,7 @@ def coach_update_state(
             changed.append(f"{key}={number:g}")
         if not changed:
             return _result(_err("Не передано ни одного параметра для обновления."))
-        coach_state.save_state(_STATE_PATH, state)
+        files.save_state(_STATE_PATH, state)
         return _result(
             {
                 "ok": True,
@@ -348,7 +351,7 @@ def coach_update_profile(block: str, text: str | None = None) -> CallToolResult:
     Только по явной просьбе пользователя — профиль содержит персональный/медицинский контекст.
     Предыдущая версия файла сохраняется рядом (.bak-таймстамп)."""
     try:
-        profile = recommender.update_profile_block(_PROFILE_PATH, block, text)
+        profile = files.update_profile_block(_PROFILE_PATH, block, text)
         replaced = text is not None and str(text).strip()
         return _result(
             {
@@ -618,13 +621,13 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
         body_weights = STORE.list_body_weights(uid)
         waists = STORE.list_waists(uid)
         events = STORE.list_events(uid)
-        profile = recommender.load_profile(_PROFILE_PATH)
-        state = coach_state.load_state(_STATE_PATH)
+        profile = files.load_profile(_PROFILE_PATH)
+        state = files.load_state(_STATE_PATH)
         today = date.today()
         # state обязателен: без него политика фаз рендерится из дефолтов, и
         # preview показывает не тот промпт, который уйдёт в модель.
         system = prompt_builder._build_system_prompt(
-            catalog, profile, state, recommender.load_strategy(_STRATEGY_PATH)
+            catalog, profile, state, files.load_strategy(_STRATEGY_PATH)
         )
         user = prompt_builder._build_user_prompt(
             workouts,
@@ -674,8 +677,8 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
         body_weights = STORE.list_body_weights(uid)
         waists = STORE.list_waists(uid)
         events = STORE.list_events(uid)
-        profile = recommender.load_profile(_PROFILE_PATH)
-        state = coach_state.load_state(_STATE_PATH)
+        profile = files.load_profile(_PROFILE_PATH)
+        state = files.load_state(_STATE_PATH)
         today = date.today()
         model = recommender.DEFAULT_MODEL
         user = prompt_builder._build_user_prompt(
@@ -699,7 +702,7 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
                 body_weights,
                 catalog,
                 profile=profile,
-                strategy=recommender.load_strategy(_STRATEGY_PATH),
+                strategy=files.load_strategy(_STRATEGY_PATH),
                 state=state,
                 waists=waists,
                 events=events,
@@ -771,9 +774,9 @@ def coach_weekly_report(
             STORE.list_body_weights(uid),
             STORE.list_waists(uid),
             _catalog(),
-            profile=recommender.load_profile(_PROFILE_PATH),
-            strategy=recommender.load_strategy(_STRATEGY_PATH),
-            state=coach_state.load_state(_STATE_PATH),
+            profile=files.load_profile(_PROFILE_PATH),
+            strategy=files.load_strategy(_STRATEGY_PATH),
+            state=files.load_state(_STATE_PATH),
             events=STORE.list_events(uid),
             today=period,
             days=days,
@@ -815,7 +818,7 @@ def coach_phase_summary(
     фаза из журнала переходов."""
     try:
         uid = _uid(user_id)
-        state = coach_state.load_state(_STATE_PATH)
+        state = files.load_state(_STATE_PATH)
         today = date.today()
         history = state.get("phase_history") or []
 
@@ -847,7 +850,7 @@ def coach_phase_summary(
             started=started,
             ended=ended,
         )
-        text = coach_features.render_phase_summary(summary)
+        text = prompt_builder.render_phase_summary(summary)
         return _result(
             {
                 "ok": True,
@@ -917,9 +920,9 @@ def coach_generate_recommendation(
             workouts,
             body_weights,
             catalog,
-            profile=recommender.load_profile(_PROFILE_PATH),
-            strategy=recommender.load_strategy(_STRATEGY_PATH),
-            state=coach_state.load_state(_STATE_PATH),
+            profile=files.load_profile(_PROFILE_PATH),
+            strategy=files.load_strategy(_STRATEGY_PATH),
+            state=files.load_state(_STATE_PATH),
             waists=STORE.list_waists(uid),
             events=STORE.list_events(uid),
             history_limit=limit,

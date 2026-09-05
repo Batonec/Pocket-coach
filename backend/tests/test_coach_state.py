@@ -9,7 +9,8 @@ from pathlib import Path
 
 import support  # noqa: F401 — adds backend to sys.path
 
-from trainer.domain import coach_features, coach_state
+from trainer.data import files
+from trainer.domain import coach_features, coach_state, prompt_builder
 
 
 def _workout(when: str) -> dict:
@@ -18,14 +19,14 @@ def _workout(when: str) -> dict:
 
 class StateFileTests(unittest.TestCase):
     def test_missing_or_broken_file_falls_back_to_defaults(self) -> None:
-        state = coach_state.load_state(None)
+        state = coach_state.default_state()
         self.assertEqual(state["phase"], "cut_recomp")
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "coach_state.json"
-            self.assertEqual(coach_state.load_state(path)["phase"], "cut_recomp")
+            self.assertEqual(files.load_state(path)["phase"], "cut_recomp")
             path.write_text("{broken", "utf-8")
-            self.assertEqual(coach_state.load_state(path)["phase"], "cut_recomp")
+            self.assertEqual(files.load_state(path)["phase"], "cut_recomp")
 
     def test_load_reads_valid_fields_and_ignores_garbage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -42,7 +43,7 @@ class StateFileTests(unittest.TestCase):
                 ),
                 "utf-8",
             )
-            state = coach_state.load_state(path)
+            state = files.load_state(path)
             self.assertEqual(state["phase"], "maintenance")
             self.assertEqual(state["phase_started"], "2026-08-01")
             self.assertEqual(state["waist_limit_cm"], 86.5)
@@ -52,13 +53,13 @@ class StateFileTests(unittest.TestCase):
     def test_set_phase_writes_file_and_stamps_today(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "coach_state.json"
-            state = coach_state.set_phase(
+            state = files.set_phase(
                 path, "lean_bulk", {"target_weight_kg": 80}, today=date(2026, 11, 1)
             )
             self.assertEqual(state["phase"], "lean_bulk")
             self.assertEqual(state["phase_started"], "2026-11-01")
 
-            reloaded = coach_state.load_state(path)
+            reloaded = files.load_state(path)
             params = coach_state.phase_params(reloaded)
             self.assertEqual(params["phase"], "lean_bulk")
             self.assertEqual(params["target_weight_kg"], 80)
@@ -68,30 +69,30 @@ class StateFileTests(unittest.TestCase):
     def test_set_phase_journals_the_closed_phase(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "coach_state.json"
-            coach_state.set_phase(path, "cut_recomp", today=date(2026, 8, 14))
-            state = coach_state.set_phase(path, "lean_bulk", today=date(2026, 10, 25))
+            files.set_phase(path, "cut_recomp", today=date(2026, 8, 14))
+            state = files.set_phase(path, "lean_bulk", today=date(2026, 10, 25))
             self.assertEqual(
                 state["phase_history"],
                 [{"phase": "cut_recomp", "started": "2026-08-14", "ended": "2026-10-25"}],
             )
             # And the journal survives a reload.
-            self.assertEqual(len(coach_state.load_state(path)["phase_history"]), 1)
+            self.assertEqual(len(files.load_state(path)["phase_history"]), 1)
 
     def test_set_phase_without_start_date_journals_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "coach_state.json"
-            state = coach_state.set_phase(path, "maintenance", today=date(2026, 8, 14))
+            state = files.set_phase(path, "maintenance", today=date(2026, 8, 14))
             self.assertEqual(state["phase_history"], [])
 
     def test_set_phase_validates_input(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "coach_state.json"
             with self.assertRaises(ValueError):
-                coach_state.set_phase(path, "bulk?!")
+                files.set_phase(path, "bulk?!")
             with self.assertRaises(ValueError):
-                coach_state.set_phase(path, "lean_bulk", {"unknown_key": 1})
+                files.set_phase(path, "lean_bulk", {"unknown_key": 1})
             with self.assertRaises(ValueError):
-                coach_state.set_phase(path, "lean_bulk", {"calories": True})
+                files.set_phase(path, "lean_bulk", {"calories": True})
 
 
 class BlockWeekTests(unittest.TestCase):
@@ -196,13 +197,13 @@ class GroupTargetOverrideTests(unittest.TestCase):
     def test_group_targets_override_the_uniform_corridor(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = self._path(tmp)
-            coach_state.set_phase(
+            files.set_phase(
                 path,
                 "cut_recomp",
                 {"group_targets": {"спина": [16, 16], "квадрицепс/ягодичные": [9, 9]}},
                 today=date(2026, 8, 16),
             )
-            params = coach_state.phase_params(coach_state.load_state(path))
+            params = coach_state.phase_params(files.load_state(path))
             targets = coach_features.group_volume_targets((6, 9), None, params.get("group_targets"))
             self.assertEqual(targets["спина"], (16, 16))
             self.assertEqual(targets["квадрицепс/ягодичные"], (9, 9))
@@ -215,7 +216,7 @@ class GroupTargetOverrideTests(unittest.TestCase):
         """Опечатка в названии группы иначе молча не применилась бы."""
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError) as ctx:
-                coach_state.set_phase(
+                files.set_phase(
                     self._path(tmp),
                     "cut_recomp",
                     {"group_targets": {"спинв": [16, 16]}},
@@ -225,7 +226,7 @@ class GroupTargetOverrideTests(unittest.TestCase):
 
     def test_malformed_bounds_are_rejected_on_write(self):
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
-            coach_state.set_phase(
+            files.set_phase(
                 self._path(tmp),
                 "cut_recomp",
                 {"group_targets": {"спина": 16}},
@@ -234,7 +235,7 @@ class GroupTargetOverrideTests(unittest.TestCase):
 
     def test_render_prints_the_group_goal_inline(self):
         volume = coach_features.weekly_volume([], date(2026, 8, 16))
-        text = coach_features.render_weekly_volume(volume, (6, 9), None, {"спина": (16, 16)})
+        text = prompt_builder.render_weekly_volume(volume, (6, 9), None, {"спина": (16, 16)})
         # The goal stands next to the DIRECT count — that is the column the
         # programme's table uses — and the effective count is marked reference.
         self.assertIn("спина: 0 прямых (цель 16–16) / 0 эффективных (справочно)", text)

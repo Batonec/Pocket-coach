@@ -4,7 +4,7 @@ import unittest
 
 import support  # noqa: F401 — adds backend to sys.path
 
-from trainer.domain import plan_validator
+from trainer.domain import plan_validator, prompt_builder
 
 CATALOG = [
     {"id": 8, "name": "Жим ногами"},
@@ -526,7 +526,7 @@ class ReturnCeilingTests(unittest.TestCase):
     def test_prompt_states_facts_without_prescribing_numbers(self) -> None:
         from trainer.domain import coach_features
 
-        text = coach_features.render_pre_break_weights(
+        text = prompt_builder.render_pre_break_weights(
             coach_features.pre_break_working_weights(self._history(), self.CATALOG), 21
         )
         self.assertIn("21 дн.", text)

@@ -10,10 +10,10 @@ from support import MINIAPP_DIR, sample_workout_payload
 if str(MINIAPP_DIR) not in sys.path:
     sys.path.insert(0, str(MINIAPP_DIR))
 
-from trainer.data.backend_store import (
+from trainer.data.backend_store import MiniAppStore
+from trainer.domain.rules import (
     MAX_WAIST_CM,
     MIN_WAIST_CM,
-    MiniAppStore,
     normalize_set_rir,
     normalize_waist_payload,
     normalize_workout_payload,

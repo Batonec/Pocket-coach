@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 import support  # noqa: F401 — adds backend to sys.path
 
-from trainer.domain import coach_features, coach_state
+from trainer.domain import coach_features, coach_state, prompt_builder
 
 CATALOG = [
     {"id": 18, "name": "Жим в тренажере"},
@@ -65,7 +65,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(summary["current_weight"], 47.5)
         self.assertEqual(summary["pct_of_peak"], 86)
 
-        text = coach_features.render_exercise_summaries(summaries)
+        text = prompt_builder.render_exercise_summaries(summaries)
         self.assertIn("пик 55×12", text)
         self.assertIn("86% пика", text)
 
@@ -83,7 +83,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(summary["current_weight"], 28)
         self.assertEqual(summary["pct_of_peak"], 89)  # 25/28
 
-        text = coach_features.render_exercise_summaries([summary])
+        text = prompt_builder.render_exercise_summaries([summary])
         self.assertIn("противовес", text)
         self.assertIn("меньше = сильнее", text)
 
@@ -133,7 +133,7 @@ class StallTests(unittest.TestCase):
         stalled_names = {s["name"] for s in report["stalled"]}
         self.assertIn("Жим в тренажере", stalled_names)
 
-        text = coach_features.render_stall_report(report)
+        text = prompt_builder.render_stall_report(report)
         self.assertIn("ЗАСТОЙ", text)
         self.assertIn("deload −10%", text)
 
@@ -146,7 +146,7 @@ class StallTests(unittest.TestCase):
         report = coach_features.stall_report(workouts, summaries, None, "lean_bulk", None, TODAY)
         self.assertFalse(report["preconditions_ok"])
         self.assertEqual(report["stalled"], [])
-        text = coach_features.render_stall_report(report)
+        text = prompt_builder.render_stall_report(report)
         self.assertIn("посещаемостью", text)
 
     def test_cut_requires_target_rate(self) -> None:
@@ -220,7 +220,7 @@ class RampInvariantTests(unittest.TestCase):
         )
         # One machine step (5 kg here) per rung, up to the target.
         self.assertEqual(item["steps"], [70, 75, 80])
-        text = coach_features.render_comeback_ramp(items)[0]
+        text = prompt_builder.render_comeback_ramp(items)[0]
         self.assertIn("доперерывный рабочий 80", text)
         self.assertNotIn("пик", text)
 
@@ -356,7 +356,7 @@ class CombackRampTests(unittest.TestCase):
             _workout("2026-04-10", [(8, [(110, 12)])]),
             _workout("2026-04-01", [(8, [(100, 12)])]),
         ]
-        lines = coach_features.comeback_ramp(workouts, CATALOG, TODAY)
+        lines = prompt_builder.comeback_ramp(workouts, CATALOG, TODAY)
         self.assertEqual(len(lines), 1)
         self.assertIn("Жим ногами: доперерывный рабочий 120, сейчас 80", lines[0])
         self.assertIn("Ступени: 90 → 100 → 110 → 120", lines[0])
@@ -366,7 +366,7 @@ class CombackRampTests(unittest.TestCase):
             _workout("2026-08-10", [(8, [(120, 12)])]),
             _workout("2026-08-01", [(8, [(115, 12)])]),
         ]
-        self.assertEqual(coach_features.comeback_ramp(workouts, CATALOG, TODAY), [])
+        self.assertEqual(prompt_builder.comeback_ramp(workouts, CATALOG, TODAY), [])
 
 
 class NutritionMatrixTests(unittest.TestCase):
@@ -454,7 +454,7 @@ class MeasurementRenderTests(unittest.TestCase):
             {"entry_date": "2026-08-10", "weight": 79.0},
         ]
         waists = [{"entry_date": "2026-08-10", "waist": 84.0}]
-        lines = coach_features.render_measurements(weights, waists, TODAY)
+        lines = prompt_builder.render_measurements(weights, waists, TODAY)
         text = "\n".join(lines)
         self.assertIn("79кг", text)
         self.assertNotIn("22кг", text)
@@ -518,7 +518,7 @@ class AdherenceStatsTests(unittest.TestCase):
         self.assertEqual(stats["pct"], 80)
         self.assertEqual(stats["skipped"], [("Сгибания ног", 1)])
 
-        line = coach_features.render_adherence_stats(stats)
+        line = prompt_builder.render_adherence_stats(stats)
         self.assertIn("8 из 10", line)
         self.assertIn("Сгибания ног ×1", line)
 
@@ -562,7 +562,7 @@ class PhaseSummaryTests(unittest.TestCase):
         self.assertEqual(summary["pr_events"], 2)  # 100 and 105 both beat the July baseline
         self.assertEqual(summary["prs"][0]["name"], "Жим ногами")
 
-        text = coach_features.render_phase_summary(summary)
+        text = prompt_builder.render_phase_summary(summary)
         self.assertIn("Фаза cut_recomp", text)
         self.assertIn("79.0 → 77.6", text)
         self.assertIn("ПР за фазу: 2", text)
@@ -673,7 +673,7 @@ class ActiveWindowStallTests(unittest.TestCase):
         self.assertAlmostEqual(report["frequency"], 3.0, places=2)
         self.assertTrue(report["too_short"])
         self.assertFalse(report["preconditions_ok"])
-        text = coach_features.render_stall_report(report)
+        text = prompt_builder.render_stall_report(report)
         self.assertIn("Активное окно 14 дн.", text)
         self.assertIn("пока не оцениваются", text)
         self.assertNotIn("НЕ выполнены", text)
@@ -691,7 +691,7 @@ class ActiveWindowStallTests(unittest.TestCase):
             workouts, [], 0.0, "lean_bulk", None, TODAY, group_targets={"грудь": (14, 16)}
         )
         self.assertTrue(any("грудь 12.5 < 14" in reason for reason in strict["reasons"]))
-        self.assertIn("грудь 12.5 (порог 14)", coach_features.render_stall_report(strict))
+        self.assertIn("грудь 12.5 (порог 14)", prompt_builder.render_stall_report(strict))
 
     def test_stall_clock_runs_inside_the_window_not_from_the_all_time_pr(self) -> None:
         # Peak 70 set 100 days ago, then a break, then five weeks of climbing
@@ -751,7 +751,7 @@ class ActiveWindowStallTests(unittest.TestCase):
             [s["name"] for s in report["stalled"]], ["Жим в тренажере", "Тяга верт.", "Жим ногами"]
         )
         self.assertEqual(report["stalled"][0]["quiet_days"], 34)
-        self.assertIn("без прироста 34 дн.", coach_features.render_stall_report(report))
+        self.assertIn("без прироста 34 дн.", prompt_builder.render_stall_report(report))
 
     def test_young_window_withholds_the_stall_verdict(self) -> None:
         workouts = self._sessions([1, 3, 5, 8, 10, 12, 15, 17, 19, 21])
@@ -760,7 +760,7 @@ class ActiveWindowStallTests(unittest.TestCase):
         )
         self.assertEqual(report["window_days"], 22)
         self.assertTrue(report["preconditions_ok"])
-        self.assertIn("застой ещё не оценивается", coach_features.render_stall_report(report))
+        self.assertIn("застой ещё не оценивается", prompt_builder.render_stall_report(report))
 
     def test_weight_reason_names_the_corridor_of_any_phase(self) -> None:
         workouts = self._sessions([1, 3, 5, 8, 10, 12, 15, 17, 19, 21, 24, 26, 28, 31, 33])
@@ -786,7 +786,7 @@ class AttendanceTests(unittest.TestCase):
         self.assertEqual([row["closed"] for row in rows], [True, True, True, True, False])
         self.assertEqual(coach_features.attendance_streak(rows, 3), 2)
         self.assertEqual(coach_features.attendance_streak(rows, 4), 0)
-        text = coach_features.render_weekly_attendance(rows, TODAY)
+        text = prompt_builder.render_weekly_attendance(rows, TODAY)
         self.assertIn("2026-07-27…2026-08-02: 4", text)
         self.assertIn("2026-08-10…2026-08-16 (текущая, по 2026-08-14): 1", text)
 
@@ -820,13 +820,13 @@ class TrendSlopeTests(unittest.TestCase):
             {"entry_date": (TODAY - timedelta(days=offset)).isoformat(), "weight": 79.0}
             for offset in (9, 5, 1)
         ]
-        text = "\n".join(coach_features.render_measurements(weights, [], TODAY))
+        text = "\n".join(prompt_builder.render_measurements(weights, [], TODAY))
         self.assertIn("Замеров за последние 7 дней: 2 (для недельной средней нужно ≥4).", text)
         daily = [
             {"entry_date": (TODAY - timedelta(days=offset)).isoformat(), "weight": 79.0}
             for offset in range(6)
         ]
-        text = "\n".join(coach_features.render_measurements(daily, [], TODAY))
+        text = "\n".join(prompt_builder.render_measurements(daily, [], TODAY))
         self.assertIn("Замеров за последние 7 дней: 6.", text)
         self.assertNotIn("нужно ≥", text)
 
@@ -922,5 +922,5 @@ class PositionTagTests(unittest.TestCase):
             summary["recent_sessions"],
             [("2026-08-10", "[#2/2] 50×12"), ("2026-08-12", "[#2/3] 50×12")],
         )
-        text = coach_features.render_exercise_summaries([summary])
+        text = prompt_builder.render_exercise_summaries([summary])
         self.assertIn("2026-08-12: [#2/3] 50×12", text)

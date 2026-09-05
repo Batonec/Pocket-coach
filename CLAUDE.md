@@ -20,7 +20,7 @@ venv; единственный компонент с pip-зависимостя�
 локально 3.13: CI гоняет suite на обеих, а `target-version = "py310"` в `ruff.toml` держит pyupgrade
 от подсказок в сторону 3.11+ (`datetime.UTC`, `tomllib`, `StrEnum`, вложенные кавычки в f-строках,
 `date.fromisoformat`, который там принимает и `20260801`: даты с клиента гейтит регулярка в
-`backend_store._parse_input_date`).
+`rules._parse_input_date`).
 Ничего из этого в `backend/` и `coach_mcp/` не использовать, пока VPS не обновлён; тогда поднять и
 матрицу, и target-version.
 
@@ -109,7 +109,7 @@ Claude Desktop ──MCP──►  coach_mcp/server.py  ────────
 Через MCP не только читают: талию и события (`coach_list_events` / `coach_add_event` /
 `coach_update_event` / `coach_delete_event`) записывают прямо из разговора с тренером — это
 штатный сценарий, а не отладка. У событий два равноправных клиента, iOS и Claude Desktop,
-поэтому правила модели (одно открытое событие, запрет будущего) живут в `backend_store.py`,
+поэтому правила модели (запрет будущего, одно открытое событие) живут в `domain/rules.py`,
 а не в хендлерах и не в UI.
 
 Раскладка `backend/`: наверху то, что читают глазами, — код, проза и тесты; обвязка сложена в
@@ -120,7 +120,8 @@ Claude Desktop ──MCP──►  coach_mcp/server.py  ────────
 backend/
 ├── server.py      HTTP API — процесс, который крутит systemd; импортирует всё остальное
 ├── trainer/       пакет из двух частей: domain/ — правила и методика (см. ниже),
-│                  data/ — SQLite, файлы рядом с базой, шаблоны, HTTP к Claude
+│                  data/ — backend_store (SQLite), files (состояние, профиль, стратегия,
+│                  каталог), coach_prompts (шаблоны), anthropic_client (HTTP к Claude)
 ├── prompts/       проза для модели
 ├── tests/
 ├── infra/         deploy/ (deploy.sh и systemd-юниты) и jobs/ (скрипты таймеров)
@@ -135,7 +136,7 @@ backend/
 ищет обработчик в таблицах `ROUTES` (метод + точный путь) и `ID_ROUTES` (`/api/<коллекция>/<id>`).
 Один эндпоинт — один метод `_get_*` / `_post_*` / `_put_*` / `_delete_*`; новый эндпоинт — это
 метод плюс строка в таблице. Сессию обработчик берёт через `_require_user`, который сам отвечает
-401. Вся нормализация и валидация входа живёт в `backend_store.py` (`normalize_*`), не в хендлерах.
+401. Вся нормализация и валидация входа живёт в `domain/rules.py` (`normalize_*`), не в хендлерах и не в SQL.
 
 ### Слой коуча — где проходит граница «алгоритм / LLM»
 
@@ -145,6 +146,9 @@ backend/
 
 ```
 SQLite: workouts, body_weights, waists, events + coach_state.json + coach_profile.json
+   │
+   ├─ rules.py          форма и границы входа: тренировка, замеры, события, снапшот совета,
+   │                    даты. Стор пишет то, что вернули отсюда, сам не решает.
    │
    ├─ coach_state.py    фаза (cut_recomp / lean_bulk / maintenance), неделя блока,
    │                    ramp недельного объёма, плановый deload, «возврат после перерыва» (≥14 дней)
@@ -336,10 +340,10 @@ backend-модули своими и кладёт в секцию ниже, а `
 продукта (`Зал`, `Покет Коуч`, `Gym`); само `Trainer` работает в обеих локалях без объявления.
 
 **Диапазоны замеров держатся руками в трёх местах.** Талия — 50–160 см одинаково в
-`backend_store.MIN/MAX_WAIST_CM`, `coach_features.MIN/MAX_PLAUSIBLE_WAIST_CM` и
+`rules.MIN/MAX_WAIST_CM`, `coach_features.MIN/MAX_PLAUSIBLE_WAIST_CM` и
 `TrainerStore.validWaistRange`; границы записи и аналитики выровнены намеренно, чтобы значение не
 могло оказаться «в UI сохранено, коучем проигнорировано». У веса тела границы **разные по смыслу**:
-запись 30–400 кг (`backend_store`, iOS), правдоподобность для аналитики 40–150 кг
+запись 30–400 кг (`rules`, iOS), правдоподобность для аналитики 40–150 кг
 (`coach_features`) — это не рассинхрон.
 
 **Персональные данные не в репозитории.** Репозиторий публичный. `backend/data/` в `.gitignore`;

@@ -18,7 +18,7 @@ from support import JsonHttpClient, running_miniapp_server, sample_workout_paylo
 
 from infra.jobs import refresh_recommendation, weekly_report
 from trainer.data import backend_store, coach_prompts
-from trainer.domain import coach_state, prompt_builder, recommender
+from trainer.domain import coach_state, prompt_builder, recommender, rules
 
 CATALOG = [
     {"id": 8, "name": "Жим ногами"},
@@ -58,10 +58,10 @@ class EventNormalizationTests(unittest.TestCase):
         # Формат один для любого интерпретатора: только YYYY-MM-DD, иначе периоды
         # перестали бы сравниваться как строки.
         with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
-            backend_store.normalize_event_payload(
+            rules.normalize_event_payload(
                 {"start_date": "20260801", "end_date": "2026-08-05", "text": "болел"}
             )
-        normalized = backend_store.normalize_event_payload(
+        normalized = rules.normalize_event_payload(
             {"start_date": " 2026-08-01 ", "end_date": "2026-08-05", "text": "  болел  "}
         )
         self.assertEqual(normalized["start_date"], "2026-08-01")
@@ -75,10 +75,10 @@ class EventNormalizationTests(unittest.TestCase):
             {"start_date": "2026-08-01", "end_date": "   ", "text": "болею"},
         ):
             with self.subTest(payload=payload):
-                self.assertIsNone(backend_store.normalize_event_payload(payload)["end_date"])
+                self.assertIsNone(rules.normalize_event_payload(payload)["end_date"])
 
     def test_one_day_event_is_a_valid_period(self) -> None:
-        normalized = backend_store.normalize_event_payload(
+        normalized = rules.normalize_event_payload(
             {"start_date": "2026-08-01", "end_date": "2026-08-01", "text": "отравился"}
         )
         self.assertEqual(normalized["end_date"], normalized["start_date"])
@@ -91,23 +91,21 @@ class EventNormalizationTests(unittest.TestCase):
             {"start_date": "2026-08-05", "end_date": "2026-08-01", "text": "болел"},
         ):
             with self.subTest(payload=payload), self.assertRaises(ValueError):
-                backend_store.normalize_event_payload(payload)
+                rules.normalize_event_payload(payload)
 
     def test_rejects_future_dates(self) -> None:
         """Планирование отложено: событие описывает то, что уже случилось."""
         tomorrow = (date.today() + timedelta(days=1)).isoformat()
         with self.assertRaises(ValueError):
-            backend_store.normalize_event_payload({"start_date": tomorrow, "text": "отпуск"})
+            rules.normalize_event_payload({"start_date": tomorrow, "text": "отпуск"})
         with self.assertRaises(ValueError):
-            backend_store.normalize_event_payload(
+            rules.normalize_event_payload(
                 {"start_date": "2026-08-01", "end_date": tomorrow, "text": "отпуск"}
             )
         # Сегодня — уже не будущее: событие можно завести в день его начала.
         today = date.today().isoformat()
         self.assertEqual(
-            backend_store.normalize_event_payload({"start_date": today, "text": "заболел"})[
-                "start_date"
-            ],
+            rules.normalize_event_payload({"start_date": today, "text": "заболел"})["start_date"],
             today,
         )
 
@@ -115,7 +113,7 @@ class EventNormalizationTests(unittest.TestCase):
         """Событие без причины — это просто дырка в датах, она и так видна."""
         for text in (None, "", "   "):
             with self.subTest(text=text), self.assertRaises(ValueError):
-                backend_store.normalize_event_payload({"start_date": "2026-08-01", "text": text})
+                rules.normalize_event_payload({"start_date": "2026-08-01", "text": text})
 
 
 class EventStoreTests(unittest.TestCase):
@@ -582,7 +580,7 @@ class WeeklyReportEventTests(unittest.TestCase):
             [],
             [],
             CATALOG,
-            coach_state.load_state(None),
+            coach_state.default_state(),
             TODAY,
             self.DAYS,
             events=events,

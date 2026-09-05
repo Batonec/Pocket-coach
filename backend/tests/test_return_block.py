@@ -48,7 +48,7 @@ class ActiveWindowTests(unittest.TestCase):
         per_week = self.report["volume_per_week"]
         self.assertEqual(per_week["квадрицепс/ягодичные"][1], 8)  # not a flat 10
         self.assertEqual(per_week["грудь"][1], 12)
-        text = coach_features.render_stall_report(self.report)
+        text = prompt_builder.render_stall_report(self.report)
         self.assertIn("Активное окно 23 дн. (с 2026-08-14", text)
         self.assertIn("частота 2.7/нед", text)
         self.assertIn("грудь 10.7 (порог 12)", text)
@@ -99,7 +99,7 @@ class NutritionByRateTests(unittest.TestCase):
         self.assertGreater(result["trend_per_week"], 0.25)
 
     def test_measurement_line_counts_the_week(self) -> None:
-        text = "\n".join(coach_features.render_measurements(fx.BODY_WEIGHTS, fx.WAISTS, fx.TODAY))
+        text = "\n".join(prompt_builder.render_measurements(fx.BODY_WEIGHTS, fx.WAISTS, fx.TODAY))
         self.assertIn("Замеров за последние 7 дней: 2 (для недельной средней нужно ≥4)", text)
 
 
@@ -108,7 +108,7 @@ class AttendanceTests(unittest.TestCase):
 
     def test_calendar_weeks_and_streaks(self) -> None:
         rows = coach_features.weekly_attendance(fx.workouts(), fx.TODAY)
-        text = coach_features.render_weekly_attendance(rows, fx.TODAY)
+        text = prompt_builder.render_weekly_attendance(rows, fx.TODAY)
         self.assertIn("2026-08-10…2026-08-16: 2", text)
         self.assertIn("2026-08-17…2026-08-23: 1", text)
         self.assertIn("2026-08-24…2026-08-30: 4", text)
