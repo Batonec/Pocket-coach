@@ -73,6 +73,7 @@ def run(
             strategy=files.load_strategy(STRATEGY_PATH),
             state=files.load_state(STATE_PATH),
             events=store.list_events(user_id),
+            measurements=store.list_measurements(user_id),
             previous_report=previous["report"] if previous else None,
             today=period,
             days=REPORT_DAYS,

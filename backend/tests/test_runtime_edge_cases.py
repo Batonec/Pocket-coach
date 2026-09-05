@@ -826,6 +826,29 @@ class CoachMcpBoundaryTests(unittest.TestCase):
         self.assertTrue(result.structuredContent["cached"])
         generate.assert_not_called()
 
+    def test_measurement_tools_write_list_and_delete(self) -> None:
+        # Настоящий стор модуля на временной базе: пользователь обязан существовать.
+        uid = int(self.module.STORE.ensure_debug_user("mcp-measurements")["id"])
+        added = self.module.coach_add_measurement(
+            kind="shoulders", value_cm=120, entry_date="2026-09-06", user_id=uid
+        )
+        self.assertFalse(added.isError, added.structuredContent.get("summary"))
+        self.assertIn("Плечи: 120 см", added.structuredContent["summary"])
+        entry_id = added.structuredContent["entry"]["id"]
+
+        listed = self.module.coach_list_measurements(kind="shoulders", user_id=uid)
+        self.assertEqual(len(listed.structuredContent["entries"]), 1)
+        self.assertIn("shoulders", listed.structuredContent["kinds"])
+
+        self.assertTrue(
+            self.module.coach_add_measurement(kind="waist", value_cm=90, user_id=uid).isError
+        )
+        deleted = self.module.coach_delete_measurement(entry_id=entry_id, user_id=uid)
+        self.assertFalse(deleted.isError)
+        self.assertTrue(
+            self.module.coach_delete_measurement(entry_id=entry_id, user_id=uid).isError
+        )
+
     def test_mark_support_week_writes_the_monday_into_the_state_file(self) -> None:
         marked = self.module.coach_mark_support_week(day="2026-09-10")
         self.assertFalse(marked.isError)

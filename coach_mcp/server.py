@@ -67,6 +67,7 @@ from trainer.data import (  # noqa: E402
 from trainer.domain import (  # noqa: E402
     coach_features,
     coach_state,
+    limits,
     prompt_builder,
     recommender,
 )
@@ -99,8 +100,8 @@ _INSTRUCTIONS = """\
 Тренер-ассистент по силовым тренировкам пользователя.
 
 У тебя есть инструменты к истории тренировок, замерам веса тела и талии,
-каталогу упражнений, состоянию подготовки (фаза/цикл) и к движку рекомендаций
-«следующая тренировка».
+обхватам (рука, плечи, грудь, шея, бедро — метрики цели), каталогу упражнений,
+состоянию подготовки (фаза/цикл) и к движку рекомендаций «следующая тренировка».
 
 Когда пользователь спрашивает «что мне потренировать дальше / разбери мой
 прогресс / почему такая рекомендация»:
@@ -125,7 +126,9 @@ _INSTRUCTIONS = """\
 coach_mark_support_week (неделя поддержки внутри дефицита — только по явной
 просьбе: матрица питания на ней и две недели после молчит),
 coach_update_profile (правка блока профиля атлета — только по явной просьбе),
-coach_add_waist / coach_delete_waist (замеры талии, см), coach_add_event /
+coach_add_waist / coach_delete_waist (замеры талии, см), coach_add_measurement /
+coach_list_measurements / coach_delete_measurement (обхваты кроме талии, см;
+план их не читает, недельный отчёт — читает), coach_add_event /
 coach_update_event / coach_delete_event (события, см. ниже).
 
 Событие — период без тренировок с причиной («болел», «командировка»):
@@ -449,6 +452,87 @@ def coach_add_waist(
         )
     except ValueError as exc:
         return _result(_err(f"Неверные данные: {exc}"))
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+@mcp.tool()
+def coach_add_measurement(
+    kind: str,
+    value_cm: float,
+    entry_date: str | None = None,
+    notes: str | None = None,
+    user_id: int | None = None,
+) -> CallToolResult:
+    """Записать обхват тела (см, лентой) кроме талии — метрики цели. kind: arm_relaxed (рука
+    расслабленно), arm_flexed (рука в напряжении), forearm, shoulders (плечи через дельты), chest
+    (грудь по соскам на выдохе), neck (шея под кадыком), thigh (бедро), hips (ягодицы). entry_date
+    по умолчанию — сегодня; повторный замер того же вида за ту же дату перезаписывается. Читает
+    недельный отчёт; план обхваты не читает."""
+    try:
+        uid = _uid(user_id)
+        payload = {
+            "entry_date": entry_date or date.today().isoformat(),
+            "kind": kind,
+            "value_cm": value_cm,
+            "notes": notes,
+        }
+        entry, created = STORE.save_measurement(uid, payload)
+        label = limits.MEASUREMENT_KINDS.get(str(entry["kind"]), str(entry["kind"]))
+        return _result(
+            {
+                "ok": True,
+                "summary": (
+                    f"{label.capitalize()}: {entry['value_cm']:g} см за {entry['entry_date']} "
+                    + ("записано." if created else "обновлено.")
+                ),
+                "user_id": uid,
+                "entry": entry,
+                "created": created,
+            }
+        )
+    except ValueError as exc:
+        return _result(_err(f"Неверные данные: {exc}"))
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+@mcp.tool()
+def coach_list_measurements(kind: str | None = None, user_id: int | None = None) -> CallToolResult:
+    """История обхватов кроме талии (старые сверху): все виды или один kind (см. coach_add_measurement)."""
+    try:
+        uid = _uid(user_id)
+        entries = STORE.list_measurements(uid, kind=kind)
+        return _result(
+            {
+                "ok": True,
+                "summary": f"Обхватов: {len(entries)}.",
+                "user_id": uid,
+                "kinds": limits.MEASUREMENT_KINDS,
+                "entries": entries,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+@mcp.tool()
+def coach_delete_measurement(entry_id: int, user_id: int | None = None) -> CallToolResult:
+    """Удалить обхват по id (например, опечатку)."""
+    try:
+        uid = _uid(user_id)
+        deleted = STORE.delete_measurement(uid, int(entry_id))
+        if deleted is None:
+            return _result(_err(f"Обхват #{entry_id} не найден."))
+        label = limits.MEASUREMENT_KINDS.get(str(deleted["kind"]), str(deleted["kind"]))
+        return _result(
+            {
+                "ok": True,
+                "summary": f"Удалён обхват «{label}» {deleted['value_cm']:g} см за {deleted['entry_date']}.",
+                "user_id": uid,
+                "deleted": deleted,
+            }
+        )
     except Exception as exc:  # noqa: BLE001
         return _result(_err(f"Ошибка: {exc}"))
 
@@ -826,6 +910,7 @@ def coach_weekly_report(
             strategy=files.load_strategy(_STRATEGY_PATH),
             state=files.load_state(_STATE_PATH),
             events=STORE.list_events(uid),
+            measurements=STORE.list_measurements(uid),
             previous_report=previous["report"] if previous else None,
             today=period,
             days=days,

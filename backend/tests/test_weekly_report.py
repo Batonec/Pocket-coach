@@ -107,6 +107,7 @@ class ReportPeriodTests(unittest.TestCase):
 
         self.assertTrue(weekly_report.run(store, uid, today=date(2026, 8, 31)))
         self.assertIsNone(seen.get("previous_report"))
+        self.assertEqual(seen.get("measurements"), [])  # обхваты доезжают, пусть и пустые
 
         store.save_coach_report(
             uid, "2026-08-30", 7, "**Фокус следующей недели**\n- спина", "m", 1, 1

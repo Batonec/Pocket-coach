@@ -114,9 +114,10 @@ Claude Desktop ──MCP──►  coach_mcp/server.py  ────────
 `coach_mcp` — не отдельный сервис поверх API, а **второй процесс поверх той же базы**: он
 импортирует `backend_store` / `recommender` / `coach_features` / `coach_state` и видит ровно то же,
 что генерирует backend. Поэтому изменение сигнатуры в `backend/trainer/` может молча сломать MCP.
-Через MCP не только читают: талию, события (`coach_list_events` / `coach_add_event` /
-`coach_update_event` / `coach_delete_event`) и недели поддержки (`coach_mark_support_week`)
-записывают прямо из разговора с тренером — это штатный сценарий, а не отладка. У событий два равноправных клиента, iOS и Claude Desktop,
+Через MCP не только читают: талию, обхваты (`coach_add_measurement` и пара к нему; iOS их
+пока не пишет), события (`coach_list_events` / `coach_add_event` / `coach_update_event` /
+`coach_delete_event`) и недели поддержки (`coach_mark_support_week`) записывают прямо из
+разговора с тренером — это штатный сценарий, а не отладка. У событий два равноправных клиента, iOS и Claude Desktop,
 поэтому правила модели (запрет будущего, одно открытое событие) живут в `domain/rules.py`,
 а не в хендлерах и не в UI.
 
@@ -160,7 +161,7 @@ backend/
 `rule_engine.py` — они в `data/`.
 
 ```
-SQLite: workouts, body_weights, waists, events + coach_state.json + coach_profile.json
+SQLite: workouts, body_weights, waists, measurements, events + coach_state.json + coach_profile.json
    │
    ├─ limits.py         ГРАНИЦЫ ДОПУСТИМОГО: метки, диапазоны и потолки для входа с клиента,
    │                    ответа модели и аналитики, каждое число с объяснением. Порогов
@@ -397,7 +398,9 @@ backend-модули своими и кладёт в секцию ниже, а `
 чтобы значение не могло оказаться «в UI сохранено, коучем проигнорировано». У веса тела границы
 **разные по смыслу**: запись 30–400 кг (`limits.MIN/MAX_BODY_WEIGHT_KG`, iOS), правдоподобность
 для аналитики 40–150 кг (`limits.MIN/MAX_PLAUSIBLE_BODY_WEIGHT`) — это не рассинхрон, обе пары
-лежат в `limits.py` рядом, с объяснением.
+лежат в `limits.py` рядом, с объяснением. Обхваты кроме талии (`limits.MEASUREMENT_KINDS`, одна
+пара границ на все) копии в iOS не имеют — экрана там нет, пишутся через MCP; появится экран —
+появится третья копия.
 
 **Персональные данные не в репозитории.** Репозиторий публичный. `backend/data/` в `.gitignore`;
 реальные `coach_profile.json` (медицинский контекст), `coach_state.json` и `coach_strategy.md`

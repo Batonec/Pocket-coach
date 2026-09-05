@@ -876,6 +876,7 @@ def _build_report_prompt(
     today: date,
     days: int,
     events: list[dict[str, Any]] | None = None,
+    measurements: list[dict[str, Any]] | None = None,
     previous_report: str | None = None,
 ) -> str:
     """User-промпт недельного отчёта за ``days`` дней до ``today`` включительно.
@@ -886,7 +887,7 @@ def _build_report_prompt(
     события периода (пустой блок тоже нужен: «событий нет» значит, что пропуски
     ничем не объяснены) → объём с итогом за период и за неделю до него → явка →
     ПР периода → сводки по тренажёрам → предусловия и застой → замеры (с
-    7-дневной средней), матрица питания и оценка TDEE → дисциплина → что дальше
+    7-дневной средней), обхваты, матрица питания и оценка TDEE → дисциплина → что дальше
     (разгрузка сейчас, скоро или цель следующей недели) → задача. Зовёт
     ``recommender.generate_weekly_report``.
     """
@@ -1025,8 +1026,16 @@ def _build_report_prompt(
     matrix = coach_features.nutrition_matrix(state, params, body_weights, waists, today)
     chunks.append(_render_stall(workouts, summaries, matrix, params, state, today))
 
-    measurements = render_measurements(body_weights, waists, today)
-    nutrition = list(measurements)
+    nutrition = render_measurements(body_weights, waists, today)
+    # Обхваты — метрики цели из vision (рука, плечи, грудь): без них отчёт про
+    # главные цели сказать не мог ничего. Пустой блок тоже говорит вслух.
+    overview = coach_features.measurement_overview(measurements or [], today)
+    if overview:
+        nutrition.append(
+            _block("report_measurements_header") + "\n" + render_measurement_overview(overview)
+        )
+    else:
+        nutrition.append(_block("report_measurements_none"))
     if matrix["lines"]:
         nutrition.append(_block("nutrition_matrix", lines="; ".join(matrix["lines"])))
     if matrix["goal"]:
@@ -1311,6 +1320,21 @@ def render_measurements(
         age = (today - waist[-1][0]).days
         lines.append(f"Талия: {tail}. Дней с последнего замера: {age}.")
     return lines
+
+
+def render_measurement_overview(rows: list[dict[str, Any]]) -> str:
+    """Обхваты строками: «подпись: последний (дата, N дн. назад; раньше X от даты)»."""
+    lines: list[str] = []
+    for row in rows:
+        line = (
+            f"  {row['label']}: {row['last_value']:g} см ({row['last_date']}, "
+            f"{row['days_since']} дн. назад"
+        )
+        if row["previous_value"] is not None:
+            delta = row["last_value"] - row["previous_value"]
+            line += f"; раньше {row['previous_value']:g} от {row['previous_date']}, {delta:+.1f}"
+        lines.append(line + ")")
+    return "\n".join(lines)
 
 
 def render_phase_summary(summary: dict[str, Any]) -> str:

@@ -337,6 +337,28 @@ def normalize_waist_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def normalize_measurement_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Обхват тела в форму для базы: дата, вид из ``limits.MEASUREMENT_KINDS``,
+    сантиметры в общих границах обхватов, заметка. Один замер вида в день, как
+    у веса и талии. Зовёт ``backend_store.save_measurement``.
+    """
+    kind = as_choice(payload.get("kind"), "kind", tuple(limits.MEASUREMENT_KINDS))
+    if kind is None:
+        raise ValueError(f"kind must be one of {', '.join(limits.MEASUREMENT_KINDS)}")
+    return {
+        "entry_date": as_date(payload.get("entry_date"), "entry_date").isoformat(),
+        "kind": kind,
+        "value_cm": as_float(
+            payload.get("value_cm"),
+            "value_cm",
+            minimum=limits.MIN_CIRCUMFERENCE_CM,
+            maximum=limits.MAX_CIRCUMFERENCE_CM,
+            unit="cm",
+        ),
+        "notes": as_text(payload.get("notes")),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # События
 # --------------------------------------------------------------------------- #

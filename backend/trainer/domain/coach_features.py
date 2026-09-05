@@ -921,6 +921,48 @@ def waist_points(waists: list[dict[str, Any]]) -> list[tuple[date, float]]:
     return _measurement_points(waists, "waist", limits.MIN_WAIST_CM, limits.MAX_WAIST_CM)
 
 
+def measurement_overview(measurements: list[dict[str, Any]], today: date) -> list[dict[str, Any]]:
+    """Обхваты кроме талии по видам: последний замер, дней с него и предыдущий —
+    факты для блока «Вес и талия» отчёта; периодичность протокола модель берёт
+    из главы «Измерения» стратегии, сервер её не судит. Порядок — как в
+    ``limits.MEASUREMENT_KINDS``; виды без замеров пропущены. Зовёт
+    ``prompt_builder`` (отчёт).
+    """
+    by_kind: dict[str, list[tuple[date, float]]] = {}
+    for entry in measurements:  # от старых к новым
+        kind = str(entry.get("kind") or "")
+        if kind not in limits.MEASUREMENT_KINDS:
+            continue
+        try:
+            when = date.fromisoformat(str(entry.get("entry_date", "")))
+            value = float(entry.get("value_cm", 0))
+        except (TypeError, ValueError):
+            continue
+        if limits.MIN_CIRCUMFERENCE_CM <= value <= limits.MAX_CIRCUMFERENCE_CM:
+            by_kind.setdefault(kind, []).append((when, value))
+
+    rows: list[dict[str, Any]] = []
+    for kind, label in limits.MEASUREMENT_KINDS.items():
+        points = sorted(by_kind.get(kind, []))
+        if not points:
+            continue
+        last_when, last_value = points[-1]
+        previous = points[-2] if len(points) > 1 else None
+        rows.append(
+            {
+                "kind": kind,
+                "label": label,
+                "last_date": last_when.isoformat(),
+                "last_value": last_value,
+                "days_since": (today - last_when).days,
+                "previous_date": previous[0].isoformat() if previous else None,
+                "previous_value": previous[1] if previous else None,
+                "count": len(points),
+            }
+        )
+    return rows
+
+
 def moving_average(
     points: list[tuple[date, float]], on_day: date, window_days: int = 7
 ) -> float | None:
