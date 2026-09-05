@@ -36,6 +36,15 @@ DB_PREFIX = "trainer-"
 DB_SUFFIX = ".db.gz"
 
 
+def companion_path(dest_dir: Path, prefix: str, stamp: str) -> Path:
+    """Путь копии спутника базы (профиль, стратегия, состояние) под штампом её бэкапа.
+
+    Имя копии задано только здесь: по нему main() её создаёт, а rotate() находит
+    и удаляет вместе с бэкапом базы того же штампа.
+    """
+    return dest_dir / f"{prefix}-{stamp}.json"
+
+
 def make_backup(db_path: Path, dest_dir: Path, stamp: str) -> Path:
     """Online-бэкап ``db_path`` в ``dest_dir/trainer-<stamp>.db.gz``; возвращает путь к архиву."""
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -57,8 +66,12 @@ def make_backup(db_path: Path, dest_dir: Path, stamp: str) -> Path:
     return gz_path
 
 
-def rotate(dest_dir: Path, keep: int) -> list[Path]:
-    """Удалить все бэкапы базы, кроме ``keep`` новейших; возвращает удалённые пути."""
+def rotate(dest_dir: Path, keep: int, companion_prefixes: tuple[str, ...] = ()) -> list[Path]:
+    """Удалить все бэкапы базы, кроме ``keep`` новейших, и копии-спутники под их штампами.
+
+    Спутник уходит только вслед за своим бэкапом базы: у комплекта один штамп, и
+    удаляется он целиком. Возвращает удалённые пути бэкапов базы.
+    """
     backups = sorted(
         dest_dir.glob(f"{DB_PREFIX}*{DB_SUFFIX}"),
         key=lambda p: p.name,
@@ -67,6 +80,9 @@ def rotate(dest_dir: Path, keep: int) -> list[Path]:
     removed = backups[keep:]
     for path in removed:
         path.unlink()
+        stamp = path.name[len(DB_PREFIX) : -len(DB_SUFFIX)]
+        for prefix in companion_prefixes:
+            companion_path(dest_dir, prefix, stamp).unlink(missing_ok=True)
     return removed
 
 
@@ -87,24 +103,21 @@ def main() -> None:
 
     # Профиль, стратегия и состояние маленькие и не в git — снимаем их рядом с
     # бэкапом базы, чтобы один каталог восстанавливал всё.
-    for source, prefix, label in (
+    companions = (
         (PROFILE_PATH, "coach_profile", "профиль"),
         (STRATEGY_PATH, "coach_strategy", "стратегия"),
         (STATE_PATH, "coach_state", "состояние"),
-    ):
+    )
+    for source, prefix, label in companions:
         if source.exists():
-            copy = BACKUP_DIR / f"{prefix}-{stamp}.json"
+            copy = companion_path(BACKUP_DIR, prefix, stamp)
             shutil.copy2(source, copy)
             print(f"[backup] {label} сохранён {copy.name}")
 
-    removed = rotate(BACKUP_DIR, KEEP)
-    # Копии-спутники удаляем вслед за удалёнными бэкапами базы.
-    for path in removed:
-        stamp_part = path.name[len(DB_PREFIX) : -len(DB_SUFFIX)]
-        for prefix in ("coach_profile", "coach_strategy", "coach_state"):
-            companion = BACKUP_DIR / f"{prefix}-{stamp_part}.json"
-            if companion.exists():
-                companion.unlink()
+    # Префиксы для ротации — из того же кортежа, что и снапшот: второй список,
+    # переписанный руками, однажды разошёлся с первым, и копии стратегии не ротировались.
+    prefixes = tuple(prefix for _source, prefix, _label in companions)
+    removed = rotate(BACKUP_DIR, KEEP, prefixes)
     if removed:
         print(f"[backup] удалено старых: {len(removed)} (оставляем {KEEP})")
 
