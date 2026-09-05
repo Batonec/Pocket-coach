@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import hmac
 import importlib
 import json
 import os
@@ -17,7 +15,6 @@ from email.message import Message
 from http.cookiejar import CookieJar
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 MINIAPP_DIR = ROOT_DIR / "backend"
@@ -79,37 +76,6 @@ def sample_body_weight_payload(
     }
 
 
-def build_signed_init_data(
-    bot_token: str,
-    *,
-    auth_date: int,
-    user: dict[str, Any] | None = None,
-    extra_fields: dict[str, str] | None = None,
-) -> str:
-    pairs: dict[str, str] = {
-        "auth_date": str(auth_date),
-    }
-    if user is not None:
-        pairs["user"] = json.dumps(user, separators=(",", ":"), ensure_ascii=False)
-    if extra_fields:
-        pairs.update(extra_fields)
-
-    data_check_string = "\n".join(
-        f"{key}={value}" for key, value in sorted(pairs.items(), key=lambda item: item[0])
-    )
-    secret_key = hmac.new(
-        b"WebAppData",
-        bot_token.encode("utf-8"),
-        hashlib.sha256,
-    ).digest()
-    pairs["hash"] = hmac.new(
-        secret_key,
-        data_check_string.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    return urlencode(pairs)
-
-
 @contextmanager
 def temporary_env(values: dict[str, str]) -> Iterator[None]:
     previous: dict[str, str | None] = {}
@@ -133,7 +99,6 @@ def load_server_module(
     catalog_path: Path = CATALOG_PATH,
     allow_debug_user: bool = True,
     dev_mode: bool = False,
-    bot_token: str = "",
     session_secret: str = "trainer-test-session-secret",
 ) -> Any:
     env = {
@@ -143,7 +108,6 @@ def load_server_module(
         "MINIAPP_DB_PATH": str(db_path),
         "MINIAPP_DEV_MODE": "1" if dev_mode else "0",
         "MINIAPP_ALLOW_DEBUG_USER": "1" if allow_debug_user else "0",
-        "BOT_TOKEN": bot_token,
         "MINIAPP_SESSION_SECRET": session_secret,
         "MINIAPP_COOKIE_SECURE": "0",
         "MINIAPP_DEFAULT_DEBUG_USER_ALIAS": "browser-default",
@@ -178,7 +142,6 @@ def running_miniapp_server(
     catalog_path: Path = CATALOG_PATH,
     allow_debug_user: bool = True,
     dev_mode: bool = False,
-    bot_token: str = "",
     session_secret: str = "trainer-test-session-secret",
 ) -> Iterator[RunningMiniApp]:
     temp_dir = tempfile.TemporaryDirectory()
@@ -188,7 +151,6 @@ def running_miniapp_server(
         catalog_path=catalog_path,
         allow_debug_user=allow_debug_user,
         dev_mode=dev_mode,
-        bot_token=bot_token,
         session_secret=session_secret,
     )
 

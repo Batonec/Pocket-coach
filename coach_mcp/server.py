@@ -19,8 +19,7 @@ Environment:
     MINIAPP_DB_PATH          SQLite path (default: <backend_dir>/data/trainer.db)
     EXERCISE_CATALOG_PATH    exercise catalog JSON (default:
                              <backend_dir>/resources/exercises.json)
-    COACH_MCP_USER_ID        user id to operate on (default:
-                             MINIAPP_TELEGRAM_RECOVERY_USER_ID, else 3)
+    COACH_MCP_USER_ID        user id to operate on (default: 3)
     ANTHROPIC_MODEL          override model (default from recommender)
     COACH_MCP_PATH           HTTP path for streamable transport (default: /mcp)
     COACH_MCP_AUTH_TOKEN     if set, require Authorization: Bearer <token>
@@ -83,9 +82,7 @@ _STRATEGY_PATH = Path(
 # Mutable coaching state (phase, waist limit, injection day) — next to the DB,
 # same as the profile; COACH_STATE_PATH overrides.
 _STATE_PATH = coach_state.default_state_path(_DB_PATH)
-_DEFAULT_USER_ID = int(
-    os.getenv("COACH_MCP_USER_ID") or os.getenv("MINIAPP_TELEGRAM_RECOVERY_USER_ID") or "3"
-)
+_DEFAULT_USER_ID = int(os.getenv("COACH_MCP_USER_ID") or "3")
 
 STORE = backend_store.MiniAppStore(_DB_PATH)
 

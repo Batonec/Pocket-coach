@@ -37,7 +37,7 @@ CATALOG_PATH = Path(
 PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
 STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))
 STATE_PATH = coach_state.default_state_path(DB_PATH)
-USER_ID = int(os.getenv("MINIAPP_TELEGRAM_RECOVERY_USER_ID", "3") or "3")
+USER_ID = 3  # personal-build: единственный атлет, см. CLAUDE.md
 MAX_AGE_HOURS = float(os.getenv("REFRESH_MAX_AGE_HOURS", "24"))
 # A 'pending' row older than this is a generation that died mid-flight
 # (e.g. the server was restarted) — safe to take over.

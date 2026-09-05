@@ -33,7 +33,7 @@ CATALOG_PATH = Path(
 STATE_PATH = coach_state.default_state_path(DB_PATH)
 PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
 STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))
-USER_ID = int(os.getenv("MINIAPP_TELEGRAM_RECOVERY_USER_ID", "3") or "3")
+USER_ID = 3  # personal-build: единственный атлет, см. CLAUDE.md
 REPORT_DAYS = int(os.getenv("WEEKLY_REPORT_DAYS", "7"))
 
 

@@ -5,8 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `Pocket Coach` (приложение `Trainer`) — карманный ИИ-тренер по силовым: нативный iOS-клиент
 (SwiftUI) + self-hosted backend на SQLite + MCP-сервер для разговора с данными. Продукт
 **personal-build**: один захардкоженный пользователь (`id=3`), без публичной авторизации.
-Веб-мини-апп и Telegram-бот удалены в июне 2026 — если встретишь их следы (`web/`, `bot.py`,
-`MINIAPP_TELEGRAM_*`), это легаси, не восстанавливай.
+Веб-мини-апп и Telegram-бот удалены в июне 2026, их остатки с VPS вычищены в сентябре — если
+встретишь следы (`web/`, `bot.py`, `MINIAPP_TELEGRAM_*`, `MINIAPP_STATIC_DIR`), это легаси, не
+восстанавливай.
 
 Рабочий язык репозитория — русский: документация, тексты продукта, комментарии к
 нетривиальным решениям. Заголовки коммитов — английские, в императиве
@@ -82,7 +83,8 @@ unittest-suite (всегда), `swift-format lint --strict` и iOS-тесты (�
 blind-except проезжает молча.
 
 Деплой: пуш в `main` → CI прогоняет тесты → если затронут backend, деплоит его на VPS.
-Ручной вариант — `./backend/infra/deploy/deploy.sh backend` (`web`/`bot` там мёртвые, `coach-mcp` живой).
+Ручной вариант — `./backend/infra/deploy/deploy.sh backend`; другие цели — `coach-mcp`, `proxy`
+(Caddyfile обратного прокси, CI его не деплоит) и `all`.
 
 ## Архитектура
 
@@ -281,6 +283,16 @@ UI. Отсюда два следствия: стор стал синглтоно
 Юниты systemd тоже едут с кодом: таймеры ссылаются на пути скриптов в `infra/jobs/`, и переезд
 скрипта без юнита молча остановил бы таймер. Новый таймер деплой не включает — `systemctl
 enable --now` один раз руками.
+
+**iOS доходит до backend в два прыжка, и статики между ними нет.** Cloudflare Tunnel
+(`cloudflared`; маршруты живут в дашборде Cloudflare, на VPS их не видно) → docker-контейнер
+`trainer-miniapp-caddy` на `127.0.0.1:80` → backend, который слушает docker-bridge
+`172.17.0.1:8081` (`MINIAPP_HOST`/`MINIAPP_PORT` в `/etc/trainer-miniapp/backend.env`): из
+контейнера хост виден как `host.docker.internal`. Caddy — чистый обратный прокси, его конфиг —
+`backend/infra/deploy/Caddyfile`, и применяет его только `deploy.sh proxy`: файл на VPS
+переписывается на месте, потому что bind-mount держится за inode. До сентября 2026 Caddy отдавал
+`/data/exercises.json` из статики удалённого веб-мини-аппа, и каталог приходилось править на VPS
+руками вслед за репозиторием; теперь его отдаёт сам backend, второй копии нет.
 
 **Порядок импортов в тестах держится настройкой `src` в `ruff.toml`, и ломается тихо.**
 `backend/tests/support.py` при импорте кладёт `backend/` в `sys.path` — без него ни один

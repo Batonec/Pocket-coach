@@ -68,7 +68,7 @@ All tools accept an optional `user_id` (defaults to the configured user).
 | `COACH_MCP_BACKEND_DIR` | `../backend` | Backend root holding the `trainer/` package. On the VPS: `/opt/trainer-miniapp/app` |
 | `MINIAPP_DB_PATH` | `<backend_dir>/data/trainer.db` | SQLite path. On the VPS: `/opt/trainer-miniapp/data/trainer.db` |
 | `EXERCISE_CATALOG_PATH` | `<backend_dir>/resources/exercises.json` | Exercise catalog JSON; ships with the backend code. On the VPS: `/opt/trainer-miniapp/app/resources/exercises.json` |
-| `COACH_MCP_USER_ID` | `MINIAPP_TELEGRAM_RECOVERY_USER_ID` or `3` | Which user to operate on |
+| `COACH_MCP_USER_ID` | `3` | Which user to operate on |
 | `ANTHROPIC_MODEL` | from `recommender` (`claude-opus-5`) | Model for generation |
 | `COACH_MCP_HOST` / `COACH_MCP_PORT` | `127.0.0.1` / `8001` | streamable-http bind (8001 to avoid investor-mcp's 8000) |
 | `COACH_MCP_PATH` | `/mcp` | HTTP path; use a secret path in production |
