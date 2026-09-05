@@ -454,6 +454,43 @@ class WeeklyReportEndpointTest(unittest.TestCase):
             self.assertEqual(response.status, 401)
 
 
+class WeeklyReportHistoryEndpointTest(unittest.TestCase):
+    """Архив отчётов: весь кэш пользователя, новые сверху, с телами."""
+
+    def test_history_lists_every_cached_week_newest_first(self) -> None:
+        with running_miniapp_server(allow_debug_user=True) as app:
+            client = JsonHttpClient(app.base_url)
+            client.request_json("POST", "/api/session/resolve", {})
+
+            empty = client.request_json("GET", "/api/reports/weekly/history")
+            self.assertEqual(empty.status, 200)
+            self.assertEqual(empty.payload, {"ok": True, "reports": []})
+
+            user = app.module.STORE.ensure_debug_user("browser-default")
+            for period_end, text in (
+                ("2026-08-09", "**Итоги** старая"),
+                ("2026-08-23", "**Итоги** свежая"),
+                ("2026-08-16", "**Итоги** средняя"),
+            ):
+                app.module.STORE.save_coach_report(user["id"], period_end, 7, text, "m", 1, 2)
+
+            history = client.request_json("GET", "/api/reports/weekly/history")
+            self.assertEqual(history.status, 200)
+            reports = history.payload["reports"]
+            self.assertEqual(
+                [report["period_end"] for report in reports],
+                ["2026-08-23", "2026-08-16", "2026-08-09"],
+            )
+            self.assertEqual(reports[0]["report"], "**Итоги** свежая")
+            self.assertIsNone(reports[0]["read_at"])  # клиент решает по нему метку «не прочитан»
+
+    def test_history_requires_session(self) -> None:
+        with running_miniapp_server(allow_debug_user=False) as app:
+            client = JsonHttpClient(app.base_url)
+            response = client.request_json("GET", "/api/reports/weekly/history")
+            self.assertEqual(response.status, 401)
+
+
 class RoutingTest(unittest.TestCase):
     """Диспетчер по таблице маршрутов: то, что раньше держали хвосты цепочек
     if — 404 на чужой путь, на id не-число и на лишний сегмент — обязано

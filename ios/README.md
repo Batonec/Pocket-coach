@@ -86,6 +86,7 @@ PUT    /api/events/{id}              DELETE /api/events/{id}
 GET    /api/coach/signals            POST   /api/coach/signals/dismiss
 GET    /api/recommendations/next     POST   /api/recommendations/refresh
 GET    /api/reports/weekly           POST   /api/reports/weekly/read
+GET    /api/reports/weekly/history   (архив отчётов: все недели, с телами)
 ```
 
 `GET /api/recommendations/next` отдаёт кэш мгновенно и не ждёт генерации;

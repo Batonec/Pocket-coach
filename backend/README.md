@@ -46,6 +46,8 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 - `GET /api/coach/signals` · `POST /api/coach/signals/dismiss`
 - `GET /api/recommendations/next` · `POST /api/recommendations/refresh`
 - `GET /api/reports/weekly` — кэшированный недельный отчёт тренера (без генерации; отчёт пишет ночной таймер понедельника или Coach MCP)
+- `GET /api/reports/weekly/history` — весь кэш недельных отчётов, новые сверху, с телами: экран
+  «Все отчёты» в iOS открывает любую неделю без второго запроса
 
 Каталог упражнений лежит в `resources/exercises.json` и отдаётся по `GET /data/exercises.json` (URL
 остался от веб-версии и зашит в iOS-клиент; другой статики сервер не отдаёт). Его читают и

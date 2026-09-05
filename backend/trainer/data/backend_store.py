@@ -1282,6 +1282,25 @@ class MiniAppStore:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def list_coach_reports(self, user_id: int, days: int = 7) -> list[dict[str, Any]]:
+        """Весь кэш отчётов пользователя, новые сверху, — архив для
+        ``/api/reports/weekly/history``. Тела отчётов едут вместе со списком
+        намеренно: строка на закрытую неделю и один атлет, поэтому архив целиком —
+        десятки килобайт, а экран открывает любую неделю без второго запроса.
+        """
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT period_end, days, report, model, input_tokens, output_tokens,
+                       created_at, read_at
+                FROM coach_reports
+                WHERE user_id = ? AND days = ?
+                ORDER BY period_end DESC
+                """,
+                (user_id, int(days)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def mark_coach_report_read(self, user_id: int, days: int = 7) -> bool:
         """Серверная отметка «прочитан» у последнего отчёта: гасит сигнал
         weekly_report_ready сразу у всех клиентов (iOS, чат MCP). ``True``, если

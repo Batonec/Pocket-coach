@@ -288,7 +288,8 @@ heavy/medium/light — **сознательно не проверяются**, �
 - `Views/` — экраны и дизайн-система, файл на экран: `DesignSystem` (палитра, кнопки, фон,
   текстовые поля), `ExerciseGlyphs`, `SharedPieces`, `ContentView` (оболочка и вкладки),
   `CoachCard`, `TodayScreen`, `QuickAddSheet`, `SignalBanner`, `HistoryScreen`, `EventViews`,
-  `WorkoutNoteSheet`, `ProgressScreen`, `ExerciseDetailScreen`, `MeasurementsScreen`,
+  `WorkoutNoteSheet`, `ProgressScreen`, `ReportArchiveScreen` (архив недельных отчётов),
+  `ExerciseDetailScreen`, `MeasurementsScreen`,
   `SystemScreens` (настройки, вход, загрузка, ошибка, тост). Модуль один, поэтому экран,
   который показывает оболочка, объявлен internal, а не `private`.
 

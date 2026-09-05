@@ -351,13 +351,38 @@ struct WeeklyReportEntry: Codable, Hashable {
     var days: Int?
     var report: String
     var createdAt: Int?
+    /// Server-side read receipt. Only meaningful on the newest report: the
+    /// column arrived after the first reports were written, so nil on an older
+    /// row says nothing about whether the athlete read it.
+    var readAt: Int?
 
     enum CodingKeys: String, CodingKey {
         case periodEnd = "period_end"
         case days
         case report
         case createdAt = "created_at"
+        case readAt = "read_at"
     }
+}
+
+/// `GET /api/reports/weekly/history`: every cached report, newest first, bodies
+/// included — one row per closed week for one athlete, so the whole archive is
+/// tens of kilobytes and the sheet opens any week without a second request.
+struct WeeklyReportHistoryResponse: Codable {
+    var ok: Bool?
+    var reports: [WeeklyReportEntry]?
+}
+
+/// One row of the archive screen; built by `TrainerLogic.weeklyReportArchiveRows`.
+struct WeeklyReportArchiveRow: Identifiable, Hashable {
+    var entry: WeeklyReportEntry
+    var periodLabel: String
+    /// Year of the week's end, only when it differs from the current one.
+    var yearLabel: String?
+    var isLatest: Bool
+    var isUnread: Bool
+
+    var id: String { entry.periodEnd }
 }
 
 struct RecommendedExercise: Codable, Hashable, Identifiable {

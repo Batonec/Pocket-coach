@@ -1253,6 +1253,34 @@ enum TrainerLogic {
         }
         return left.exercise.name.localizedCompare(right.exercise.name) == .orderedAscending
     }
+
+    // MARK: - Weekly report archive
+
+    /// Rows of the weekly report archive, newest first. Only the newest report
+    /// can be unread: `read_at` appeared after the first reports were written,
+    /// so an empty value on an older row is a fact about the schema, not about
+    /// the athlete. The same `isLatest` flag decides which row may send the read
+    /// receipt on open — the server only ever marks the newest report, so an
+    /// older week must not (it would kill the banner for an unread report).
+    /// `today` is ISO `yyyy-MM-dd`; a week that closed in another year shows it.
+    static func weeklyReportArchiveRows(
+        _ reports: [WeeklyReportEntry],
+        today: String
+    ) -> [WeeklyReportArchiveRow] {
+        let currentYear = today.prefix(4)
+        let newestFirst = reports.sorted { $0.periodEnd > $1.periodEnd }
+        return newestFirst.enumerated().map { index, entry in
+            let year = entry.periodEnd.prefix(4)
+            return WeeklyReportArchiveRow(
+                entry: entry,
+                periodLabel: DateTools.periodLabel(
+                    endingAt: entry.periodEnd, days: entry.days ?? 7),
+                yearLabel: year == currentYear ? nil : String(year),
+                isLatest: index == 0,
+                isUnread: index == 0 && entry.readAt == nil
+            )
+        }
+    }
 }
 
 private struct ExerciseUsageStat {

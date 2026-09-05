@@ -101,6 +101,25 @@ final class APIClientTests: XCTestCase {
             ])
     }
 
+    func testWeeklyReportHistoryDecodesTheArchiveWithReadReceipts() async throws {
+        let client = makeClient()
+        let json = [
+            #"{"ok":true,"reports":[{"period_end":"2026-08-30","days":7,"#,
+            #""report":"**Итоги** свежая","created_at":1756600000,"read_at":null},"#,
+            #"{"period_end":"2026-08-23","days":7,"report":"**Итоги** старая","#,
+            #""created_at":1756000000,"read_at":1756100000}]}"#,
+        ].joined()
+        protocolType.enqueue(json: json)
+
+        let response = try await client.fetchWeeklyReportHistory()
+
+        XCTAssertEqual(protocolType.requests.first?.httpMethod, "GET")
+        XCTAssertEqual(protocolType.requests.first?.url?.path, "/api/reports/weekly/history")
+        XCTAssertEqual(response.reports?.map(\.periodEnd), ["2026-08-30", "2026-08-23"])
+        XCTAssertEqual(response.reports?.map(\.readAt), [nil, 1_756_100_000])
+        XCTAssertEqual(response.reports?.first?.report, "**Итоги** свежая")
+    }
+
     func testRefreshRecommendationDecodesReadyPayload() async throws {
         let client = makeClient()
         protocolType.enqueue(json: recommendationJSON())

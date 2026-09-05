@@ -437,6 +437,22 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             extra_headers=headers,
         )
 
+    def _get_weekly_report_history(self) -> None:
+        """``GET /api/reports/weekly/history``: весь кэш недельных отчётов, новые
+        сверху, с телами — экран «Все отчёты» открывает любую неделю без второго
+        запроса. Токенов не тратит, как и ``/api/reports/weekly``.
+        """
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "reports": STORE.list_coach_reports(int(user["id"]))},
+            extra_headers=headers,
+        )
+
     def _get_measurements(self) -> None:
         """``GET /api/measurements``: обхваты кроме талии от старых к новым, все виды."""
         session = self._require_user()
@@ -1207,6 +1223,7 @@ ROUTES: dict[tuple[str, str], Callable[[MiniAppHandler], None]] = {
     ("GET", "/api/body-weights"): MiniAppHandler._get_body_weights,
     ("GET", "/api/recommendations/next"): MiniAppHandler._get_recommendation_next,
     ("GET", "/api/reports/weekly"): MiniAppHandler._get_weekly_report,
+    ("GET", "/api/reports/weekly/history"): MiniAppHandler._get_weekly_report_history,
     ("GET", "/api/waists"): MiniAppHandler._get_waists,
     ("GET", "/api/measurements"): MiniAppHandler._get_measurements,
     ("GET", "/api/events"): MiniAppHandler._get_events,

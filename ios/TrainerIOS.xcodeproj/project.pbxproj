@@ -24,6 +24,7 @@
 		100000000000000000000126 /* HistoryScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000026 /* HistoryScreen.swift */; };
 		100000000000000000000127 /* MeasurementsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000027 /* MeasurementsScreen.swift */; };
 		100000000000000000000128 /* ProgressScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000028 /* ProgressScreen.swift */; };
+		10000000000000000000012F /* ReportArchiveScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000002F /* ReportArchiveScreen.swift */; };
 		100000000000000000000129 /* QuickAddSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000029 /* QuickAddSheet.swift */; };
 		10000000000000000000012A /* SharedPieces.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000002A /* SharedPieces.swift */; };
 		10000000000000000000012B /* SignalBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000002B /* SignalBanner.swift */; };
@@ -75,6 +76,7 @@
 		100000000000000000000026 /* HistoryScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryScreen.swift; sourceTree = "<group>"; };
 		100000000000000000000027 /* MeasurementsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeasurementsScreen.swift; sourceTree = "<group>"; };
 		100000000000000000000028 /* ProgressScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressScreen.swift; sourceTree = "<group>"; };
+		10000000000000000000002F /* ReportArchiveScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportArchiveScreen.swift; sourceTree = "<group>"; };
 		100000000000000000000029 /* QuickAddSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickAddSheet.swift; sourceTree = "<group>"; };
 		10000000000000000000002A /* SharedPieces.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedPieces.swift; sourceTree = "<group>"; };
 		10000000000000000000002B /* SignalBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalBanner.swift; sourceTree = "<group>"; };
@@ -181,6 +183,7 @@
 				100000000000000000000026 /* HistoryScreen.swift */,
 				100000000000000000000027 /* MeasurementsScreen.swift */,
 				100000000000000000000028 /* ProgressScreen.swift */,
+				10000000000000000000002F /* ReportArchiveScreen.swift */,
 				100000000000000000000029 /* QuickAddSheet.swift */,
 				10000000000000000000002A /* SharedPieces.swift */,
 				10000000000000000000002B /* SignalBanner.swift */,
@@ -326,6 +329,7 @@
 				100000000000000000000126 /* HistoryScreen.swift in Sources */,
 				100000000000000000000127 /* MeasurementsScreen.swift in Sources */,
 				100000000000000000000128 /* ProgressScreen.swift in Sources */,
+				10000000000000000000012F /* ReportArchiveScreen.swift in Sources */,
 				100000000000000000000129 /* QuickAddSheet.swift in Sources */,
 				10000000000000000000012A /* SharedPieces.swift in Sources */,
 				10000000000000000000012B /* SignalBanner.swift in Sources */,

@@ -118,6 +118,29 @@ class CoachReportStoreTests(unittest.TestCase):
         self.assertEqual(updated["report"], "**Итоги v2**")
         self.assertEqual(updated["input_tokens"], 120)
 
+    def test_list_returns_every_week_newest_first_for_this_user_only(self) -> None:
+        uid = self.user["id"]
+        neighbour = self.store.ensure_debug_user("report-tests-neighbour")["id"]
+        self.store.save_coach_report(uid, "2026-08-16", 7, "старая", "m", 1, 1)
+        self.store.save_coach_report(uid, "2026-08-30", 7, "свежая", "m", 1, 1)
+        self.store.save_coach_report(uid, "2026-08-23", 7, "средняя", "m", 1, 1)
+        self.store.save_coach_report(neighbour, "2026-09-06", 7, "чужая", "m", 1, 1)
+        self.store.mark_coach_report_read(uid)
+
+        rows = self.store.list_coach_reports(uid)
+
+        self.assertEqual(
+            [row["period_end"] for row in rows], ["2026-08-30", "2026-08-23", "2026-08-16"]
+        )
+        self.assertEqual([row["report"] for row in rows], ["свежая", "средняя", "старая"])
+        # Отметка о прочтении — часть строки: у последнего она есть, у старых нет.
+        self.assertIsNotNone(rows[0]["read_at"])
+        self.assertIsNone(rows[1]["read_at"])
+        self.assertEqual(
+            [row["report"] for row in self.store.list_coach_reports(neighbour)], ["чужая"]
+        )
+        self.assertEqual(self.store.list_coach_reports(uid, days=14), [])
+
     def test_token_spend_aggregates_both_sources(self) -> None:
         uid = self.user["id"]
         self.store.save_coach_report(uid, "2026-08-16", 7, "r", "claude-opus-4-8", 100, 50)

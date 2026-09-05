@@ -924,4 +924,42 @@ final class TrainerLogicTests: XCTestCase {
         )
         XCTAssertEqual(TrainerLogic.setNotesLine([]), "")
     }
+
+    func testWeeklyReportArchiveRowsSortNewestFirstAndMarkOnlyTheNewestUnread() {
+        func entry(_ periodEnd: String, readAt: Int?) -> WeeklyReportEntry {
+            WeeklyReportEntry(
+                periodEnd: periodEnd, days: 7, report: "r", createdAt: 1, readAt: readAt)
+        }
+        let rows = TrainerLogic.weeklyReportArchiveRows(
+            [
+                entry("2025-12-28", readAt: nil),
+                entry("2026-08-30", readAt: nil),
+                entry("2026-08-23", readAt: 5),
+            ],
+            today: "2026-09-05"
+        )
+
+        XCTAssertEqual(rows.map(\.entry.periodEnd), ["2026-08-30", "2026-08-23", "2025-12-28"])
+        XCTAssertEqual(rows.map(\.isLatest), [true, false, false])
+        // «Не прочитан» бывает только у последнего: у старых read_at пуст по истории схемы.
+        XCTAssertEqual(rows.map(\.isUnread), [true, false, false])
+        XCTAssertEqual(rows.map(\.yearLabel), [nil, nil, "2025"])
+        XCTAssertEqual(
+            rows.map(\.periodLabel), ["24 авг – 30 авг", "17 авг – 23 авг", "22 дек – 28 дек"])
+        XCTAssertEqual(rows.map(\.id), rows.map(\.entry.periodEnd))
+    }
+
+    func testWeeklyReportArchiveNewestReadReportIsNotUnread() {
+        let rows = TrainerLogic.weeklyReportArchiveRows(
+            [
+                WeeklyReportEntry(
+                    periodEnd: "2026-08-30", days: 7, report: "r", createdAt: 1, readAt: 9)
+            ],
+            today: "2026-09-05"
+        )
+
+        XCTAssertEqual(rows.map(\.isUnread), [false])
+        XCTAssertEqual(rows.map(\.isLatest), [true])
+        XCTAssertEqual(TrainerLogic.weeklyReportArchiveRows([], today: "2026-09-05"), [])
+    }
 }
