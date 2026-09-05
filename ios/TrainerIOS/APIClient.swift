@@ -130,6 +130,10 @@ final class APIClient {
         try await get("/api/reports/weekly")
     }
 
+    func fetchWeeklyReportHistory() async throws -> WeeklyReportHistoryResponse {
+        try await get("/api/reports/weekly/history")
+    }
+
     func markWeeklyReportRead() async throws -> WeeklyReportReadResponse {
         try await request("/api/reports/weekly/read", method: "POST", body: Optional<Data>.none)
     }

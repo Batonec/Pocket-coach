@@ -46,6 +46,7 @@ struct ProgressTabScreen: View {
                 weeklySummarySection
                 disciplineSection
                 weeklyReportSection
+                reportArchiveSection
                 weeklyVolumeSection
 
                 sectionHeader
@@ -251,6 +252,43 @@ struct ProgressTabScreen: View {
         )
     }
 
+    // MARK: archive of every cached weekly report
+
+    /// Entry to the archive: a quieter row under the latest report, so the weekly
+    /// path from the banner to the fresh report stays one tap.
+    private var reportArchiveSection: some View {
+        NavigationLink {
+            ReportArchiveScreen()
+        } label: {
+            HStack(spacing: 11) {
+                ZStack {
+                    Circle().fill(DesignPalette.ink.opacity(0.05)).frame(width: 36, height: 36)
+                        .overlay(Circle().stroke(DesignPalette.sep, lineWidth: 0.5))
+                    Image(systemName: "archivebox")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(DesignPalette.ink3)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Все отчёты")
+                        .font(.jbm(13.5, weight: .bold))
+                        .foregroundStyle(DesignPalette.ink)
+                    Text("архив по неделям")
+                        .font(.jbm(10.5, weight: .semibold))
+                        .foregroundStyle(DesignPalette.ink3)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.jbm(11, weight: .heavy))
+                    .foregroundStyle(DesignPalette.ink4)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .glassCard(radius: 20)
+        }
+        .buttonStyle(.pressable(scale: 0.98))
+        .accessibilityLabel("Открыть все отчёты")
+    }
+
     private var weeklyReportPeriodLabel: String {
         if isOpeningWeeklyReport { return "загружаю отчёт…" }
         guard let report = latestWeeklyReport else { return "пока не сформирован" }
@@ -425,14 +463,20 @@ struct WeeklyReportSheet: View {
     @State private var entry: WeeklyReportEntry?
     @State private var isLoading: Bool
     private let fetchesOnAppear: Bool
+    private let marksRead: Bool
 
+    /// `marksRead` is false for older weeks opened from the archive: the server
+    /// receipt only ever targets the newest report, so sending it for an old
+    /// week would kill the banner for a report nobody has read.
     init(
         prefetchedEntry: WeeklyReportEntry? = nil,
-        fetchesOnAppear: Bool = true
+        fetchesOnAppear: Bool = true,
+        marksRead: Bool = true
     ) {
         _entry = State(initialValue: prefetchedEntry)
         _isLoading = State(initialValue: fetchesOnAppear)
         self.fetchesOnAppear = fetchesOnAppear
+        self.marksRead = marksRead
     }
 
     var body: some View {
@@ -497,7 +541,7 @@ struct WeeklyReportSheet: View {
                 entry = await store.fetchWeeklyReport()
                 isLoading = false
             }
-            if entry != nil {
+            if entry != nil && marksRead {
                 // Reading is a fact, not a snooze: the server-side receipt
                 // kills the weekly_report_ready signal for every client.
                 store.markWeeklyReportRead()

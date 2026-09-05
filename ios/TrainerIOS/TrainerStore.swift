@@ -743,6 +743,14 @@ final class TrainerStore: ObservableObject {
         return try await APIClient(baseURLString: apiBaseURLString).fetchWeeklyReport().report
     }
 
+    /// The whole archive of cached weekly reports, newest first, bodies included.
+    /// Throws so the archive screen can offer a retry instead of an empty list.
+    func requestWeeklyReportHistory() async throws -> [WeeklyReportEntry] {
+        let response = try await APIClient(baseURLString: apiBaseURLString)
+            .fetchWeeklyReportHistory()
+        return response.reports ?? []
+    }
+
     // MARK: - Coach recommendation
 
     /// Instant cached read. Runs after boot reaches `.loaded`, outside the 3s
