@@ -60,7 +60,9 @@ jobs:
             fi
           }
 
-          echo "backend=$(has_match '^(backend/server\.py$|backend/backend_store\.py$|backend/recommender\.py$|backend/prompt_builder\.py$|backend/plan_validator\.py$|backend/anthropic_client\.py$|backend/coach_state\.py$|backend/coach_features\.py$|backend/coach_signals\.py$|backend/coach_prompts\.py$|backend/prompts/.*\.md$|backend/copy/.*\.md$|backend/refresh_recommendation\.py$|backend/weekly_report\.py$|backend/backup_db\.py$|coach_mcp/server\.py$|backend/deploy/trainer-miniapp-backend\.service$|\.github/workflows/deploy-backend\.yml$)')" >> "$GITHUB_OUTPUT"
+          # Код backend едет каталогами (trainer/, jobs/), поэтому и фильтр по
+          # каталогам: новый модуль внутри них ничего здесь не требует.
+          echo "backend=$(has_match '^(backend/server\.py$|backend/trainer/.*\.py$|backend/jobs/.*\.py$|backend/prompts/.*\.md$|backend/copy/.*\.md$|backend/deploy/.*\.(service|timer)$|coach_mcp/server\.py$|\.github/workflows/deploy-backend\.yml$)')" >> "$GITHUB_OUTPUT"
 
           # Каталог целиком: в iOS нет списка модулей, который можно забыть
           # обновить, — любой .swift, ресурс или сам проект требуют пересборки.

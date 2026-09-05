@@ -55,17 +55,17 @@ All tools accept an optional `user_id` (defaults to the configured user).
 ## State files (next to the DB)
 
 - `coach_profile.json` — athlete prose profile (personal/medical context; never
-  in the repo, template: `backend/coach_profile.example.json`);
+  in the repo, template: `backend/examples/coach_profile.example.json`);
 - `coach_state.json` — structured coaching state: phase, phase start, per-phase
   overrides, waist limit/base, injection day (template:
-  `backend/coach_state.example.json`; override path with `COACH_STATE_PATH`).
+  `backend/examples/coach_state.example.json`; override path with `COACH_STATE_PATH`).
 
 ## Environment
 
 | Var | Default | Notes |
 |-----|---------|-------|
 | `ANTHROPIC_API_KEY` | — | Required for `coach_debug_recommendation` / `coach_generate_recommendation` |
-| `COACH_MCP_BACKEND_DIR` | `../backend` | Dir with `backend_store.py` + `recommender.py`. On the VPS: `/opt/trainer-miniapp/app` |
+| `COACH_MCP_BACKEND_DIR` | `../backend` | Backend root holding the `trainer/` package. On the VPS: `/opt/trainer-miniapp/app` |
 | `MINIAPP_DB_PATH` | `<backend_dir>/data/trainer.db` | SQLite path. On the VPS: `/opt/trainer-miniapp/data/trainer.db` |
 | `COACH_MCP_STATIC_DIR` | `MINIAPP_STATIC_DIR` or `<backend_dir>/web` | Holds `data/exercises.json`. On the VPS: `/opt/trainer-miniapp/www` |
 | `COACH_MCP_USER_ID` | `MINIAPP_TELEGRAM_RECOVERY_USER_ID` or `3` | Which user to operate on |

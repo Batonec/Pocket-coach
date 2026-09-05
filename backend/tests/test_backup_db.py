@@ -8,7 +8,7 @@ from pathlib import Path
 
 import support  # noqa: F401  (puts backend/ on sys.path)
 
-import backup_db
+from jobs import backup_db
 
 
 class BackupDbTests(unittest.TestCase):

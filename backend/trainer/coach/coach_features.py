@@ -26,8 +26,8 @@ from datetime import date, timedelta
 from itertools import pairwise
 from typing import Any
 
-import coach_state
-from coach_state import BREAK_DAYS
+from trainer.coach import coach_state
+from trainer.coach.coach_state import BREAK_DAYS
 
 # Catalog id 1 («Жим гор.») and id 18 («Жим в тренажере») are the same machine;
 # old history rows still carry id 1, so every consumer maps through this alias.

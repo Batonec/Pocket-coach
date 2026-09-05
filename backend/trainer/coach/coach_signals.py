@@ -20,9 +20,7 @@ import time
 from datetime import date, timedelta
 from typing import Any
 
-import coach_features
-import coach_prompts
-import coach_state
+from trainer.coach import coach_features, coach_prompts, coach_state
 
 # Stage thresholds for the measurements family. Due starts on day 10, not 7:
 # with a weekly cadence a day-7 start would light the banner every single week

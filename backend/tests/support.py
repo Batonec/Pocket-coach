@@ -25,6 +25,9 @@ STATIC_DIR = MINIAPP_DIR / "static"
 
 if str(MINIAPP_DIR) not in sys.path:
     sys.path.insert(0, str(MINIAPP_DIR))
+# Тесты импортируют server.py и пакет trainer как модули, и без этой строки после
+# каждого прогона в корне backend/ и в пакете оставались бы __pycache__.
+sys.dont_write_bytecode = True
 
 
 def sample_workout_payload(

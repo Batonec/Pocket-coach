@@ -5,10 +5,7 @@ import unittest
 import support  # noqa: F401 — adds backend to sys.path
 from support import STATIC_DIR
 
-import anthropic_client
-import plan_validator
-import prompt_builder
-import recommender
+from trainer.coach import anthropic_client, plan_validator, prompt_builder, recommender
 
 CATALOG = [
     {"id": 8, "name": "Жим ногами"},
@@ -209,7 +206,7 @@ class ProfileTests(unittest.TestCase):
         """The active phase must be rendered from phase_params, not defaults:
         otherwise the policy block and the КОНТЕКСТ block carry different
         numbers and the model gets two contradicting methodologies."""
-        import coach_state
+        from trainer.coach import coach_state
 
         state = coach_state.load_state(None)
         state["phase"] = "cut_recomp"
@@ -225,7 +222,7 @@ class ProfileTests(unittest.TestCase):
     def test_phase_policy_survives_a_malformed_override(self):
         """A range key overridden with a scalar must not crash prompt building:
         generation never fails over methodology."""
-        import coach_state
+        from trainer.coach import coach_state
 
         state = coach_state.load_state(None)
         state["phase"] = "maintenance"
@@ -605,7 +602,7 @@ class GenerateRepromptTests(unittest.TestCase):
     def test_oversized_session_is_reprompted_then_trimmed_to_the_cap(self) -> None:
         from datetime import date as _date
 
-        import coach_state
+        from trainer.coach import coach_state
 
         calls = 0
 

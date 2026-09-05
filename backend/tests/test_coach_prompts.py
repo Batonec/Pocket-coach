@@ -6,9 +6,7 @@ import unittest
 import support
 from support import STATIC_DIR
 
-import coach_prompts
-import prompt_builder
-import recommender
+from trainer.coach import coach_prompts, prompt_builder, recommender
 
 
 class PromptTemplateTests(unittest.TestCase):
@@ -47,7 +45,7 @@ class PromptTemplateTests(unittest.TestCase):
     def test_phase_policy_template_slots_match_the_renderer(self):
         """Every slot in phase_policy.md must be filled by _render_phase_policy
         for any phase — a new number in the prose must not ship as «{{...}}»."""
-        import coach_state
+        from trainer.coach import coach_state
 
         expected = coach_prompts.slots(coach_prompts.load("phase_policy"))
         self.assertEqual(expected, prompt_builder._PHASE_POLICY_SLOTS)
@@ -80,7 +78,7 @@ class PromptTemplateTests(unittest.TestCase):
         import re
 
         source = "".join(
-            (support.MINIAPP_DIR / name).read_text("utf-8")
+            (support.MINIAPP_DIR / "trainer" / "coach" / name).read_text("utf-8")
             for name in ("prompt_builder.py", "recommender.py")
         )
         used = set(re.findall(r'_block\(\s*\n?\s*"([a-z_]+)"', source))
@@ -111,7 +109,7 @@ class PromptTemplateTests(unittest.TestCase):
         """Текст баннера, объявленный и не вызванный, — мёртвый копирайт."""
         import re
 
-        source = (support.MINIAPP_DIR / "coach_signals.py").read_text("utf-8")
+        source = (support.MINIAPP_DIR / "trainer" / "coach" / "coach_signals.py").read_text("utf-8")
         used = set(re.findall(r'_text\(\s*\n?\s*"([a-z_]+)"', source))
         declared = set(coach_prompts.fragments("signals", directory=coach_prompts.COPY_DIR))
         self.assertEqual(declared - used, set(), "объявлены, но не используются")

@@ -18,10 +18,9 @@ from pathlib import Path
 
 from support import sample_workout_payload
 
-import backend_store
-import coach_state
-import recommender
-import weekly_report
+from jobs import weekly_report
+from trainer import backend_store
+from trainer.coach import coach_state, recommender
 
 
 class LastClosedWeekEndTests(unittest.TestCase):
