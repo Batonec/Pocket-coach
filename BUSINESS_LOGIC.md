@@ -1059,7 +1059,7 @@ Composer состоит из:
 Если документ и реализация разойдутся, для текущей версии источником истины считаются:
 
 - API-контракт [backend/server.py](./backend/server.py);
-- правила нормализации и persistence в [backend/trainer/backend_store.py](./backend/trainer/backend_store.py);
+- правила нормализации в [backend/trainer/domain/rules.py](./backend/trainer/domain/rules.py), persistence в [backend/trainer/data/backend_store.py](./backend/trainer/data/backend_store.py);
 - автотесты в [backend/tests](./backend/tests).
 
 Но целевое состояние процесса по-прежнему такое:

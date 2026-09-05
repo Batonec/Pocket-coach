@@ -9,10 +9,8 @@ import support  # noqa: F401
 from support import sample_workout_payload
 
 from infra.jobs import refresh_recommendation as refresh
-from trainer import (
-    backend_store,  # support puts backend/ on sys.path
-    recommender,
-)
+from trainer.data import backend_store  # support puts backend/ on sys.path
+from trainer.domain import recommender
 
 NOW = int(time.time())
 HOUR = 3600
@@ -24,23 +22,23 @@ def rec_row(status: str, age_hours: float) -> dict:
 
 class ShouldRefreshTests(unittest.TestCase):
     def test_missing_recommendation_refreshes(self) -> None:
-        refresh_needed, _ = refresh.should_refresh(None, NOW)
+        refresh_needed, _ = recommender.should_refresh(None, NOW)
         self.assertTrue(refresh_needed)
 
     def test_fresh_ready_skips_and_stale_ready_refreshes(self) -> None:
-        self.assertFalse(refresh.should_refresh(rec_row("ready", 5), NOW)[0])
-        self.assertTrue(refresh.should_refresh(rec_row("ready", 30), NOW)[0])
+        self.assertFalse(recommender.should_refresh(rec_row("ready", 5), NOW)[0])
+        self.assertTrue(recommender.should_refresh(rec_row("ready", 30), NOW)[0])
 
     def test_max_age_is_configurable(self) -> None:
-        self.assertTrue(refresh.should_refresh(rec_row("ready", 5), NOW, max_age_hours=4)[0])
-        self.assertFalse(refresh.should_refresh(rec_row("ready", 5), NOW, max_age_hours=6)[0])
+        self.assertTrue(recommender.should_refresh(rec_row("ready", 5), NOW, max_age_hours=4)[0])
+        self.assertFalse(recommender.should_refresh(rec_row("ready", 5), NOW, max_age_hours=6)[0])
 
     def test_pending_skipped_unless_stuck(self) -> None:
-        self.assertFalse(refresh.should_refresh(rec_row("pending", 0.5), NOW)[0])
-        self.assertTrue(refresh.should_refresh(rec_row("pending", 3), NOW)[0])
+        self.assertFalse(recommender.should_refresh(rec_row("pending", 0.5), NOW)[0])
+        self.assertTrue(recommender.should_refresh(rec_row("pending", 3), NOW)[0])
 
     def test_failed_refreshes(self) -> None:
-        self.assertTrue(refresh.should_refresh(rec_row("failed", 0.1), NOW)[0])
+        self.assertTrue(recommender.should_refresh(rec_row("failed", 0.1), NOW)[0])
 
 
 class RunTests(unittest.TestCase):

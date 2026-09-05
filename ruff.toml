@@ -23,7 +23,7 @@ line-length = 100
 # Побочный эффект здесь важнее основного: backend/tests/support.py в эти корни
 # НЕ входит, поэтому `support` попадает в секцию выше backend-модулей — а он
 # обязан импортироваться первым, он и кладёт backend/ в sys.path. Без этого
-# isort сортирует всё в одну кучу по алфавиту, `from trainer import coach_prompts`
+# isort сортирует всё в одну кучу по алфавиту, `from trainer.data import coach_prompts`
 # уезжает выше `import support`, и запуск одного файла тестов
 # падает на ImportError.
 src = ["backend", "coach_mcp"]

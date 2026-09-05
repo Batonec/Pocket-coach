@@ -15,7 +15,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
-from trainer import coach_features, coach_prompts, coach_state, plan_validator
+from trainer.data import coach_prompts
+from trainer.domain import coach_features, coach_state, plan_validator
 
 # Raw history shown to the model; everything older is covered by the computed
 # per-exercise summaries (the prompt must not grow from the feature work).
@@ -315,7 +316,7 @@ def _render_attendance(workouts: list[dict[str, Any]], today: date) -> str:
     rows = coach_features.weekly_attendance(workouts, today)
     return _block(
         "attendance",
-        weeks=coach_features.render_weekly_attendance(rows, today),
+        weeks=render_weekly_attendance(rows, today),
         streak_three=str(coach_features.attendance_streak(rows, 3)),
         streak_four=str(coach_features.attendance_streak(rows, 4)),
     )
@@ -343,7 +344,7 @@ def _render_stall(
         since=coach_state._block_anchor(state, workouts, today),
         group_targets=params.get("group_targets"),
     )
-    return coach_features.render_stall_report(report)
+    return render_stall_report(report)
 
 
 def _days_since_last(workouts: list[dict[str, Any]], today: date) -> int | None:
@@ -472,7 +473,7 @@ def _build_user_prompt(
     waists: list[dict[str, Any]] | None = None,
     events: list[dict[str, Any]] | None = None,
 ) -> str:
-    state = state if state is not None else coach_state.load_state(None)
+    state = state if state is not None else coach_state.default_state()
     waists = waists or []
     params = coach_state.phase_params(state)
     phase = params["phase"]
@@ -534,13 +535,11 @@ def _build_user_prompt(
     chunks.append(
         _block("volume_header")
         + "\n"
-        + coach_features.render_weekly_volume(
-            volume, week_target, maintenance_sets, params.get("group_targets")
-        )
+        + render_weekly_volume(volume, week_target, maintenance_sets, params.get("group_targets"))
     )
     chunks.append(_render_attendance(workouts, today))
 
-    measurement_lines = coach_features.render_measurements(body_weights, waists, today)
+    measurement_lines = render_measurements(body_weights, waists, today)
     matrix = coach_features.nutrition_matrix(state, params, body_weights, waists, today)
     nutrition_chunk = list(measurement_lines)
     if matrix["lines"]:
@@ -552,14 +551,12 @@ def _build_user_prompt(
 
     summaries = coach_features.exercise_summaries(workouts, catalog or [], today)
     if summaries:
-        chunks.append(
-            _block("summaries_header") + "\n" + coach_features.render_exercise_summaries(summaries)
-        )
+        chunks.append(_block("summaries_header") + "\n" + render_exercise_summaries(summaries))
 
     chunks.append(_render_stall(workouts, summaries, matrix, params, state, today))
 
     if returning and days is not None:
-        pre_break = coach_features.render_pre_break_weights(
+        pre_break = render_pre_break_weights(
             coach_features.pre_break_working_weights(workouts, catalog or []), days
         )
         if pre_break:
@@ -576,13 +573,11 @@ def _build_user_prompt(
                 days=str((first["break_end"] - first["break_start"]).days - 1),
             )
             + "\n"
-            + "\n".join(coach_features.render_comeback_ramp(ramp_items))
+            + "\n".join(render_comeback_ramp(ramp_items))
         )
 
     discipline_lines: list[str] = []
-    discipline = coach_features.render_adherence_stats(
-        coach_features.adherence_stats(workouts, today)
-    )
+    discipline = render_adherence_stats(coach_features.adherence_stats(workouts, today))
     if discipline:
         discipline_lines.append(discipline)
     adherence = _plan_adherence_report(workouts)
@@ -791,7 +786,7 @@ def _build_report_prompt(
     chunks.append(
         _block("report_volume_header")
         + "\n"
-        + coach_features.render_weekly_volume(
+        + render_weekly_volume(
             coach_features.weekly_volume(workouts, today),
             week_target,
             maintenance_sets,
@@ -813,7 +808,7 @@ def _build_report_prompt(
     matrix = coach_features.nutrition_matrix(state, params, body_weights, waists, today)
     chunks.append(_render_stall(workouts, summaries, matrix, params, state, today))
 
-    measurements = coach_features.render_measurements(body_weights, waists, today)
+    measurements = render_measurements(body_weights, waists, today)
     nutrition = list(measurements)
     if matrix["lines"]:
         nutrition.append(_block("nutrition_matrix", lines="; ".join(matrix["lines"])))
@@ -822,9 +817,7 @@ def _build_report_prompt(
     if nutrition:
         chunks.append("\n".join(nutrition))
 
-    discipline = coach_features.render_adherence_stats(
-        coach_features.adherence_stats(workouts, today)
-    )
+    discipline = render_adherence_stats(coach_features.adherence_stats(workouts, today))
     if discipline:
         chunks.append(discipline)
 
@@ -854,3 +847,263 @@ def _build_report_prompt(
 
     chunks.append(_block("report_task"))
     return "\n\n".join(chunks)
+
+
+# --------------------------------------------------------------------------- #
+# Рендер вычисленных фич в текст для модели
+# --------------------------------------------------------------------------- #
+def render_exercise_summaries(summaries: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for summary in summaries:
+        if summary["inverted"]:
+            peak = (
+                f"лучший противовес {summary['top_weight']:g}×{summary['top_reps']} "
+                f"({summary['top_date']}, меньше = сильнее)"
+            )
+            label = "сейчас противовес"
+        else:
+            peak = (
+                f"пик {summary['top_weight']:g}×{summary['top_reps']} "
+                f"(e1RM {summary['e1rm']:g}, {summary['top_date']})"
+            )
+            label = "сейчас"
+        if summary["current_weight"] is None:
+            now = f"{label} — нет данных"
+        else:
+            now = f"{label} {summary['current_weight']:g}"
+            if summary["pct_of_peak"] is not None:
+                now += f" ({summary['pct_of_peak']}% пика)"
+        recent = "; ".join(f"{when}: {sets}" for when, sets in summary["recent_sessions"])
+        lines.append(
+            f"  {summary['name']}: {peak}; ПР {summary['days_since_pr']} дн. назад; "
+            f"{now}. Последние: {recent}"
+        )
+    return "\n".join(lines)
+
+
+def render_weekly_volume(
+    volume: dict[str, dict[str, float]],
+    week_target: tuple[int, int] | None,
+    maintenance_sets: tuple[int, int] | None = None,
+    group_targets: dict[str, Any] | None = None,
+) -> str:
+    targets = (
+        coach_features.group_volume_targets(week_target, maintenance_sets, group_targets)
+        if group_targets
+        else {}
+    )
+    lines = []
+    for group, counts in volume.items():
+        effective = f"{counts['effective']:g}"
+        goal = targets.get(group)
+        if goal:
+            # The goal is stated in DIRECT sets — that is how the programme's
+            # table counts — so it stands next to the direct number, and the
+            # effective count is labelled as the reference it is. One number
+            # in the wrong column and the model picks the smaller of two goals.
+            line = (
+                f"  {group}: {counts['direct']} прямых (цель {goal[0]:g}–{goal[1]:g}) / "
+                f"{effective} эффективных (справочно)"
+            )
+        else:
+            line = f"  {group}: {counts['direct']} прямых / {effective} эффективных"
+        lines.append(line)
+    if group_targets:
+        lines.append(
+            "  Цели — в ПРЯМЫХ сетах и на объём ЗРЕЛОГО блока по программе; на неделях "
+            "разгона идём к ним снизу, ориентир недели — в разделе ПРОГРАММА. Эффективные "
+            "сеты справочные: показывают, сколько косвенной работы группа уже получила, "
+            "но цель не закрывают."
+        )
+    elif week_target:
+        small = ", ".join(
+            f"{group} {low}–{high}"
+            for group, (low, high) in coach_features.SMALL_GROUP_TARGETS.items()
+        )
+        lines.append(
+            f"  Цель этой недели блока для крупных групп: {week_target[0]}–{week_target[1]} "
+            f"эффективных сетов; ориентиры малых групп (прямых): {small}."
+        )
+    elif maintenance_sets:
+        lines.append(
+            f"  Режим поддержания: {maintenance_sets[0]}–{maintenance_sets[1]} сета на группу "
+            "в неделю, объём НЕ растёт."
+        )
+    return "\n".join(lines)
+
+
+def render_stall_report(report: dict[str, Any]) -> str:
+    """Two lines: the facts of the active window (always — «фактическая
+    частота приходит в данных» is a promise the programme header makes), then
+    the verdict on preconditions and stall."""
+    volume = ", ".join(
+        f"{group} {value:.1f} (порог {threshold:g})"
+        for group, (value, threshold) in report["volume_per_week"].items()
+    )
+    facts = (
+        f"Активное окно {report['window_days']} дн. (с {report['window_start'].isoformat()}; "
+        "перерыв ≥14 дней и прошлая фаза в него не входят): "
+        f"частота {report['frequency']:.1f}/нед; прямых сетов/нед: {volume}."
+    )
+    if report["too_short"]:
+        verdict = (
+            f"Окно короче {coach_features.STALL_MIN_WINDOW_DAYS} дней — предусловия прогресса и застой "
+            "пока не оцениваются."
+        )
+    elif not report["preconditions_ok"]:
+        verdict = (
+            "Предусловия прогресса НЕ выполнены ("
+            + "; ".join(report["reasons"])
+            + ") — плато, если оно есть, объясняй посещаемостью/питанием, а не потолком."
+        )
+    elif report["stalled"]:
+        names = ", ".join(
+            f"{s['name']} (без прироста {s['quiet_days']} дн.)" for s in report["stalled"]
+        )
+        verdict = (
+            f"ЗАСТОЙ при выполненных предусловиях (частота/объём/питание в норме): {names}. "
+            "Предложи deload −10% с разгоном или вариацию по этим движениям."
+        )
+    elif report["window_days"] < coach_features.STALL_NO_PR_DAYS:
+        verdict = (
+            f"Предусловия прогресса выполнены; окну меньше {coach_features.STALL_NO_PR_DAYS} дней — "
+            "застой ещё не оценивается."
+        )
+    else:
+        verdict = "Предусловия прогресса выполнены, застоя по упражнениям нет."
+    return f"{facts}\n{verdict}"
+
+
+def render_weekly_attendance(rows: list[dict[str, Any]], today: date) -> str:
+    parts = []
+    for row in rows:
+        label = f"{row['start'].isoformat()}…{row['end'].isoformat()}"
+        if not row["closed"]:
+            label += f" (текущая, по {today.isoformat()})"
+        parts.append(f"{label}: {row['sessions']}")
+    return ", ".join(parts)
+
+
+def render_pre_break_weights(items: list[dict[str, Any]], break_days: int) -> str | None:
+    if not items:
+        return None
+    lines = [
+        f"  {item['name']}: {item['last_working']:g}" + (" противовеса" if item["inverted"] else "")
+        for item in items
+    ]
+    return (
+        f"Рабочие веса в последней сессии ПЕРЕД перерывом ({break_days} дн. "
+        "назад). Это форма до паузы, а не сегодняшняя: отметки усилия и RIR в "
+        "истории тоже относятся к тем сессиям. Насколько снизить вход и как "
+        "быстро возвращаться к этим весам — решай сам по принципам возврата "
+        "после перерыва.\n" + "\n".join(lines)
+    )
+
+
+def render_comeback_ramp(items: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for item in items:
+        arrow = " → ".join(f"{step:g}" for step in item["steps"])
+        unit = " противовеса" if item["inverted"] else ""
+        lines.append(
+            f"  {item['name']}: доперерывный рабочий {item['target']:g}{unit}, "
+            f"сейчас {item['current']:g}. Ступени: {arrow}"
+        )
+    return lines
+
+
+def render_measurements(
+    body_weights: list[dict[str, Any]],
+    waists: list[dict[str, Any]],
+    today: date,
+) -> list[str]:
+    """Compact recent weigh-ins and waist measurements for the prompt."""
+    lines: list[str] = []
+    weights = coach_features.weight_points(body_weights)
+    if weights:
+        tail = ", ".join(f"{when.isoformat()}: {value:g}кг" for when, value in weights[-6:])
+        age = (today - weights[-1][0]).days
+        dropped = len(body_weights) - len(weights)
+        count = coach_features.weigh_ins_in_window(weights, today)
+        line = f"Вес тела: {tail}. Дней с последнего замера: {age}. Замеров за последние 7 дней: {count}"
+        line += (
+            f" (для недельной средней нужно ≥{coach_features.WEEKLY_MEAN_MIN_POINTS})."
+            if count < coach_features.WEEKLY_MEAN_MIN_POINTS
+            else "."
+        )
+        if dropped:
+            line += f" (отброшено неправдоподобных записей: {dropped})"
+        lines.append(line)
+    waist = coach_features.waist_points(waists)
+    if waist:
+        tail = ", ".join(f"{when.isoformat()}: {value:g}см" for when, value in waist[-6:])
+        age = (today - waist[-1][0]).days
+        lines.append(f"Талия: {tail}. Дней с последнего замера: {age}.")
+    return lines
+
+
+def render_phase_summary(summary: dict[str, Any]) -> str:
+    lines = [
+        f"Фаза {summary['phase']}: {summary['started']} → {summary['ended']} "
+        f"({summary['weeks']} нед)."
+    ]
+    per_week = f" ({summary['per_week']}/нед)" if summary["per_week"] is not None else ""
+    lines.append(f"Тренировок: {summary['workouts']}{per_week}.")
+    if summary["weight_start"] is not None and summary["weight_end"] is not None:
+        rate = (
+            f", темп {summary['weight_rate_per_week']:+.2f} кг/нед"
+            if summary["weight_rate_per_week"] is not None
+            else ""
+        )
+        lines.append(
+            f"Вес: {summary['weight_start']:.1f} → {summary['weight_end']:.1f} кг "
+            f"({summary['weight_end'] - summary['weight_start']:+.1f}{rate})."
+        )
+    else:
+        lines.append("Вес: замеров в периоде фазы нет.")
+    if summary["waist_start"] is not None and summary["waist_end"] is not None:
+        lines.append(
+            f"Талия: {summary['waist_start']:g} → {summary['waist_end']:g} см "
+            f"({summary['waist_end'] - summary['waist_start']:+.1f})."
+        )
+    if summary["prs"]:
+        top = "; ".join(
+            f"{item['name']} ×{item['count']} (лучшее "
+            + (
+                f"противовес {item['top_weight']:g}×{item['top_reps']}"
+                if item["inverted"]
+                else f"{item['top_weight']:g}×{item['top_reps']}"
+            )
+            + ")"
+            for item in summary["prs"][:5]
+        )
+        lines.append(f"ПР за фазу: {summary['pr_events']} — {top}.")
+    else:
+        lines.append("ПР за фазу: нет.")
+    adherence_line = render_adherence_stats(summary["adherence"])
+    if adherence_line:
+        lines.append(adherence_line)
+    return "\n".join(lines)
+
+
+def render_adherence_stats(stats: dict[str, Any] | None) -> str | None:
+    if not stats:
+        return None
+    line = (
+        f"Дисциплина за {stats['days']} дней: {stats['sessions']} трен. по плану, "
+        f"{stats['done_sets']} из {stats['planned_sets']} плановых подходов "
+        f"({stats['pct']}%)."
+    )
+    if stats["skipped"]:
+        skipped = ", ".join(f"{name} ×{count}" for name, count in stats["skipped"])
+        line += f" Полностью пропускались: {skipped}."
+    return line
+
+
+def comeback_ramp(
+    workouts: list[dict[str, Any]],
+    catalog: list[dict[str, Any]],
+    today: date,
+) -> list[str]:
+    """Rendered ramp lines (kept for callers that only need the text)."""
+    return render_comeback_ramp(coach_features.comeback_ramp_steps(workouts, catalog, today))

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """«Совет тренера»: точка входа и оба вызова модели.
 
-Здесь живёт то, что связывает слой коуча воедино: загрузка каталога, профиля
-и стратегии атлета, :func:`generate` / :func:`generate_with_trace` для плана
-следующей тренировки и :func:`generate_weekly_report` для недельного отчёта.
+Здесь живёт то, что связывает слой коуча воедино: :func:`generate` /
+:func:`generate_with_trace` для плана следующей тренировки и
+:func:`generate_weekly_report` для недельного отчёта. Каталог, профиль и
+стратегию читает ``data/files`` и передаёт сюда аргументами.
 По инварианту проекта модель вызывается ровно в этих двух местах.
 
 Сам вызов разложен по трём модулям, и этот файл только дирижирует:
@@ -18,25 +19,18 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from datetime import date, timedelta
-from pathlib import Path
 from typing import Any
 
-from trainer import (
-    anthropic_client,
-    coach_features,
-    coach_state,
-    plan_validator,
-    prompt_builder,
-)
-from trainer.anthropic_client import (
+from trainer.data import anthropic_client
+from trainer.data.anthropic_client import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
     DEFAULT_TIMEOUT,
     RecommendationError,
 )
+from trainer.domain import coach_features, coach_state, plan_validator, prompt_builder
 
 DEFAULT_HISTORY_LIMIT = int(os.getenv("RECOMMENDATION_HISTORY_LIMIT", "20"))
 
@@ -45,103 +39,6 @@ DEFAULT_HISTORY_LIMIT = int(os.getenv("RECOMMENDATION_HISTORY_LIMIT", "20"))
 MUSCLE_GROUPS = coach_features.MUSCLE_GROUPS
 MIN_PLAUSIBLE_BODY_WEIGHT = coach_features.MIN_PLAUSIBLE_BODY_WEIGHT
 MAX_PLAUSIBLE_BODY_WEIGHT = coach_features.MAX_PLAUSIBLE_BODY_WEIGHT
-
-
-# --------------------------------------------------------------------------- #
-# Catalog
-# --------------------------------------------------------------------------- #
-def load_catalog(path: Path | str) -> list[dict[str, Any]]:
-    """Load the exercise catalog (resources/exercises.json — the same file the iOS
-    app downloads from /data/exercises.json and keeps a fallback copy of)."""
-    raw = json.loads(Path(path).read_text("utf-8"))
-    exercises = raw.get("exercises", [])
-    catalog: list[dict[str, Any]] = []
-    for item in exercises:
-        try:
-            catalog.append({"id": int(item["id"]), "name": str(item["name"]).strip()})
-        except (KeyError, TypeError, ValueError):
-            continue
-    if not catalog:
-        raise RecommendationError("Каталог упражнений пуст или недоступен")
-    return catalog
-
-
-# --------------------------------------------------------------------------- #
-# Athlete profile
-# --------------------------------------------------------------------------- #
-def load_profile(path: Path | str | None) -> dict[str, Any] | None:
-    """Load the athlete profile JSON (personal context for the coach prompt).
-
-    The real profile lives ONLY on the server next to the database — it holds
-    personal/medical context and must never be committed to the public repo
-    (the shape is documented in backend/README.md). Missing/broken file → None: generation
-    still works, just without the personal context.
-    """
-    if not path:
-        return None
-    try:
-        raw = json.loads(Path(path).read_text("utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(raw, dict):
-        return None
-    blocks = raw.get("blocks")
-    if not isinstance(blocks, dict) or not blocks:
-        return None
-    return raw
-
-
-def update_profile_block(path: Path | str | None, block: str, text: str | None) -> dict[str, Any]:
-    """Replace one prose block of coach_profile.json (or delete it when `text`
-    is empty). This is the write path for the Coach MCP tool — the profile is
-    personal data living only next to the DB, so remote edits go through here
-    instead of SSH. The previous file version is kept as a timestamped .bak
-    next to the original. Returns the updated profile dict."""
-    if not path:
-        raise RecommendationError("Путь к профилю атлета не настроен")
-    path = Path(path)
-    try:
-        original = path.read_text("utf-8")
-        raw = json.loads(original)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        raise RecommendationError(
-            "Профиль не найден или сломан — проверь coach_profile.json руками"
-        ) from exc
-    if not isinstance(raw, dict) or not isinstance(raw.get("blocks"), dict):
-        raise RecommendationError("Профиль без blocks{} — проверь coach_profile.json руками")
-    name = str(block).strip()
-    if not name:
-        raise RecommendationError("Не задано имя блока профиля")
-    cleaned = str(text).strip() if text is not None else ""
-    blocks = raw["blocks"]
-    if not cleaned and name not in blocks:
-        raise RecommendationError(f"Блока «{name}» нет в профиле — удалять нечего")
-
-    backup = path.with_name(f"{path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
-    backup.write_text(original, "utf-8")
-    if cleaned:
-        blocks[name] = cleaned
-    else:
-        del blocks[name]
-    raw["updated"] = date.today().isoformat()
-    path.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", "utf-8")
-    return raw
-
-
-def load_strategy(path: Path | str | None) -> str | None:
-    """Рабочий документ стратегии из data/ рядом с профилем.
-
-    Личный текст: в репозиторий он не попадает, живёт на VPS вместе с
-    coach_profile.json. Отсутствующий или битый файл — это None и промпт без
-    раздела ПРОГРАММА, а не отказ генерации.
-    """
-    if not path:
-        return None
-    try:
-        text = Path(path).read_text("utf-8")
-    except OSError:
-        return None
-    return text or None
 
 
 # --------------------------------------------------------------------------- #
@@ -187,7 +84,7 @@ def generate_with_trace(
         raise RecommendationError("ANTHROPIC_API_KEY не настроен на сервере")
 
     today = today or date.today()
-    state = state if state is not None else coach_state.load_state(None)
+    state = state if state is not None else coach_state.default_state()
     session_cap = plan_validator._session_cap(coach_state.phase_params(state))
     system = prompt_builder._build_system_prompt(catalog, profile, state, strategy)
     user = prompt_builder._build_user_prompt(
@@ -376,7 +273,7 @@ def generate_weekly_report(
         raise RecommendationError("ANTHROPIC_API_KEY не настроен на сервере")
 
     today = today or date.today()
-    state = state if state is not None else coach_state.load_state(None)
+    state = state if state is not None else coach_state.default_state()
     user = prompt_builder._build_report_prompt(
         workouts, body_weights, waists, catalog, state, today, max(1, int(days)), events=events
     )
@@ -390,3 +287,73 @@ def generate_weekly_report(
         timeout=timeout,
     )
     return text.strip(), usage, model
+
+
+# --------------------------------------------------------------------------- #
+# Жизненный цикл совета: когда он устарел, что его обесценивает, когда обновлять
+# --------------------------------------------------------------------------- #
+def is_stale(rec: dict[str, Any] | None, latest_workout_id: int | None) -> bool:
+    """Готовый совет собран по тренировке, которая уже не последняя. Карточка
+    показывает его с пометкой, пока не досчитается новый."""
+    return bool(
+        rec and rec.get("status") == "ready" and rec.get("based_on_workout_id") != latest_workout_id
+    )
+
+
+# Что обесценивает готовый совет: любая правка данных, из которых он собран —
+# тренировки, замеры веса и талии, события (они уезжают в промпт текстом).
+# Ровно одно исключение: повтор POST /api/workouts с тем же client_id — это
+# ретрай, а не новая тренировка, и он ничего не меняет.
+ADVICE_INPUTS = frozenset({"workout", "body_weight", "waist", "event"})
+
+
+def advice_invalidated_by(change: str, *, created: bool = True) -> bool:
+    return change in ADVICE_INPUTS and created
+
+
+# A 'pending' row older than this is a generation that died mid-flight
+# (e.g. the server was restarted) — safe to take over.
+STUCK_PENDING_HOURS = 2.0
+
+
+def should_refresh(
+    rec: dict[str, Any] | None,
+    now_ts: int,
+    max_age_hours: float = 24.0,
+) -> tuple[bool, str]:
+    """Нужно ли пересобирать совет по таймеру: нет совета, прошлая генерация
+    упала, зависший pending или готовый старше max_age_hours."""
+    if rec is None:
+        return True, "рекомендации ещё нет"
+
+    age_hours = (now_ts - int(rec.get("updated_at") or 0)) / 3600
+    status = rec.get("status")
+
+    if status == "pending":
+        if age_hours > STUCK_PENDING_HOURS:
+            return True, f"зависший pending ({age_hours:.1f} ч)"
+        return False, f"генерация уже идёт ({age_hours:.1f} ч)"
+    if status == "failed":
+        return True, f"прошлая генерация упала ({age_hours:.1f} ч назад)"
+    if status == "ready":
+        if age_hours > max_age_hours:
+            return True, f"рекомендации {age_hours:.1f} ч (> {max_age_hours:g})"
+        return False, f"рекомендация свежая ({age_hours:.1f} ч)"
+    return True, f"неожиданный статус: {status!r}"
+
+
+def weekly_report_period(today: date) -> date:
+    """Отчёт всегда про ЗАКРЫТУЮ неделю, а не про последние 7 дней: таймер
+    просыпается уже в понедельник, поэтому и период, и окно данных модели
+    якорятся на прошедшее воскресенье, а не на сегодня."""
+    return coach_state.last_closed_week_end(today)
+
+
+def weekly_report_needed(cached: dict[str, Any] | None, *, force: bool) -> tuple[bool, str]:
+    """Отчёт за закрытую неделю генерируется один раз и живёт в кэше; --force
+    перегенерирует его поверх."""
+    if force:
+        return True, "форсировано (--force)"
+    if cached:
+        return False, "уже в кэше"
+    return True, "в кэше нет"

@@ -8,7 +8,8 @@ from support import (
     sample_workout_payload,
 )
 
-from trainer import backend_store  # support puts backend/ on sys.path
+from trainer.data import backend_store  # support puts backend/ on sys.path
+from trainer.domain import rules
 
 
 def sample_snapshot(**overrides):
@@ -42,7 +43,7 @@ def payload_with_snapshot(client_id: str, snapshot) -> dict:
 
 class NormalizeSnapshotTests(unittest.TestCase):
     def test_valid_snapshot_passes_with_defaults(self) -> None:
-        out = backend_store.normalize_recommendation_snapshot(sample_snapshot())
+        out = rules.normalize_recommendation_snapshot(sample_snapshot())
         self.assertIsNotNone(out)
         self.assertEqual(out["schema"], 1)
         self.assertEqual(out["source"], "coach")
@@ -50,7 +51,7 @@ class NormalizeSnapshotTests(unittest.TestCase):
         self.assertEqual(out["exercises"][0]["sets"][1]["weight"], 82.5)
 
     def test_defaults_filled_when_meta_missing(self) -> None:
-        out = backend_store.normalize_recommendation_snapshot(
+        out = rules.normalize_recommendation_snapshot(
             {"exercises": [{"exercise_id": 2, "name": "X", "sets": [{"reps": 10, "weight": 50}]}]}
         )
         self.assertEqual(out["schema"], 1)
@@ -58,13 +59,13 @@ class NormalizeSnapshotTests(unittest.TestCase):
         self.assertIsNone(out["model"])
 
     def test_invalid_shapes_yield_none(self) -> None:
-        self.assertIsNone(backend_store.normalize_recommendation_snapshot(None))
-        self.assertIsNone(backend_store.normalize_recommendation_snapshot("nope"))
-        self.assertIsNone(backend_store.normalize_recommendation_snapshot({}))
-        self.assertIsNone(backend_store.normalize_recommendation_snapshot({"exercises": []}))
+        self.assertIsNone(rules.normalize_recommendation_snapshot(None))
+        self.assertIsNone(rules.normalize_recommendation_snapshot("nope"))
+        self.assertIsNone(rules.normalize_recommendation_snapshot({}))
+        self.assertIsNone(rules.normalize_recommendation_snapshot({"exercises": []}))
         # reps < 1 drops the set, empty sets drop the exercise, no exercises -> None
         self.assertIsNone(
-            backend_store.normalize_recommendation_snapshot(
+            rules.normalize_recommendation_snapshot(
                 {
                     "exercises": [
                         {"exercise_id": 1, "name": "X", "sets": [{"reps": 0, "weight": 10}]}
@@ -74,7 +75,7 @@ class NormalizeSnapshotTests(unittest.TestCase):
         )
 
     def test_unknown_load_type_nulled_and_strings_capped(self) -> None:
-        out = backend_store.normalize_recommendation_snapshot(
+        out = rules.normalize_recommendation_snapshot(
             sample_snapshot(load_type="insane", focus="ф" * 500)
         )
         self.assertIsNone(out["load_type"])
@@ -92,11 +93,11 @@ class NormalizeSnapshotTests(unittest.TestCase):
             ]
         )
         # ~10 exercises x 12 sets with max-length names: force > 8KB via long names
-        result = backend_store.normalize_recommendation_snapshot(big)
+        result = rules.normalize_recommendation_snapshot(big)
         if result is not None:
             self.assertLessEqual(
                 len(backend_store.json.dumps(result, ensure_ascii=False)),
-                backend_store.MAX_RECOMMENDATION_SNAPSHOT_BYTES,
+                rules.MAX_RECOMMENDATION_SNAPSHOT_BYTES,
             )
 
 

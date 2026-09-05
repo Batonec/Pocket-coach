@@ -126,12 +126,12 @@ Claude Desktop ──MCP──►  coach_mcp/server.py  ────────
 
 | Слой | Что делает | LLM |
 | --- | --- | :---: |
-| [`coach_state.py`](./backend/trainer/coach_state.py) | фаза подготовки, неделя блока, ramp объёма, плановый deload, режим возврата после перерыва | — |
-| [`coach_features.py`](./backend/trainer/coach_features.py) | e1RM, ПР, % от пика, эффективные объёмы, детектор застоя, тренды веса и талии, дисциплина | — |
-| [`prompt_builder.py`](./backend/trainer/prompt_builder.py) | всё, что читает модель: системный промпт, контекст, фичи, история, JSON-схема; проза — в `prompts/*.md` | — |
-| [`recommender.py`](./backend/trainer/recommender.py) | оба вызова модели: structured output → валидатор → один авто-репромпт; сам HTTP к API — в [`anthropic_client.py`](./backend/trainer/anthropic_client.py) | **да** |
-| [`plan_validator.py`](./backend/trainer/plan_validator.py) | санитизация ответа и три жёсткие границы: покрытие групп, возвратный потолок весов, потолок сессии | — |
-| [`coach_signals.py`](./backend/trainer/coach_signals.py) | баннеры: пороги, шаблоны текста, схлопывание семей | — |
+| [`coach_state.py`](./backend/trainer/domain/coach_state.py) | фаза подготовки, неделя блока, ramp объёма, плановый deload, режим возврата после перерыва | — |
+| [`coach_features.py`](./backend/trainer/domain/coach_features.py) | e1RM, ПР, % от пика, эффективные объёмы, детектор застоя, тренды веса и талии, дисциплина | — |
+| [`prompt_builder.py`](./backend/trainer/domain/prompt_builder.py) | всё, что читает модель: системный промпт, контекст, фичи, история, JSON-схема; проза — в `prompts/*.md` | — |
+| [`recommender.py`](./backend/trainer/domain/recommender.py) | оба вызова модели: structured output → валидатор → один авто-репромпт; сам HTTP к API — в [`anthropic_client.py`](./backend/trainer/data/anthropic_client.py) | **да** |
+| [`plan_validator.py`](./backend/trainer/domain/plan_validator.py) | санитизация ответа и три жёсткие границы: покрытие групп, возвратный потолок весов, потолок сессии | — |
+| [`coach_signals.py`](./backend/trainer/domain/coach_signals.py) | баннеры: пороги, шаблоны текста, схлопывание семей | — |
 
 Валидатор проверяет **ровно три жёсткие границы**: покрытие мышечных групп, возвратный потолок весов после перерыва и потолок размера сессии фазы. Диапазоны повторов, нижняя граница сессии и чередование нагрузок сознательно не проверяются — это суждение модели, направляемое промптом, а не константы в коде.
 

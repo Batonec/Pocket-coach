@@ -22,14 +22,15 @@ from pathlib import Path
 # trainer) в sys.path кладём сами.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from trainer import backend_store, coach_state, recommender
+from trainer.data import backend_store, files
+from trainer.domain import recommender
 
 BASE_DIR = Path(__file__).resolve().parents[2]  # backend/: там data/ и resources/
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
 CATALOG_PATH = Path(
     os.getenv("EXERCISE_CATALOG_PATH", str(BASE_DIR / "resources" / "exercises.json"))
 )
-STATE_PATH = coach_state.default_state_path(DB_PATH)
+STATE_PATH = files.default_state_path(DB_PATH)
 PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
 STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))
 USER_ID = 3  # personal-build: единственный атлет, см. CLAUDE.md
@@ -43,13 +44,13 @@ def run(
     today: date | None = None,
 ) -> bool:
     """Returns True if a report was generated."""
-    # Отчёт всегда про ЗАКРЫТУЮ неделю, а не про последние 7 дней: таймер
-    # просыпается уже в понедельник, поэтому и период, и окно данных модели
-    # якорятся на прошедшее воскресенье, а не на сегодня.
-    period = coach_state.last_closed_week_end(today or date.today())
+    period = recommender.weekly_report_period(today or date.today())
     period_end = period.isoformat()
-    if not force and store.get_coach_report(user_id, period_end, REPORT_DAYS):
-        print(f"[weekly] отчёт за {period_end} уже в кэше")
+    needed, reason = recommender.weekly_report_needed(
+        store.get_coach_report(user_id, period_end, REPORT_DAYS), force=force
+    )
+    if not needed:
+        print(f"[weekly] отчёт за {period_end}: {reason}")
         return False
 
     try:
@@ -57,10 +58,10 @@ def run(
             store.list_workouts(user_id),
             store.list_body_weights(user_id),
             store.list_waists(user_id),
-            recommender.load_catalog(CATALOG_PATH),
-            profile=recommender.load_profile(PROFILE_PATH),
-            strategy=recommender.load_strategy(STRATEGY_PATH),
-            state=coach_state.load_state(STATE_PATH),
+            files.load_catalog(CATALOG_PATH),
+            profile=files.load_profile(PROFILE_PATH),
+            strategy=files.load_strategy(STRATEGY_PATH),
+            state=files.load_state(STATE_PATH),
             events=store.list_events(user_id),
             today=period,
             days=REPORT_DAYS,

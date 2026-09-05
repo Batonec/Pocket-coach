@@ -9,7 +9,7 @@ import os
 import threading
 import time
 from collections.abc import Callable
-from datetime import date, timedelta
+from datetime import date
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,8 +17,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from trainer import RESOURCES_DIR, coach_signals, coach_state, recommender
-from trainer.backend_store import MiniAppStore
+from trainer import RESOURCES_DIR
+from trainer.data import files
+from trainer.data.backend_store import MiniAppStore
+from trainer.domain import coach_signals, recommender, rules
 
 BASE_DIR = Path(__file__).resolve().parent
 # Каталог упражнений едет с кодом; путь переопределяется только ради тестов и
@@ -43,7 +45,7 @@ COACH_STRATEGY_PATH = Path(
 )
 # Mutable coaching state (preparation phase, waist limits) —
 # same location policy as the profile; switched via the Coach MCP tools.
-COACH_STATE_PATH = coach_state.default_state_path(DB_PATH)
+COACH_STATE_PATH = files.default_state_path(DB_PATH)
 SESSION_COOKIE_NAME = "trainer_session"
 SESSION_SECRET = os.getenv("MINIAPP_SESSION_SECRET") or "trainer-dev-session-secret"
 SESSION_MAX_AGE_SECONDS = int(os.getenv("MINIAPP_SESSION_MAX_AGE", "2592000"))
@@ -52,7 +54,7 @@ WATCHED_EXTENSIONS = {".py", ".html", ".css", ".js", ".json", ".md"}
 STORE = MiniAppStore(DB_PATH)
 
 try:
-    EXERCISE_CATALOG: list[dict[str, Any]] | None = recommender.load_catalog(CATALOG_PATH)
+    EXERCISE_CATALOG: list[dict[str, Any]] | None = files.load_catalog(CATALOG_PATH)
 except Exception as exc:  # noqa: BLE001
     EXERCISE_CATALOG = None
     print(f"[miniapp] WARNING: exercise catalog not loaded, recommendations disabled: {exc}")
@@ -92,9 +94,9 @@ def _generate_and_store_recommendation(user_id: int) -> dict[str, Any] | None:
             workouts,
             body_weights,
             EXERCISE_CATALOG,
-            profile=recommender.load_profile(COACH_PROFILE_PATH),
-            strategy=recommender.load_strategy(COACH_STRATEGY_PATH),
-            state=coach_state.load_state(COACH_STATE_PATH),
+            profile=files.load_profile(COACH_PROFILE_PATH),
+            strategy=files.load_strategy(COACH_STRATEGY_PATH),
+            state=files.load_state(COACH_STATE_PATH),
             waists=STORE.list_waists(user_id),
             events=STORE.list_events(user_id),
         )
@@ -413,7 +415,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         signals = coach_signals.compute_signals(
             STORE,
             int(user["id"]),
-            coach_state.load_state(COACH_STATE_PATH),
+            files.load_state(COACH_STATE_PATH),
         )
         self._send_json(
             HTTPStatus.OK,
@@ -527,21 +529,18 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
             return
 
-        # Новая сегодняшняя тренировка закрывает открытое событие вчерашним
-        # днём: перерыв кончился в тот день, когда атлет снова пришёл в зал.
-        # Правка тренировки и запись задним числом состояние не переключают —
-        # история меняется, «сейчас не тренируюсь» остаётся как было.
-        today = date.today()
-        if created and workout["workout_date"] == today.isoformat():
-            STORE.close_open_event(int(user["id"]), (today - timedelta(days=1)).isoformat())
+        closes_event_on = rules.open_event_end_after_workout(
+            workout["workout_date"], created, date.today()
+        )
+        if closes_event_on:
+            STORE.close_open_event(int(user["id"]), closes_event_on)
 
         self._send_json(
             HTTPStatus.CREATED if created else HTTPStatus.OK,
             {"ok": True, "created": created, "user": user, "workout": workout},
             extra_headers=headers,
         )
-        if created:
-            trigger_recommendation_async(int(user["id"]))
+        self._advice_changed(int(user["id"]), "workout", created=created)
 
     def _post_body_weight(self) -> None:
         payload = self._read_json_body()
@@ -559,7 +558,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
             return
 
-        trigger_recommendation_async(int(user["id"]))
+        self._advice_changed(int(user["id"]), "body_weight")
         self._send_json(
             HTTPStatus.CREATED if created else HTTPStatus.OK,
             {"ok": True, "created": created, "user": user, "entry": entry},
@@ -582,7 +581,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
             return
 
-        trigger_recommendation_async(int(user["id"]))
+        self._advice_changed(int(user["id"]), "waist")
         self._send_json(
             HTTPStatus.CREATED if created else HTTPStatus.OK,
             {"ok": True, "created": created, "user": user, "entry": entry},
@@ -607,7 +606,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
         # Событие уезжает в промпт тренера текстом, поэтому любая его правка
         # обесценивает готовый совет ровно так же, как новый замер.
-        trigger_recommendation_async(int(user["id"]))
+        self._advice_changed(int(user["id"]), "event")
         # Всегда 201: ключа дедупа у события нет, save_event только вставляет.
         self._send_json(
             HTTPStatus.CREATED,
@@ -635,36 +634,24 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         user_id = int(user["id"])
         now_ts = int(time.time())
         active = coach_signals.compute_signals(
-            STORE, user_id, coach_state.load_state(COACH_STATE_PATH), now_ts=now_ts
+            STORE, user_id, files.load_state(COACH_STATE_PATH), now_ts=now_ts
         )
         matched = next(
             (signal for signal in active if signal["instance_key"] == instance_key),
             None,
         )
-        if matched is not None and matched["severity"] == "critical":
+        try:
+            snooze_until = coach_signals.snooze_until_for(
+                matched, payload.get("snooze_hours"), now_ts
+            )
+        except coach_signals.CriticalSignalDismissed as exc:
             self._send_json(
-                HTTPStatus.CONFLICT,
-                {
-                    "ok": False,
-                    "reason": "Критический сигнал не откладывается — он гаснет только действием",
-                },
-                extra_headers=headers,
+                HTTPStatus.CONFLICT, {"ok": False, "reason": str(exc)}, extra_headers=headers
             )
             return
-
-        snooze_hours = payload.get("snooze_hours")
-        if snooze_hours is not None:
-            try:
-                snooze_until: int | None = now_ts + int(snooze_hours) * 3600
-            except (TypeError, ValueError):
-                self._send_json(
-                    HTTPStatus.BAD_REQUEST,
-                    {"ok": False, "reason": "snooze_hours must be an integer"},
-                )
-                return
-        else:
-            severity = matched["severity"] if matched else "info"
-            snooze_until = coach_signals.default_snooze_until(severity, now_ts)
+        except ValueError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
+            return
 
         STORE.save_signal_snooze(user_id, instance_key, snooze_until)
         self._send_json(
@@ -733,8 +720,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_GATEWAY, payload, extra_headers=headers)
             return
 
-        latest = STORE.get_latest_workout_id(user_id)
-        stale = bool(result.get("based_on_workout_id") != latest)
+        stale = recommender.is_stale(result, STORE.get_latest_workout_id(user_id))
         self._send_json(
             HTTPStatus.OK,
             {"ok": True, "user": user, "stale": stale, **result},
@@ -762,7 +748,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Event not found"})
             return
 
-        trigger_recommendation_async(int(user["id"]))
+        self._advice_changed(int(user["id"]), "event")
         self._send_json(
             HTTPStatus.OK,
             {"ok": True, "user": user, "event": event},
@@ -794,7 +780,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             {"ok": True, "user": user, "workout": workout},
             extra_headers=headers,
         )
-        trigger_recommendation_async(int(user["id"]))
+        self._advice_changed(int(user["id"]), "workout")
 
     # --- DELETE --------------------------------------------------------------------
     def _delete_waist(self, waist_id: int) -> None:
@@ -808,7 +794,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Waist entry not found"})
             return
 
-        trigger_recommendation_async(int(user["id"]))
+        self._advice_changed(int(user["id"]), "waist")
         self._send_json(
             HTTPStatus.OK,
             {"ok": True, "user": user, "entry": entry, "deleted": True},
@@ -828,7 +814,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             )
             return
 
-        trigger_recommendation_async(int(user["id"]))
+        self._advice_changed(int(user["id"]), "body_weight")
         self._send_json(
             HTTPStatus.OK,
             {"ok": True, "user": user, "entry": entry, "deleted": True},
@@ -846,7 +832,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Event not found"})
             return
 
-        trigger_recommendation_async(int(user["id"]))
+        self._advice_changed(int(user["id"]), "event")
         self._send_json(
             HTTPStatus.OK,
             {"ok": True, "user": user, "event": event, "deleted": True},
@@ -869,7 +855,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             {"ok": True, "user": user, "workout": workout, "deleted": True},
             extra_headers=headers,
         )
-        trigger_recommendation_async(int(user["id"]))
+        self._advice_changed(int(user["id"]), "workout")
 
     def log_message(self, format: str, *args: object) -> None:
         print(f"[miniapp] {self.address_string()} - {format % args}")
@@ -894,8 +880,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
                 "recommendation": None,
                 "stale": False,
             }
-        latest = STORE.get_latest_workout_id(user_id)
-        stale = bool(rec.get("status") == "ready" and rec.get("based_on_workout_id") != latest)
+        stale = recommender.is_stale(rec, STORE.get_latest_workout_id(user_id))
         return {"ok": True, "user": user, "stale": stale, **rec}
 
     def _send_json(
@@ -957,6 +942,12 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         if COOKIE_SECURE:
             parts.append("Secure")
         return "; ".join(parts)
+
+    def _advice_changed(self, user_id: int, change: str, *, created: bool = True) -> None:
+        """Совет пересобирается после правки данных, из которых он собран; что
+        именно его обесценивает, решает recommender.advice_invalidated_by."""
+        if recommender.advice_invalidated_by(change, created=created):
+            trigger_recommendation_async(user_id)
 
     def _require_user(self) -> tuple[dict[str, Any], dict[str, str]] | None:
         """Сессия эндпоинта: пользователь по cookie либо debug-пользователь, если

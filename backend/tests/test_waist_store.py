@@ -10,10 +10,10 @@ from support import MINIAPP_DIR, sample_workout_payload
 if str(MINIAPP_DIR) not in sys.path:
     sys.path.insert(0, str(MINIAPP_DIR))
 
-from trainer.backend_store import (
+from trainer.data.backend_store import MiniAppStore
+from trainer.domain.rules import (
     MAX_WAIST_CM,
     MIN_WAIST_CM,
-    MiniAppStore,
     normalize_set_rir,
     normalize_waist_payload,
     normalize_workout_payload,
@@ -39,7 +39,7 @@ class WaistNormalizationTests(unittest.TestCase):
             normalize_waist_payload({"entry_date": "2026-08-14", "waist": "мало"})
 
     def test_write_bounds_match_the_coach_plausibility_filter(self) -> None:
-        from trainer import coach_features
+        from trainer.domain import coach_features
 
         self.assertEqual(MIN_WAIST_CM, coach_features.MIN_PLAUSIBLE_WAIST_CM)
         self.assertEqual(MAX_WAIST_CM, coach_features.MAX_PLAUSIBLE_WAIST_CM)

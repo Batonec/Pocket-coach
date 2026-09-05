@@ -20,7 +20,8 @@ import time
 from datetime import date, timedelta
 from typing import Any
 
-from trainer import coach_features, coach_prompts, coach_state
+from trainer.data import coach_prompts
+from trainer.domain import coach_features, coach_state
 
 # Stage thresholds for the measurements family. Due starts on day 10, not 7:
 # with a weekly cadence a day-7 start would light the banner every single week
@@ -576,3 +577,25 @@ def compute_signals(
 def default_snooze_until(severity: str, now_ts: int) -> int | None:
     hours = SNOOZE_DEFAULT_HOURS.get(severity)
     return None if hours is None else now_ts + hours * 3600
+
+
+class CriticalSignalDismissed(ValueError):
+    """Критический сигнал не откладывается — он гаснет только действием."""
+
+
+def snooze_until_for(
+    matched: dict[str, Any] | None, snooze_hours: object, now_ts: int
+) -> int | None:
+    """Решение по дисмиссу баннера. Критический не откладывается; явный срок в
+    часах — как попросили; иначе дефолт по severity (SNOOZE_DEFAULT_HOURS), а
+    сигнал, которого уже нет в списке, откладывается как info."""
+    if matched is not None and matched["severity"] == "critical":
+        raise CriticalSignalDismissed(
+            "Критический сигнал не откладывается — он гаснет только действием"
+        )
+    if snooze_hours is not None:
+        try:
+            return now_ts + int(snooze_hours) * 3600
+        except (TypeError, ValueError) as exc:
+            raise ValueError("snooze_hours must be an integer") from exc
+    return default_snooze_until(matched["severity"] if matched else "info", now_ts)

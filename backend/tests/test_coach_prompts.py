@@ -6,7 +6,8 @@ import unittest
 import support
 from support import CATALOG_PATH
 
-from trainer import coach_prompts, prompt_builder, recommender
+from trainer.data import coach_prompts, files
+from trainer.domain import prompt_builder
 
 
 class PromptTemplateTests(unittest.TestCase):
@@ -45,12 +46,12 @@ class PromptTemplateTests(unittest.TestCase):
     def test_phase_policy_template_slots_match_the_renderer(self):
         """Every slot in phase_policy.md must be filled by _render_phase_policy
         for any phase — a new number in the prose must not ship as «{{...}}»."""
-        from trainer import coach_state
+        from trainer.domain import coach_state
 
         expected = coach_prompts.slots(coach_prompts.load("phase_policy"))
         self.assertEqual(expected, prompt_builder._PHASE_POLICY_SLOTS)
         for phase in coach_state.PHASES:
-            state = coach_state.load_state(None)
+            state = coach_state.default_state()
             state["phase"] = phase
             rendered = prompt_builder._render_phase_policy(state)
             self.assertNotIn("{{", rendered, phase)
@@ -78,7 +79,7 @@ class PromptTemplateTests(unittest.TestCase):
         import re
 
         source = "".join(
-            (support.MINIAPP_DIR / "trainer" / name).read_text("utf-8")
+            (support.MINIAPP_DIR / "trainer" / "domain" / name).read_text("utf-8")
             for name in ("prompt_builder.py", "recommender.py")
         )
         used = set(re.findall(r'_block\(\s*\n?\s*"([a-z_]+)"', source))
@@ -109,7 +110,9 @@ class PromptTemplateTests(unittest.TestCase):
         """Текст баннера, объявленный и не вызванный, — мёртвый копирайт."""
         import re
 
-        source = (support.MINIAPP_DIR / "trainer" / "coach_signals.py").read_text("utf-8")
+        source = (support.MINIAPP_DIR / "trainer" / "domain" / "coach_signals.py").read_text(
+            "utf-8"
+        )
         used = set(re.findall(r'_text\(\s*\n?\s*"([a-z_]+)"', source))
         declared = set(coach_prompts.fragments("signals", directory=coach_prompts.COPY_DIR))
         self.assertEqual(declared - used, set(), "объявлены, но не используются")
@@ -144,7 +147,7 @@ class PromptTemplateTests(unittest.TestCase):
 
 class BuiltPromptTests(unittest.TestCase):
     def test_built_system_prompt_has_no_unfilled_slots(self):
-        catalog = recommender.load_catalog(CATALOG_PATH)
+        catalog = files.load_catalog(CATALOG_PATH)
         prompt = prompt_builder._build_system_prompt(catalog)
         self.assertNotIn("{{", prompt)
         self.assertIn("=== ТРЕНАЖЁРЫ (каталог) ===", prompt)

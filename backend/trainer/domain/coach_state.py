@@ -8,16 +8,14 @@ stays prose (who the athlete is); this file is structured state (what the
 program is doing right now) and is switched via the Coach MCP tools, never
 automatically.
 
-Stdlib-only on purpose, like the rest of the backend.
+Здесь только правила: дефолты, что из прочитанного файла считать валидным,
+как переключается фаза. Сам файл читает и пишет ``data/files``.
 """
 
 from __future__ import annotations
 
-import json
-import os
 from datetime import date, timedelta
 from itertools import pairwise
-from pathlib import Path
 from typing import Any
 
 PHASES = ("cut_recomp", "lean_bulk", "maintenance")
@@ -87,6 +85,10 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
 # context lives in the prose profile only; planning does not schedule around
 # the injection cycle (supraphysiological background all week — day-to-day
 # timing is speculative and recovery/history always dominate anyway).
+# Разумные границы лимита и базы талии, см: одни и те же при чтении файла и при
+# правке через MCP.
+WAIST_CM_RANGE = (40.0, 200.0)
+
 DEFAULT_STATE: dict[str, Any] = {
     "schema": 1,
     "phase": "cut_recomp",
@@ -108,24 +110,18 @@ def _valid_iso_date(value: Any) -> str | None:
     return value
 
 
-def default_state_path(db_path: Path | str) -> Path:
-    """coach_state.json lives next to the DB, like coach_profile.json."""
-    return Path(os.getenv("COACH_STATE_PATH") or str(Path(db_path).parent / "coach_state.json"))
-
-
-def load_state(path: Path | str | None) -> dict[str, Any]:
-    """Read the state file; a missing/broken file falls back to defaults so
-    generation always works."""
-    state = {
+def default_state() -> dict[str, Any]:
+    """Состояние по умолчанию: с него начинается генерация, если файла нет."""
+    return {
         key: (dict(value) if isinstance(value, dict) else value)
         for key, value in DEFAULT_STATE.items()
     }
-    if not path:
-        return state
-    try:
-        raw = json.loads(Path(path).read_text("utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError):
-        return state
+
+
+def normalize_state(raw: object) -> dict[str, Any]:
+    """Прочитанный файл состояния поверх дефолтов: незнакомое и битое
+    отбрасывается, чтобы генерация всегда работала."""
+    state = default_state()
     if not isinstance(raw, dict):
         return state
 
@@ -147,15 +143,15 @@ def load_state(path: Path | str | None) -> dict[str, Any]:
         ]
     for key in ("waist_limit_cm", "waist_base_cm"):
         value = raw.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool) and 40 <= value <= 200:
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and WAIST_CM_RANGE[0] <= value <= WAIST_CM_RANGE[1]
+        ):
             state[key] = float(value)
     # Legacy files may still carry injection_day — ignored: planning no longer
     # schedules around the injection cycle.
     return state
-
-
-def save_state(path: Path | str, state: dict[str, Any]) -> None:
-    Path(path).write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", "utf-8")
 
 
 _OVERRIDABLE_PARAM_KEYS = {
@@ -184,7 +180,7 @@ _GROUP_TARGET_KEY = "group_targets"
 
 
 def _normalize_group_targets(value: Any) -> dict[str, tuple[float, float]]:
-    from trainer import coach_features
+    from trainer.domain import coach_features
 
     if not isinstance(value, dict):
         raise ValueError("group_targets должен быть объектом {группа: [min, max]}")
@@ -219,19 +215,19 @@ def _normalize_param_value(value: Any) -> Any:
     raise ValueError("Параметр должен быть числом, строкой или парой чисел")
 
 
-def set_phase(
-    path: Path | str,
+def switch_phase(
+    state: dict[str, Any],
     phase: str,
     params: dict[str, Any] | None = None,
     *,
     today: date | None = None,
 ) -> dict[str, Any]:
-    """Switch the phase by hand (called from the MCP tool). Never automatic:
-    when a phase goal is reached the prompt asks the model to *suggest* the
-    switch in the rationale — the athlete decides and calls this."""
+    """Переключить фазу руками: закрыть текущую в журнал, поставить новую и её
+    переопределения. Никогда не автоматически: когда цель фазы достигнута, промпт
+    просит модель лишь *предложить* смену в rationale, решает атлет. Чтение и
+    запись файла — в ``data/files.set_phase``."""
     if phase not in PHASES:
         raise ValueError(f"Неизвестная фаза {phase!r}; допустимые: {', '.join(PHASES)}")
-    state = load_state(path)
     today = today or date.today()
     # Close the outgoing phase into the history journal — the phase-summary
     # tool derives all its numbers from workouts/measurements by date range,
@@ -266,8 +262,28 @@ def set_phase(
         phase_params = dict(state.get("phase_params") or {})
         phase_params[phase] = clean
         state["phase_params"] = phase_params
-    save_state(path, state)
     return state
+
+
+def update_waist_limits(
+    state: dict[str, Any],
+    *,
+    waist_limit_cm: float | None = None,
+    waist_base_cm: float | None = None,
+) -> list[str]:
+    """Жёсткий лимит талии и база фазы, в сантиметрах; непереданное не трогается.
+    Возвращает, что изменилось, строками для ответа инструмента."""
+    changed: list[str] = []
+    low, high = WAIST_CM_RANGE
+    for key, value in (("waist_limit_cm", waist_limit_cm), ("waist_base_cm", waist_base_cm)):
+        if value is None:
+            continue
+        number = float(value)
+        if not low <= number <= high:
+            raise ValueError(f"{key}={number:g} вне разумного диапазона {low:g}–{high:g} см.")
+        state[key] = number
+        changed.append(f"{key}={number:g}")
+    return changed
 
 
 def phase_params(state: dict[str, Any]) -> dict[str, Any]:

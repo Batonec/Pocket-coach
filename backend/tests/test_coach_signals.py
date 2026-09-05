@@ -9,8 +9,8 @@ from pathlib import Path
 import support  # noqa: F401 — adds backend to sys.path
 from support import sample_workout_payload
 
-from trainer import coach_signals, coach_state
-from trainer.backend_store import MiniAppStore
+from trainer.data.backend_store import MiniAppStore
+from trainer.domain import coach_signals, coach_state
 
 TODAY = date(2026, 8, 14)
 STATE = dict(coach_state.DEFAULT_STATE, phase_started="2026-08-01")
@@ -500,3 +500,27 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DismissDecisionTests(unittest.TestCase):
+    """Решение по дисмиссу баннера принимает coach_signals, хендлер только
+    переводит его в код ответа."""
+
+    def test_critical_signal_cannot_be_snoozed(self) -> None:
+        with self.assertRaises(coach_signals.CriticalSignalDismissed):
+            coach_signals.snooze_until_for({"severity": "critical"}, None, 1000)
+
+    def test_explicit_hours_win_and_must_be_an_integer(self) -> None:
+        self.assertEqual(coach_signals.snooze_until_for({"severity": "warn"}, 2, 1000), 1000 + 7200)
+        with self.assertRaises(ValueError):
+            coach_signals.snooze_until_for({"severity": "warn"}, "two", 1000)
+
+    def test_default_follows_severity_and_unknown_signal_counts_as_info(self) -> None:
+        self.assertEqual(
+            coach_signals.snooze_until_for({"severity": "warn"}, None, 1000),
+            coach_signals.default_snooze_until("warn", 1000),
+        )
+        self.assertEqual(
+            coach_signals.snooze_until_for(None, None, 1000),
+            coach_signals.default_snooze_until("info", 1000),
+        )
