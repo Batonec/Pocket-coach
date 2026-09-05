@@ -1036,7 +1036,7 @@ class MiniAppStore:
         см. ``rules.closed_event_end``); вернуть его или ``None``, если открытых нет.
         Идемпотентен — зовётся на каждой созданной сегодняшней тренировке.
         """
-        closed_on = rules._normalize_event_date(end_date, "end_date")
+        closed_on = rules.normalize_event_date(end_date, "end_date")
         timestamp = utc_now()
 
         with self._connection() as connection:
