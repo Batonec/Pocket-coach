@@ -27,7 +27,7 @@ class PromptTemplateTests(unittest.TestCase):
         """
         self.assertEqual(
             coach_prompts.slots(coach_prompts.load("next_workout")),
-            {"profile", "catalog", "catalog_gaps", "phase_policy", "hard_rules", "program"},
+            {"profile", "catalog", "catalog_gaps", "hard_rules", "program"},
         )
 
     def test_missing_slot_raises(self):
@@ -50,20 +50,6 @@ class PromptTemplateTests(unittest.TestCase):
             coach_prompts.render('{"reps": 12} и {{slot}}', slot="X"),
             '{"reps": 12} и X',
         )
-
-    def test_phase_policy_template_slots_match_the_renderer(self):
-        """Каждый слот phase_policy.md обязан заполняться _render_phase_policy для любой
-        фазы — новое число в прозе не должно уехать как «{{...}}».
-        """
-        from trainer.domain import coach_state
-
-        expected = coach_prompts.slots(coach_prompts.load("phase_policy"))
-        self.assertEqual(expected, prompt_builder._PHASE_POLICY_SLOTS)
-        for phase in coach_state.PHASES:
-            state = coach_state.default_state()
-            state["phase"] = phase
-            rendered = prompt_builder._render_phase_policy(state)
-            self.assertNotIn("{{", rendered, phase)
 
     def test_report_prompt_carries_profile_program_and_gate(self):
         """Отчёт — единственное место, где жёсткий гейт этапа может прозвучать
@@ -88,20 +74,8 @@ class PromptTemplateTests(unittest.TestCase):
     def test_report_template_expects_exactly_the_computed_slots(self):
         self.assertEqual(
             coach_prompts.slots(coach_prompts.load("weekly_report")),
-            {"profile", "phase_policy", "program"},
+            {"profile", "program"},
         )
-
-    def test_report_prompt_carries_the_athletes_phase_policy(self):
-        """Политика фаз в отчёте рендерится из параметров атлета, как у плана:
-        «без ПР — и почему это ок» иначе судилось бы без правил самой фазы."""
-        from trainer.domain import coach_state
-
-        state = coach_state.default_state()
-        state["phase_params"] = {"cut_recomp": {"calories": [1850, 1950]}}
-        built = prompt_builder._build_report_system_prompt(state=state)
-        self.assertIn("=== ФАЗЫ ПОДГОТОВКИ ===", built)
-        self.assertIn("калории 1850–1950 ккал", built)
-        self.assertNotIn("{{", built)
 
     def test_header_comment_is_stripped_on_load(self):
         """Шапка «<!-- … -->» в начале файла — для человека: у цельного шаблона без
@@ -277,7 +251,10 @@ class BuiltPromptTests(unittest.TestCase):
         prompt = prompt_builder._build_system_prompt(catalog)
         self.assertNotIn("{{", prompt)
         self.assertIn("=== ТРЕНАЖЁРЫ (каталог) ===", prompt)
-        self.assertIn("=== ФАЗЫ ПОДГОТОВКИ ===", prompt)
+        # Машинное имя фазы модели не показывается: она читает название этапа
+        # стратегии в КОНТЕКСТЕ user-промпта, а семь фаз — в срезе ПРОГРАММЫ.
+        self.assertNotIn("cut_recomp", prompt)
+        self.assertNotIn("ФАЗЫ ПОДГОТОВКИ", prompt)
         self.assertEqual(prompt.count("=== ПРОГРАММА"), 1)
         with_doc = prompt_builder._build_system_prompt(
             catalog, strategy="## 4. Тренировочные дни\nкаркас\n"

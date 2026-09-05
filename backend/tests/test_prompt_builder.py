@@ -240,10 +240,21 @@ class ReportPromptTests(unittest.TestCase):
             body_weights=weights,
         )
         self.assertIn("С начала фазы", prompt)
-        self.assertIn("Фаза cut_recomp: 2026-05-17 → 2026-06-14 (4.1 нед).", prompt)
+        self.assertIn("Фаза «лёгкий дефицит-рекомп»: 2026-05-17 → 2026-06-14 (4.1 нед).", prompt)
         self.assertIn("Вес: 80.0 → 78.6 кг (-1.4", prompt)
         self.assertIn("Цель фазы по весу: 75.5 кг", prompt)
         self.assertNotIn("Оценка TDEE", prompt)  # две точки за фазу — тренда нет
+
+    def test_report_phase_line_uses_athlete_overrides(self) -> None:
+        """Ориентиры фазы в отчёте — из phase_params атлета и без машинного имени:
+        «без ПР — и почему это ок» судится по числам его фазы, а не дефолтов."""
+        state = coach_state.default_state()
+        state["phase_params"] = {"cut_recomp": {"title": "Ф0 · возврат", "calories": [1850, 1950]}}
+        prompt = self._report([self._workout("2026-06-12", 105)], state=state)
+        self.assertIn(
+            "Фаза: «Ф0 · возврат», неделя блока 1. Ориентиры фазы: 1850–1950 ккал", prompt
+        )
+        self.assertNotIn("cut_recomp", prompt)
 
     def test_no_phase_start_means_no_trajectory(self) -> None:
         prompt = self._report([self._workout("2026-06-12", 105)])

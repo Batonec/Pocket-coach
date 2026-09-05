@@ -2,7 +2,7 @@
 """Сборка текста, который читает модель.
 
 Всё, что уезжает в промпт, собирается здесь: системный промпт (профиль атлета,
-семантика каталога, политика фаз, срез стратегии), user-промпт (контекст,
+семантика каталога, срез стратегии), user-промпт (контекст,
 вычисленные фичи, сырая история вперемешку с событиями и заметками), JSON-схема
 ответа и промпт недельного отчёта. Проза живёт в prompts/*.md и подставляется
 через coach_prompts; этот модуль только считает слоты из данных атлета и
@@ -532,11 +532,8 @@ def _days_since_last(workouts: list[dict[str, Any]], today: date) -> int | None:
     return None
 
 
-# Шаблон политики фаз читается один раз: он не зависит от данных, а слоты нужны
-# для сборки — рендерить только то, что шаблон реально просит.
+# Фрагменты читаются один раз на импорт: от данных они не зависят.
 _BLOCKS = coach_prompts.fragments("user_blocks")
-_PHASE_POLICY_TEMPLATE = coach_prompts.load("phase_policy")
-_PHASE_POLICY_SLOTS = coach_prompts.slots(_PHASE_POLICY_TEMPLATE)
 # Текст исправляющего сообщения и первый пункт списка границ — из того же файла,
 # из которого plan_validator читает сами правила.
 _RULES = coach_prompts.fragments("plan_rules")
@@ -567,50 +564,6 @@ def _format_number(value: Any) -> str:
     return str(value)
 
 
-def _format_low(bounds: Any) -> str:
-    """Нижняя граница диапазонного параметра; скалярное переопределение — как есть."""
-    if isinstance(bounds, (tuple, list)) and bounds:
-        return _format_number(bounds[0])
-    return _format_number(bounds)
-
-
-def _render_phase_policy(state: dict[str, Any] | None = None) -> str:
-    """Политика фаз для системного промпта: проза в ``prompts/phase_policy.md``,
-    здесь считаются только числа в её слотах.
-
-    АКТИВНАЯ фаза рендерится из слитых параметров атлета (переопределения
-    ``phase_params`` поверх дефолтов), иначе промпт нёс бы стоковые числа, а блок
-    КОНТЕКСТ — настоящие, и модель получала бы две противоречащие методики в одном
-    запросе. Две неактивные фазы остаются со стоковыми числами: они фон, и при
-    переключении их всё равно задают заново.
-    """
-    merged = coach_state.phase_params(state) if state is not None else None
-    short = {"cut_recomp": "cut", "lean_bulk": "bulk", "maintenance": "maint"}
-    ranges = {"calories", "session_sets", "ramp_start", "ramp_cap", "sets_per_group"}
-    values: dict[str, str] = {}
-    for phase, prefix in short.items():
-        params = (
-            merged
-            if merged is not None and merged.get("phase") == phase
-            else coach_state.PHASE_DEFAULTS[phase]
-        )
-        for key in ("title", "rate_text", "frequency_text"):
-            if f"{prefix}_{key}" in _PHASE_POLICY_SLOTS:
-                values[f"{prefix}_{key}"] = str(params.get(key, ""))
-        for key in ranges:
-            if f"{prefix}_{key}" in _PHASE_POLICY_SLOTS:
-                values[f"{prefix}_{key}"] = _format_range(params.get(key))
-        if f"{prefix}_protein_g" in _PHASE_POLICY_SLOTS:
-            values[f"{prefix}_protein_g"] = (
-                _format_low(params.get("protein_g"))
-                if phase == "maintenance"
-                else _format_range(params.get("protein_g"))
-            )
-        if f"{prefix}_ceiling_weight_kg" in _PHASE_POLICY_SLOTS:
-            values[f"{prefix}_ceiling_weight_kg"] = _format_number(params.get("ceiling_weight_kg"))
-    return coach_prompts.render(_PHASE_POLICY_TEMPLATE, **values)
-
-
 def _render_hard_rules() -> str:
     """Блок «ЖЁСТКИЕ ГРАНИЦЫ» системного промпта: нумерованный список формулировок
     из ``plan_rules.md``. Первым — ``catalog_only`` (свойство JSON-схемы, а не
@@ -637,16 +590,18 @@ def _build_reprompt(violations: list[str]) -> str:
 def _build_system_prompt(
     catalog: list[dict[str, Any]],
     profile: dict[str, Any] | None = None,
-    state: dict[str, Any] | None = None,
     strategy: str | None = None,
 ) -> str:
     """Системный промпт плана из шаблона ``prompts/next_workout.md``.
 
-    Проза живёт в шаблоне; здесь только шесть слотов: профиль, каталог с семантикой
-    тренажёров (без дубля id 1), пробелы каталога, политика фаз, жёсткие границы
-    (из ``plan_rules.md`` в порядке ``plan_validator.RULES``), срез стратегии.
-    Всё, что не вычисленное значение, должно уйти в markdown. Зовут
-    ``recommender.generate_with_trace`` и Coach MCP (``coach_preview_prompt``).
+    Проза живёт в шаблоне; здесь только пять слотов: профиль, каталог с семантикой
+    тренажёров (без дубля id 1), пробелы каталога, жёсткие границы (из
+    ``plan_rules.md`` в порядке ``plan_validator.RULES``), срез стратегии.
+    Ориентиры фазы в системный промпт не входят: они меняются с состоянием
+    атлета и приходят первой строкой user-промпта (``context_phase``); семь фаз
+    стратегии модель читает в срезе ПРОГРАММЫ. Всё, что не вычисленное значение,
+    должно уйти в markdown. Зовут ``recommender.generate_with_trace`` и Coach MCP
+    (``coach_preview_prompt``).
     """
     catalog_lines = "\n".join(
         f"  {item['id']} — {item['name']}: {CATALOG_SEMANTICS.get(item['id'], 'тренажёр')}"
@@ -658,7 +613,6 @@ def _build_system_prompt(
         profile=_render_profile(profile),
         catalog=catalog_lines,
         catalog_gaps=CATALOG_GAPS,
-        phase_policy=_render_phase_policy(state),
         hard_rules=_render_hard_rules(),
         program=_render_program(strategy),
     )
@@ -716,7 +670,6 @@ def _build_user_prompt(
         ),
         _block(
             "context_phase",
-            phase=phase,
             title=str(params["title"]),
             week_label=week_label,
             calories=_format_range(params["calories"]),
@@ -916,21 +869,19 @@ _REPORT_TEMPLATE = coach_prompts.load("weekly_report")
 def _build_report_system_prompt(
     profile: dict[str, Any] | None = None,
     strategy: str | None = None,
-    state: dict[str, Any] | None = None,
 ) -> str:
-    """Системный промпт недельного отчёта: профиль, политика фаз, срез программы.
+    """Системный промпт недельного отчёта: профиль и срез программы.
 
     До этого он был константой: отчёт не получал ни профиля, ни программы, то
     есть писался про абстрактного атлета. Гейту этапа при этом негде было
     прозвучать — а гейт жёсткий, и должно существовать место, где его статус
-    называют вслух. Политика фаз — та же, что у плана, и рендерится из
-    параметров атлета: без неё блок «без ПР — и почему это ок» писался бы, не
-    зная, что на срезе плато по весам не проблема, а на удержании объём не растёт.
+    называют вслух. Ориентиры фазы приходят user-промптом (``report_phase``), а
+    правила самой фазы — «на срезе веса могут встать, это дефицит, а не потолок» —
+    из глав стратегии в срезе, где они сказаны точнее любого общего описания.
     """
     return coach_prompts.render(
         _REPORT_TEMPLATE,
         profile=_render_profile(profile),
-        phase_policy=_render_phase_policy(state),
         program=_render_program(strategy, REPORT_STRATEGY_SECTIONS),
     )
 
@@ -1029,7 +980,6 @@ def _build_report_prompt(
         ),
         _block(
             "report_phase",
-            phase=params["phase"],
             title=str(params["title"]),
             week=str(position["block_week"]),
             flags=(_block("report_deload_label") if position["deload_week"] else "")
@@ -1054,7 +1004,10 @@ def _build_report_prompt(
             started=started,
             ended=today,
         )
-        progress = [_block("report_phase_progress_header"), render_phase_summary(summary)]
+        progress = [
+            _block("report_phase_progress_header"),
+            render_phase_summary(summary, title=str(params["title"])),
+        ]
         if params.get("target_weight_kg"):
             progress.append(
                 _block("report_phase_target", target=_format_number(params["target_weight_kg"]))
@@ -1454,14 +1407,13 @@ def render_measurement_overview(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def render_phase_summary(summary: dict[str, Any]) -> str:
+def render_phase_summary(summary: dict[str, Any], title: str | None = None) -> str:
     """Итоги фазы текстом: длительность, тренировки, вес и талия от начала к концу,
-    ПР за фазу, дисциплина. Зовёт Coach MCP (``coach_phase_summary``).
+    ПР за фазу, дисциплина. Зовут Coach MCP (``coach_phase_summary``, машинное имя
+    фазы) и промпт отчёта — с ``title``, названием фазы для модели.
     """
-    lines = [
-        f"Фаза {summary['phase']}: {summary['started']} → {summary['ended']} "
-        f"({summary['weeks']} нед)."
-    ]
+    label = f"«{title}»" if title else summary["phase"]
+    lines = [f"Фаза {label}: {summary['started']} → {summary['ended']} ({summary['weeks']} нед)."]
     per_week = f" ({summary['per_week']}/нед)" if summary["per_week"] is not None else ""
     lines.append(f"Тренировок: {summary['workouts']}{per_week}.")
     if summary["weight_start"] is not None and summary["weight_end"] is not None:
