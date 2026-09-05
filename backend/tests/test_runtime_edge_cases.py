@@ -660,6 +660,7 @@ class ScheduledJobEdgeCaseTests(unittest.TestCase):
 
     def test_weekly_job_model_error_does_not_write_cache(self) -> None:
         store = mock.Mock()
+        store.get_coach_report.return_value = None  # ни текущего, ни прошлого отчёта в кэше
         error = recommender.RecommendationError("quota")
         with (
             mock.patch.object(weekly_job.recommender, "generate_weekly_report", side_effect=error),
@@ -824,6 +825,40 @@ class CoachMcpBoundaryTests(unittest.TestCase):
         self.assertEqual(result.structuredContent["period_end"], expected_end)
         self.assertTrue(result.structuredContent["cached"])
         generate.assert_not_called()
+
+    def test_weekly_report_generation_passes_last_weeks_focus(self) -> None:
+        """Прошлый отчёт ищется тем же якорем, что и текущий, на `days` раньше."""
+        store = mock.Mock()
+        previous = {"report": "**Фокус следующей недели**\n- бицепс бедра", "model": "m"}
+        store.get_coach_report.side_effect = lambda _uid, end, _days: (
+            previous if end == "2026-08-23" else None
+        )
+        store.list_workouts.return_value = []
+        store.list_body_weights.return_value = []
+        store.list_waists.return_value = []
+        store.list_events.return_value = []
+        self.module.STORE = store
+        seen: dict[str, object] = {}
+
+        def capture(workouts, body_weights, waists, catalog, **kwargs):
+            seen.update(kwargs)
+            return "отчёт", {"input_tokens": 1, "output_tokens": 2}, "claude-test"
+
+        class FixedDate(date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 8, 31)
+
+        with (
+            mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "key"}),
+            mock.patch.object(self.module, "date", FixedDate),
+            mock.patch.object(self.module.recommender, "generate_weekly_report", capture),
+        ):
+            result = self.module.coach_weekly_report(days=7, user_id=12)
+
+        self.assertFalse(result.isError)
+        self.assertEqual(seen.get("previous_report"), previous["report"])
+        store.save_coach_report.assert_called_once()
 
     def test_weekly_report_without_cache_or_api_key_fails_before_model_call(self) -> None:
         store = mock.Mock()

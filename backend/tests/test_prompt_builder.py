@@ -136,6 +136,7 @@ class ReportPromptTests(unittest.TestCase):
         *,
         state: dict | None = None,
         body_weights: list[dict] | None = None,
+        previous_report: str | None = None,
     ) -> str:
         """Промпт отчёта на настоящем каталоге; состояние по умолчанию, если не дано."""
         return prompt_builder._build_report_prompt(
@@ -146,6 +147,7 @@ class ReportPromptTests(unittest.TestCase):
             state or coach_state.default_state(),
             self.TODAY,
             7,
+            previous_report=previous_report,
         )
 
     def test_summaries_give_the_report_a_baseline_beyond_the_week(self) -> None:
@@ -208,3 +210,45 @@ class ReportPromptTests(unittest.TestCase):
         self.assertIn("Оценка TDEE (посчитано сервером): при ориентире 2150 ккал", prompt)
         self.assertIn("расход ≈ 2700 ккал/день", prompt)
         self.assertIn("Средняя за 7 дней:", prompt)
+
+    PREVIOUS = (
+        "**Итоги недели** — три тренировки.\n"
+        "**Прогресс** — без ПР.\n"
+        "**Фокус следующей недели**\n"
+        "- **Объём:** 60 подходов.\n"
+        "- Сгибания ног в каждую сессию.\n"
+        "**Гейт этапа** — явка НЕ ВЫПОЛНЕН.\n"
+    )
+
+    def test_previous_focus_is_cut_by_block_headings(self) -> None:
+        """Жирный подпункт внутри фокуса — не заголовок блока: режем только по
+        именам блоков из report.md, в любом оформлении."""
+        focus = prompt_builder.previous_focus(self.PREVIOUS)
+        assert focus is not None
+        self.assertTrue(focus.startswith("**Фокус следующей недели**"))
+        self.assertIn("**Объём:** 60 подходов.", focus)
+        self.assertIn("Сгибания ног", focus)
+        self.assertNotIn("Гейт этапа", focus)
+        self.assertNotIn("три тренировки", focus)
+        # Заголовок с решёткой и текстом после тире — тоже заголовок.
+        loose = "### Фокус следующей недели — добрать спину\n### Гейт этапа\nнет"
+        self.assertEqual(
+            prompt_builder.previous_focus(loose), "### Фокус следующей недели — добрать спину"
+        )
+        self.assertIsNone(prompt_builder.previous_focus("**Итоги недели** — всё."))
+        self.assertIsNone(prompt_builder.previous_focus(None))
+
+    def test_previous_focus_is_capped(self) -> None:
+        long = "**Фокус следующей недели**\n" + "слово " * 400
+        focus = prompt_builder.previous_focus(long)
+        assert focus is not None
+        self.assertLessEqual(len(focus), prompt_builder.MAX_PREVIOUS_FOCUS_CHARS + 1)
+        self.assertTrue(focus.endswith("…"))
+
+    def test_previous_focus_reaches_the_prompt_only_when_given(self) -> None:
+        with_memory = self._report(
+            [self._workout("2026-06-12", 105)], previous_report=self.PREVIOUS
+        )
+        self.assertIn("Фокус, поставленный в прошлом отчёте", with_memory)
+        self.assertIn("Сгибания ног в каждую сессию.", with_memory)
+        self.assertNotIn("Фокус, поставленный", self._report([self._workout("2026-06-12", 105)]))

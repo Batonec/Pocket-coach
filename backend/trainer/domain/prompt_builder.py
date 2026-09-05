@@ -809,6 +809,53 @@ def _build_report_system_prompt(
     )
 
 
+# Заголовки блоков отчёта в том виде, в каком их пишет модель: по ним из
+# прошлого отчёта вырезается «Фокус следующей недели». Формат задаёт report.md.
+_REPORT_BLOCKS = (
+    "итоги недели",
+    "прогресс",
+    "вес и талия",
+    "дисциплина",
+    "фокус следующей недели",
+    "гейт этапа",
+)
+_FOCUS_BLOCK = "фокус следующей недели"
+# Фокус — 2–3 пункта; длиннее — модель ушла в эссе, и в промпт едет только начало.
+MAX_PREVIOUS_FOCUS_CHARS = 1200
+
+
+def _report_block_name(line: str) -> str | None:
+    """Имя блока отчёта, если строка — его заголовок («**Прогресс** — …», «### Прогресс»)."""
+    bare = line.strip().lstrip("#*").strip().lower()
+    return next((name for name in _REPORT_BLOCKS if bare.startswith(name)), None)
+
+
+def previous_focus(report: str | None) -> str | None:
+    """Блок «Фокус следующей недели» из текста прошлого отчёта — от его заголовка
+    до следующего заголовка блока — или ``None``, если отчёта нет или блока в нём
+    не нашлось. Живой тренер на созвоне начинает с «договаривались о X — как
+    вышло?», и это единственная память отчёта о самом себе. Зовут
+    ``_build_report_prompt`` и тесты.
+    """
+    if not report:
+        return None
+    lines = report.splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if _report_block_name(line) == _FOCUS_BLOCK), None
+    )
+    if start is None:
+        return None
+    picked = [lines[start]]
+    for line in lines[start + 1 :]:
+        if _report_block_name(line):
+            break
+        picked.append(line)
+    text = "\n".join(picked).strip()
+    if len(text) > MAX_PREVIOUS_FOCUS_CHARS:
+        text = text[:MAX_PREVIOUS_FOCUS_CHARS].rstrip() + "…"
+    return text or None
+
+
 def _build_report_prompt(
     workouts: list[dict[str, Any]],
     body_weights: list[dict[str, Any]],
@@ -818,11 +865,13 @@ def _build_report_prompt(
     today: date,
     days: int,
     events: list[dict[str, Any]] | None = None,
+    previous_report: str | None = None,
 ) -> str:
     """User-промпт недельного отчёта за ``days`` дней до ``today`` включительно.
 
     Период и фаза → траектория фазы с её старта (вес, талия, темп, ПР, цель
-    по весу) → тренировки периода хроникой (с той же легендой, что у плана) →
+    по весу) → фокус из прошлого отчёта, если он передан → тренировки периода
+    хроникой (с той же легендой, что у плана) →
     события периода (пустой блок тоже нужен: «событий нет» значит, что пропуски
     ничем не объяснены) → объём с итогом за период и за неделю до него → явка →
     ПР периода → сводки по тренажёрам → предусловия и застой → замеры (с
@@ -883,6 +932,12 @@ def _build_report_prompt(
                 _block("report_phase_ceiling", ceiling=_format_number(params["ceiling_weight_kg"]))
             )
         chunks.append("\n".join(progress))
+
+    # Память о прошлом отчёте: его «Фокус следующей недели» — то, с чего живой
+    # тренер начинает созвон. Без ``previous_report`` блока просто нет.
+    focus = previous_focus(previous_report)
+    if focus:
+        chunks.append(_block("report_previous_focus") + "\n" + focus)
 
     if week_workouts:
         chunks.append(

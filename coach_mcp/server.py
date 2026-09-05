@@ -38,7 +38,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -774,6 +774,9 @@ def coach_weekly_report(
         api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
         if not api_key:
             return _result(_err("ANTHROPIC_API_KEY не задан в окружении."))
+        # Прошлый отчёт (период на `days` раньше) — память о «Фокусе следующей
+        # недели», тот же поиск, что у таймера weekly_report.py.
+        previous = STORE.get_coach_report(uid, (period - timedelta(days=days)).isoformat(), days)
         report, usage, model = recommender.generate_weekly_report(
             STORE.list_workouts(uid),
             STORE.list_body_weights(uid),
@@ -783,6 +786,7 @@ def coach_weekly_report(
             strategy=files.load_strategy(_STRATEGY_PATH),
             state=files.load_state(_STATE_PATH),
             events=STORE.list_events(uid),
+            previous_report=previous["report"] if previous else None,
             today=period,
             days=days,
         )

@@ -98,6 +98,22 @@ class ReportPeriodTests(unittest.TestCase):
         self.assertEqual(seen.get("today"), date(2026, 8, 23))
         self.assertIsNone(store.get_coach_report(uid, "2026-08-30", weekly_report.REPORT_DAYS))
 
+    def test_last_weeks_report_feeds_the_next_one(self) -> None:
+        """Память отчёта о самом себе: кэш за период неделей раньше уезжает в
+        генерацию как previous_report; без него — None, а не падение."""
+        seen: dict[str, object] = {}
+        store, uid = self._store()
+        self._capture(seen)
+
+        self.assertTrue(weekly_report.run(store, uid, today=date(2026, 8, 31)))
+        self.assertIsNone(seen.get("previous_report"))
+
+        store.save_coach_report(
+            uid, "2026-08-30", 7, "**Фокус следующей недели**\n- спина", "m", 1, 1
+        )
+        self.assertTrue(weekly_report.run(store, uid, today=date(2026, 9, 7)))
+        self.assertEqual(seen.get("previous_report"), "**Фокус следующей недели**\n- спина")
+
     def test_second_run_in_the_same_week_hits_the_cache(self) -> None:
         seen: dict[str, object] = {}
         store, uid = self._store()

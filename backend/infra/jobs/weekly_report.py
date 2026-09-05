@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 # Скрипт запускается как файл, а не как модуль: корень backend (там пакет
@@ -57,6 +57,12 @@ def run(
         print(f"[weekly] отчёт за {period_end}: {reason}")
         return False
 
+    # Прошлый отчёт — за период, закрывшийся ровно на REPORT_DAYS раньше: из
+    # него в промпт уходит «Фокус следующей недели», чтобы новый начинался с
+    # «договаривались о X — как вышло».
+    previous = store.get_coach_report(
+        user_id, (period - timedelta(days=REPORT_DAYS)).isoformat(), REPORT_DAYS
+    )
     try:
         report, usage, model = recommender.generate_weekly_report(
             store.list_workouts(user_id),
@@ -67,6 +73,7 @@ def run(
             strategy=files.load_strategy(STRATEGY_PATH),
             state=files.load_state(STATE_PATH),
             events=store.list_events(user_id),
+            previous_report=previous["report"] if previous else None,
             today=period,
             days=REPORT_DAYS,
         )
