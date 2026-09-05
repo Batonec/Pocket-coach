@@ -287,3 +287,73 @@ def generate_weekly_report(
         timeout=timeout,
     )
     return text.strip(), usage, model
+
+
+# --------------------------------------------------------------------------- #
+# Жизненный цикл совета: когда он устарел, что его обесценивает, когда обновлять
+# --------------------------------------------------------------------------- #
+def is_stale(rec: dict[str, Any] | None, latest_workout_id: int | None) -> bool:
+    """Готовый совет собран по тренировке, которая уже не последняя. Карточка
+    показывает его с пометкой, пока не досчитается новый."""
+    return bool(
+        rec and rec.get("status") == "ready" and rec.get("based_on_workout_id") != latest_workout_id
+    )
+
+
+# Что обесценивает готовый совет: любая правка данных, из которых он собран —
+# тренировки, замеры веса и талии, события (они уезжают в промпт текстом).
+# Ровно одно исключение: повтор POST /api/workouts с тем же client_id — это
+# ретрай, а не новая тренировка, и он ничего не меняет.
+ADVICE_INPUTS = frozenset({"workout", "body_weight", "waist", "event"})
+
+
+def advice_invalidated_by(change: str, *, created: bool = True) -> bool:
+    return change in ADVICE_INPUTS and created
+
+
+# A 'pending' row older than this is a generation that died mid-flight
+# (e.g. the server was restarted) — safe to take over.
+STUCK_PENDING_HOURS = 2.0
+
+
+def should_refresh(
+    rec: dict[str, Any] | None,
+    now_ts: int,
+    max_age_hours: float = 24.0,
+) -> tuple[bool, str]:
+    """Нужно ли пересобирать совет по таймеру: нет совета, прошлая генерация
+    упала, зависший pending или готовый старше max_age_hours."""
+    if rec is None:
+        return True, "рекомендации ещё нет"
+
+    age_hours = (now_ts - int(rec.get("updated_at") or 0)) / 3600
+    status = rec.get("status")
+
+    if status == "pending":
+        if age_hours > STUCK_PENDING_HOURS:
+            return True, f"зависший pending ({age_hours:.1f} ч)"
+        return False, f"генерация уже идёт ({age_hours:.1f} ч)"
+    if status == "failed":
+        return True, f"прошлая генерация упала ({age_hours:.1f} ч назад)"
+    if status == "ready":
+        if age_hours > max_age_hours:
+            return True, f"рекомендации {age_hours:.1f} ч (> {max_age_hours:g})"
+        return False, f"рекомендация свежая ({age_hours:.1f} ч)"
+    return True, f"неожиданный статус: {status!r}"
+
+
+def weekly_report_period(today: date) -> date:
+    """Отчёт всегда про ЗАКРЫТУЮ неделю, а не про последние 7 дней: таймер
+    просыпается уже в понедельник, поэтому и период, и окно данных модели
+    якорятся на прошедшее воскресенье, а не на сегодня."""
+    return coach_state.last_closed_week_end(today)
+
+
+def weekly_report_needed(cached: dict[str, Any] | None, *, force: bool) -> tuple[bool, str]:
+    """Отчёт за закрытую неделю генерируется один раз и живёт в кэше; --force
+    перегенерирует его поверх."""
+    if force:
+        return True, "форсировано (--force)"
+    if cached:
+        return False, "уже в кэше"
+    return True, "в кэше нет"

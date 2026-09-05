@@ -85,6 +85,10 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
 # context lives in the prose profile only; planning does not schedule around
 # the injection cycle (supraphysiological background all week — day-to-day
 # timing is speculative and recovery/history always dominate anyway).
+# Разумные границы лимита и базы талии, см: одни и те же при чтении файла и при
+# правке через MCP.
+WAIST_CM_RANGE = (40.0, 200.0)
+
 DEFAULT_STATE: dict[str, Any] = {
     "schema": 1,
     "phase": "cut_recomp",
@@ -139,7 +143,11 @@ def normalize_state(raw: object) -> dict[str, Any]:
         ]
     for key in ("waist_limit_cm", "waist_base_cm"):
         value = raw.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool) and 40 <= value <= 200:
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and WAIST_CM_RANGE[0] <= value <= WAIST_CM_RANGE[1]
+        ):
             state[key] = float(value)
     # Legacy files may still carry injection_day — ignored: planning no longer
     # schedules around the injection cycle.
@@ -255,6 +263,27 @@ def switch_phase(
         phase_params[phase] = clean
         state["phase_params"] = phase_params
     return state
+
+
+def update_waist_limits(
+    state: dict[str, Any],
+    *,
+    waist_limit_cm: float | None = None,
+    waist_base_cm: float | None = None,
+) -> list[str]:
+    """Жёсткий лимит талии и база фазы, в сантиметрах; непереданное не трогается.
+    Возвращает, что изменилось, строками для ответа инструмента."""
+    changed: list[str] = []
+    low, high = WAIST_CM_RANGE
+    for key, value in (("waist_limit_cm", waist_limit_cm), ("waist_base_cm", waist_base_cm)):
+        if value is None:
+            continue
+        number = float(value)
+        if not low <= number <= high:
+            raise ValueError(f"{key}={number:g} вне разумного диапазона {low:g}–{high:g} см.")
+        state[key] = number
+        changed.append(f"{key}={number:g}")
+    return changed
 
 
 def phase_params(state: dict[str, Any]) -> dict[str, Any]:

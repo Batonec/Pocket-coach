@@ -335,21 +335,16 @@ class MiniAppStore:
             ).fetchone()
 
             if existing is not None:
-                # client_id dedupe (e.g. an offline retry): keep the stored row,
-                # but backfill the recommendation snapshot if the retry carries
-                # one and the stored row doesn't — otherwise a flaky first
-                # attempt silently loses the workout↔recommendation link.
-                incoming_snapshot = normalized_payload["data"].get("recommendation")
-                existing_payload = json.loads(existing["payload_json"])
-                if (
-                    incoming_snapshot is not None
-                    and existing_payload.get("data", {}).get("recommendation") is None
-                ):
-                    existing_payload.setdefault("data", {})["recommendation"] = incoming_snapshot
+                # Ретрай с тем же client_id: что дописать в сохранённую запись,
+                # решает rules.retry_backfills_snapshot.
+                patched = rules.retry_backfills_snapshot(
+                    json.loads(existing["payload_json"]), normalized_payload
+                )
+                if patched is not None:
                     connection.execute(
                         "UPDATE workouts SET payload_json = ?, updated_at = ? WHERE id = ?",
                         (
-                            json.dumps(existing_payload, ensure_ascii=False),
+                            json.dumps(patched, ensure_ascii=False),
                             timestamp,
                             existing["id"],
                         ),
@@ -413,15 +408,9 @@ class MiniAppStore:
             if existing is None:
                 return None
 
-            # Preserve the stored recommendation snapshot verbatim when the
-            # incoming payload lacks one: clients rebuild the payload from the
-            # draft on edit and would otherwise wipe the linkage.
-            if "recommendation" not in normalized_payload["data"]:
-                existing_snapshot = (
-                    json.loads(existing["payload_json"]).get("data", {}).get("recommendation")
-                )
-                if existing_snapshot is not None:
-                    normalized_payload["data"]["recommendation"] = existing_snapshot
+            normalized_payload = rules.edit_keeps_snapshot(
+                json.loads(existing["payload_json"]), normalized_payload
+            )
 
             resolved_client_id = existing["client_id"] or normalized_client_id
             connection.execute(
@@ -992,11 +981,7 @@ class MiniAppStore:
             if row is None:
                 return None
 
-            # Автозакрытие ставит вчерашний день, а событие могло начаться
-            # сегодня («заболел утром, вечером всё же потренировался»): такое
-            # закрывается однодневным периодом, а не концом раньше начала.
-            # Даты канонические, поэтому max по строкам — это max по времени.
-            resolved_end = max(closed_on, row["start_date"])
+            resolved_end = rules.closed_event_end(row["start_date"], closed_on)
             connection.execute(
                 "UPDATE events SET end_date = ?, updated_at = ? WHERE id = ? AND user_id = ?",
                 (resolved_end, timestamp, row["id"], user_id),
@@ -1013,8 +998,8 @@ class MiniAppStore:
         user_id: int,
         exclude_id: int | None = None,
     ) -> None:
-        """Открытое событие — это состояние «сейчас не тренируюсь», и оно одно:
-        автозакрытие тренировкой не смогло бы выбрать, какой период закрывать."""
+        """Есть ли у пользователя другое открытое событие; само правило «оно
+        одно» — в rules.check_single_open_event."""
         # `id IS NOT ?` вместо `id != ?`: SQLite сравнивает с NULL без сюрпризов,
         # поэтому exclude_id=None не требует второй ветки запроса.
         row = connection.execute(
@@ -1025,8 +1010,7 @@ class MiniAppStore:
             """,
             (user_id, exclude_id),
         ).fetchone()
-        if row is not None:
-            raise ValueError("Another event is still open — close it before opening a new one")
+        rules.check_single_open_event(row is not None)
 
     def _get_event_row(
         self,

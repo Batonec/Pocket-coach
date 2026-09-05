@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from trainer.data import backend_store, files
-from trainer.domain import coach_state, recommender
+from trainer.domain import recommender
 
 BASE_DIR = Path(__file__).resolve().parents[2]  # backend/: там data/ и resources/
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
@@ -44,13 +44,13 @@ def run(
     today: date | None = None,
 ) -> bool:
     """Returns True if a report was generated."""
-    # Отчёт всегда про ЗАКРЫТУЮ неделю, а не про последние 7 дней: таймер
-    # просыпается уже в понедельник, поэтому и период, и окно данных модели
-    # якорятся на прошедшее воскресенье, а не на сегодня.
-    period = coach_state.last_closed_week_end(today or date.today())
+    period = recommender.weekly_report_period(today or date.today())
     period_end = period.isoformat()
-    if not force and store.get_coach_report(user_id, period_end, REPORT_DAYS):
-        print(f"[weekly] отчёт за {period_end} уже в кэше")
+    needed, reason = recommender.weekly_report_needed(
+        store.get_coach_report(user_id, period_end, REPORT_DAYS), force=force
+    )
+    if not needed:
+        print(f"[weekly] отчёт за {period_end}: {reason}")
         return False
 
     try:

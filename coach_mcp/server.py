@@ -320,15 +320,9 @@ def coach_update_state(
     переданные поля не трогаются."""
     try:
         state = files.load_state(_STATE_PATH)
-        changed: list[str] = []
-        for key, value in (("waist_limit_cm", waist_limit_cm), ("waist_base_cm", waist_base_cm)):
-            if value is None:
-                continue
-            number = float(value)
-            if not 40 <= number <= 200:
-                return _result(_err(f"{key}={number:g} вне разумного диапазона 40–200 см."))
-            state[key] = number
-            changed.append(f"{key}={number:g}")
+        changed = coach_state.update_waist_limits(
+            state, waist_limit_cm=waist_limit_cm, waist_base_cm=waist_base_cm
+        )
         if not changed:
             return _result(_err("Не передано ни одного параметра для обновления."))
         files.save_state(_STATE_PATH, state)

@@ -462,6 +462,32 @@ class WeeklyReportTests(unittest.TestCase):
             recommender.generate_weekly_report([], [], [], CATALOG)
 
 
+class AdviceLifecycleTests(unittest.TestCase):
+    """Когда совет устарел, что его обесценивает и когда его обновлять по
+    таймеру — правила в recommender, а не в хендлерах и скрипте."""
+
+    def test_stale_only_for_a_ready_advice_built_on_an_older_workout(self) -> None:
+        ready = {"status": "ready", "based_on_workout_id": 7}
+        self.assertFalse(recommender.is_stale(ready, 7))
+        self.assertTrue(recommender.is_stale(ready, 9))
+        self.assertFalse(recommender.is_stale({"status": "pending", "based_on_workout_id": 7}, 9))
+        self.assertFalse(recommender.is_stale(None, 9))
+
+    def test_every_data_change_invalidates_except_an_idempotent_retry(self) -> None:
+        for change in ("workout", "body_weight", "waist", "event"):
+            self.assertTrue(recommender.advice_invalidated_by(change), change)
+        self.assertFalse(recommender.advice_invalidated_by("workout", created=False))
+        self.assertFalse(recommender.advice_invalidated_by("report_read"))
+
+    def test_weekly_report_is_about_the_closed_week_and_cached_once(self) -> None:
+        from datetime import date
+
+        self.assertEqual(recommender.weekly_report_period(date(2026, 9, 2)), date(2026, 8, 30))
+        self.assertEqual(recommender.weekly_report_needed(None, force=False), (True, "в кэше нет"))
+        self.assertEqual(recommender.weekly_report_needed({"report": "…"}, force=False)[0], False)
+        self.assertTrue(recommender.weekly_report_needed({"report": "…"}, force=True)[0])
+
+
 class GenerateRepromptTests(unittest.TestCase):
     CATALOG = [
         {"id": 8, "name": "Жим ногами"},

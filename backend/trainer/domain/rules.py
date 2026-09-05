@@ -10,9 +10,10 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 ALLOWED_LOAD_TYPES = {"heavy", "medium", "light", "deload"}
@@ -339,3 +340,57 @@ def normalize_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "end_date": end_date,
         "text": text,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Решения при записи: что сохранить, когда запись уже есть
+# --------------------------------------------------------------------------- #
+def retry_backfills_snapshot(
+    existing: dict[str, Any], incoming: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Повтор POST с тем же client_id (офлайн-ретрай): сохранённая тренировка
+    остаётся как есть, но если повтор принёс снапшот совета, а в записи его нет,
+    снапшот дописывается — иначе первая, сорвавшаяся попытка молча теряет связку
+    тренировка ↔ совет. Существующий снапшот не перезаписывается никогда.
+    Возвращает payload для записи или None, если менять нечего."""
+    incoming_snapshot = (incoming.get("data") or {}).get("recommendation")
+    if incoming_snapshot is None or (existing.get("data") or {}).get("recommendation") is not None:
+        return None
+    patched = copy.deepcopy(existing)
+    patched.setdefault("data", {})["recommendation"] = incoming_snapshot
+    return patched
+
+
+def edit_keeps_snapshot(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    """PUT без снапшота в payload сохраняет уже записанный: клиент пересобирает
+    payload из черновика при редактировании и иначе стёр бы связку с советом."""
+    if "recommendation" not in (incoming.get("data") or {}):
+        existing_snapshot = (existing.get("data") or {}).get("recommendation")
+        if existing_snapshot is not None:
+            incoming.setdefault("data", {})["recommendation"] = existing_snapshot
+    return incoming
+
+
+def check_single_open_event(another_is_open: bool) -> None:
+    """Открытое событие — это состояние «сейчас не тренируюсь», и оно одно:
+    автозакрытие тренировкой не смогло бы выбрать, какой период закрывать."""
+    if another_is_open:
+        raise ValueError("Another event is still open — close it before opening a new one")
+
+
+def open_event_end_after_workout(workout_date: str, created: bool, today: date) -> str | None:
+    """Новая сегодняшняя тренировка закрывает открытое событие вчерашним днём:
+    перерыв кончился в тот день, когда атлет снова пришёл в зал. Правка
+    тренировки и запись задним числом состояние не переключают — история
+    меняется, «сейчас не тренируюсь» остаётся как было."""
+    if created and workout_date == today.isoformat():
+        return (today - timedelta(days=1)).isoformat()
+    return None
+
+
+def closed_event_end(start_date: str, closed_on: str) -> str:
+    """Автозакрытие ставит вчерашний день, а событие могло начаться сегодня
+    («заболел утром, вечером всё же потренировался»): такое закрывается
+    однодневным периодом, а не концом раньше начала. Даты канонические,
+    поэтому max по строкам — это max по времени."""
+    return max(closed_on, start_date)

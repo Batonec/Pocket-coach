@@ -20,7 +20,6 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 # Скрипт запускается как файл, а не как модуль: корень backend (там пакет
 # trainer) в sys.path кладём сами.
@@ -39,41 +38,15 @@ STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coac
 STATE_PATH = files.default_state_path(DB_PATH)
 USER_ID = 3  # personal-build: единственный атлет, см. CLAUDE.md
 MAX_AGE_HOURS = float(os.getenv("REFRESH_MAX_AGE_HOURS", "24"))
-# A 'pending' row older than this is a generation that died mid-flight
-# (e.g. the server was restarted) — safe to take over.
-STUCK_PENDING_HOURS = 2.0
-
-
-def should_refresh(
-    rec: dict[str, Any] | None,
-    now_ts: int,
-    max_age_hours: float = MAX_AGE_HOURS,
-) -> tuple[bool, str]:
-    """Decide whether the stored recommendation needs regeneration."""
-    if rec is None:
-        return True, "рекомендации ещё нет"
-
-    age_hours = (now_ts - int(rec.get("updated_at") or 0)) / 3600
-    status = rec.get("status")
-
-    if status == "pending":
-        if age_hours > STUCK_PENDING_HOURS:
-            return True, f"зависший pending ({age_hours:.1f} ч)"
-        return False, f"генерация уже идёт ({age_hours:.1f} ч)"
-    if status == "failed":
-        return True, f"прошлая генерация упала ({age_hours:.1f} ч назад)"
-    if status == "ready":
-        if age_hours > max_age_hours:
-            return True, f"рекомендации {age_hours:.1f} ч (> {max_age_hours:g})"
-        return False, f"рекомендация свежая ({age_hours:.1f} ч)"
-    return True, f"неожиданный статус: {status!r}"
 
 
 def run(store: backend_store.MiniAppStore, user_id: int, force: bool = False) -> bool:
     """Returns True if a regeneration was performed (successfully or not)."""
     rec = store.get_recommendation(user_id)
     refresh, reason = (
-        (True, "форсировано (--force)") if force else should_refresh(rec, int(time.time()))
+        (True, "форсировано (--force)")
+        if force
+        else recommender.should_refresh(rec, int(time.time()), MAX_AGE_HOURS)
     )
     print(f"[refresh] user {user_id}: {reason}")
     if not refresh:
