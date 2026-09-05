@@ -241,9 +241,16 @@ class PromptTemplateTests(unittest.TestCase):
         plan = prompt_builder._render_program(doc)
         self.assertIn("про ноги", plan)
         self.assertNotIn("контур коррекции", plan)
-        # Списки — ручная синхронизация с заголовками документа: оба живут в
-        # vision/STRATEGY.md, и тест это пинит.
-        strategy = (support.ROOT_DIR / "vision" / "STRATEGY.md").read_text("utf-8")
+
+    def test_section_lists_match_the_strategy_document_when_it_is_at_hand(self):
+        """Оба списка — ручная синхронизация с заголовками документа. Документ
+        личный и в репозиторий не попадает (CLAUDE.md: «Персональные данные не в
+        репозитории»), поэтому проверка живёт только там, где он есть, — на
+        ноутбуке атлета; в CI она пропускается, а не падает."""
+        path = support.ROOT_DIR / "vision" / "STRATEGY.md"
+        if not path.exists():
+            self.skipTest("vision/STRATEGY.md есть только на ноутбуке атлета")
+        strategy = path.read_text("utf-8")
         for sections in (
             prompt_builder.STRATEGY_SECTIONS,
             prompt_builder.REPORT_STRATEGY_SECTIONS,
