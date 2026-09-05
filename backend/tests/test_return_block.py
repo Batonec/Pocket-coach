@@ -11,10 +11,7 @@ import unittest
 import return_block_fixture as fx
 import support  # noqa: F401 — adds backend to sys.path
 
-import coach_features
-import coach_state
-import plan_validator
-import prompt_builder
+from trainer.coach import coach_features, coach_state, plan_validator, prompt_builder
 
 
 class ActiveWindowTests(unittest.TestCase):

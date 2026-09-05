@@ -13,7 +13,7 @@ Run (streamable-http, behind a Cloudflare tunnel like investor-mcp):
 
 Environment:
     ANTHROPIC_API_KEY        required for the generate/debug tools
-    COACH_MCP_BACKEND_DIR    dir containing backend_store.py + recommender.py
+    COACH_MCP_BACKEND_DIR    backend root holding the trainer/ package
                              (default: ../backend; on the VPS set it to
                              /opt/trainer-miniapp/app)
     MINIAPP_DB_PATH          SQLite path (default: <backend_dir>/data/trainer.db)
@@ -44,7 +44,7 @@ try:
 except Exception:  # noqa: BLE001, S110 — dotenv опционален, .env может не быть
     pass
 
-# --- locate and import the backend modules (backend_store + recommender) ------
+# --- locate and import the backend package (trainer/) ------------------------
 _BACKEND_DIR = os.getenv("COACH_MCP_BACKEND_DIR") or str(
     Path(__file__).resolve().parent.parent / "backend"
 )
@@ -55,11 +55,13 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 from mcp.server.transport_security import TransportSecuritySettings  # noqa: E402
 from mcp.types import CallToolResult, TextContent  # noqa: E402
 
-import backend_store  # noqa: E402
-import coach_features  # noqa: E402
-import coach_state  # noqa: E402
-import prompt_builder  # noqa: E402
-import recommender  # noqa: E402
+from trainer import backend_store  # noqa: E402
+from trainer.coach import (  # noqa: E402
+    coach_features,
+    coach_state,
+    prompt_builder,
+    recommender,
+)
 
 # --- configuration ------------------------------------------------------------
 _DB_PATH = Path(os.getenv("MINIAPP_DB_PATH") or str(Path(_BACKEND_DIR) / "data" / "trainer.db"))

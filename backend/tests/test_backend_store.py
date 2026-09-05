@@ -10,7 +10,11 @@ from support import MINIAPP_DIR, sample_body_weight_payload, sample_workout_payl
 if str(MINIAPP_DIR) not in sys.path:
     sys.path.insert(0, str(MINIAPP_DIR))
 
-from backend_store import MiniAppStore, normalize_body_weight_payload, normalize_workout_payload
+from trainer.backend_store import (
+    MiniAppStore,
+    normalize_body_weight_payload,
+    normalize_workout_payload,
+)
 
 
 class MiniAppStoreTest(unittest.TestCase):

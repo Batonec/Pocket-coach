@@ -9,16 +9,18 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 ## Состав
 
 - [backend/server.py](./server.py) — HTTP API, резолв сессии (iOS fixed-user + browser debug), раздача каталога упражнений
-- [backend/backend_store.py](./backend_store.py) — SQLite-хранилище и нормализация данных
-- [backend/recommender.py](./recommender.py) — точка входа «Совета тренера»: загрузка каталога, профиля и стратегии, оба вызова модели (план и недельный отчёт), один авто-репромпт по нарушениям валидатора
-- [backend/prompt_builder.py](./prompt_builder.py) — всё, что читает модель: системный промпт, user-промпт с вычисленными фичами и историей, JSON-схема ответа, промпт недельного отчёта; проза берётся из [prompts/](./prompts), здесь только слоты
-- [backend/plan_validator.py](./plan_validator.py) — проверка плана модели: санитизация по границам, которых нет в JSON-схеме, три жёсткие границы методики и детерминированное разрешение после неудачного репромпта
-- [backend/anthropic_client.py](./anthropic_client.py) — HTTP-вызов Claude Messages API на stdlib `urllib`: ретраи на временные сбои, prompt caching, structured output; единственное место, где открывается соединение с API
-- [backend/coach_state.py](./coach_state.py) — машина фаз подготовки (cut_recomp / lean_bulk / maintenance), volume ramp по неделям блока
-- [backend/coach_features.py](./coach_features.py) — вычисляемые фичи истории: per-exercise сводки (пики, e1RM, ПР), детектор застоя, ступени разгона после перерыва, эффективные недельные объёмы, тренды веса/талии и матрица питания
-- [backend/coach_signals.py](./coach_signals.py) — детерминированные баннеры коуча; каноническая спецификация — [docs/COACH_SIGNALS.md](../docs/COACH_SIGNALS.md)
+- [backend/trainer/backend_store.py](./trainer/backend_store.py) — SQLite-хранилище и нормализация данных
+- [backend/trainer/coach/recommender.py](./trainer/coach/recommender.py) — точка входа «Совета тренера»: загрузка каталога, профиля и стратегии, оба вызова модели (план и недельный отчёт), один авто-репромпт по нарушениям валидатора
+- [backend/trainer/coach/prompt_builder.py](./trainer/coach/prompt_builder.py) — всё, что читает модель: системный промпт, user-промпт с вычисленными фичами и историей, JSON-схема ответа, промпт недельного отчёта; проза берётся из [prompts/](./prompts), здесь только слоты
+- [backend/trainer/coach/plan_validator.py](./trainer/coach/plan_validator.py) — проверка плана модели: санитизация по границам, которых нет в JSON-схеме, три жёсткие границы методики и детерминированное разрешение после неудачного репромпта
+- [backend/trainer/coach/anthropic_client.py](./trainer/coach/anthropic_client.py) — HTTP-вызов Claude Messages API на stdlib `urllib`: ретраи на временные сбои, prompt caching, structured output; единственное место, где открывается соединение с API
+- [backend/trainer/coach/coach_state.py](./trainer/coach/coach_state.py) — машина фаз подготовки (cut_recomp / lean_bulk / maintenance), volume ramp по неделям блока
+- [backend/trainer/coach/coach_features.py](./trainer/coach/coach_features.py) — вычисляемые фичи истории: per-exercise сводки (пики, e1RM, ПР), детектор застоя, ступени разгона после перерыва, эффективные недельные объёмы, тренды веса/талии и матрица питания
+- [backend/trainer/coach/coach_signals.py](./trainer/coach/coach_signals.py) — детерминированные баннеры коуча; каноническая спецификация — [docs/COACH_SIGNALS.md](../docs/COACH_SIGNALS.md)
 - [backend/static/data/exercises.json](./static/data/exercises.json) — каталог упражнений (отдаётся клиенту по `/data/exercises.json`)
-- [backend/deploy](./deploy) — деплой на VPS
+- [backend/jobs](./jobs) — скрипты systemd-таймеров: авто-свежесть совета, недельный отчёт, бэкап базы
+- [backend/examples](./examples) — шаблоны личных файлов, которые живут только на VPS рядом с базой: профиль, состояние, стратегия
+- [backend/deploy](./deploy) — деплой на VPS и systemd-юниты
 - [backend/tests](./tests) — тесты backend
 
 ## HTTP endpoints
@@ -63,14 +65,14 @@ Messages API (structured outputs, чистый stdlib `urllib` — без SDK/ve
   `recommendations`; история генераций в `recommendation_log` остаётся для аудита.
 - **Авто-свежесть:** systemd-таймер
   ([deploy/trainer-recommend-refresh.timer](./deploy/trainer-recommend-refresh.timer),
-  06:30 МСК) запускает [refresh_recommendation.py](./refresh_recommendation.py) —
+  06:30 МСК) запускает [jobs/refresh_recommendation.py](./jobs/refresh_recommendation.py) —
   перегенерирует совет, если ему больше `REFRESH_MAX_AGE_HOURS` (по умолчанию 24 ч),
   упавшие/зависшие генерации добиваются. Так «когда идти» в карточке всегда датировано
   сегодняшним днём, даже после долгого перерыва. Ручной запуск: `--force`.
 
 ## Бэкап базы
 
-[backup_db.py](./backup_db.py) делает консистентный снапшот `trainer.db` через SQLite
+[jobs/backup_db.py](./jobs/backup_db.py) делает консистентный снапшот `trainer.db` через SQLite
 online-backup API (без остановки сервиса, без зависимостей), сжимает в gzip и копирует
 рядом профиль атлета; держит последние `BACKUP_KEEP` копий. Запускается ночным
 systemd-таймером
@@ -116,7 +118,7 @@ per-exercise сводки за всю историю (топ-сет, e1RM по �
 сравним с весом на первом. Сырыми остаются последние ~10 тренировок.
 
 **Фазы** (`coach_state.py`, состояние в `coach_state.json` рядом с базой, шаблон —
-[coach_state.example.json](./coach_state.example.json)): `cut_recomp` / `lean_bulk` /
+[examples/coach_state.example.json](./examples/coach_state.example.json)): `cut_recomp` / `lean_bulk` /
 `maintenance` + вычисляемый режим «возврат после перерыва». Переключение — только руками
 через Coach MCP (`coach_set_phase`); при достижении цели фазы промпт лишь просит модель
 предложить смену в rationale. Недельный объём строительных фаз идёт ramp'ом 6–8 →
@@ -150,7 +152,7 @@ MCP, когда ищет отчёт в кэше. Якорь общий не дл
 промахнётся мимо кэша и молча перегенерирует отчёт за токены. Отчёт кэшируется в
 таблице `coach_reports`: systemd-таймер в ночь на понедельник
 ([deploy/trainer-weekly-report.timer](./deploy/trainer-weekly-report.timer), 00:00 МСК,
-скрипт [weekly_report.py](./weekly_report.py)) генерирует его заранее, и инструмент
+скрипт [jobs/weekly_report.py](./jobs/weekly_report.py)) генерирует его заранее, и инструмент
 отдаёт кэш мгновенно и бесплатно (`fresh=true` — перегенерация). Полночь, а не
 воскресный вечер, потому что вечерняя воскресная тренировка обязана попасть в отчёт
 о своей неделе.
@@ -191,7 +193,7 @@ Coach MCP); единый допустимый диапазон записи и �
 
 `recommender.load_profile()` читает JSON с произвольными текстовыми блоками
 (`{"schema":1, "blocks": {"Атлет": "...", "Цель": "...", ...}}`), которые попадают в
-системный промпт. Шаблон — [coach_profile.example.json](./coach_profile.example.json).
+системный промпт. Шаблон — [examples/coach_profile.example.json](./examples/coach_profile.example.json).
 **Реальный профиль содержит персональные/медицинские данные и живёт только на сервере**
 (`/opt/trainer-miniapp/data/coach_profile.json`, рядом с базой) — в публичный репозиторий
 он не коммитится. Файл отсутствует/битый → генерация работает с нейтральным фоллбеком.
@@ -294,6 +296,10 @@ Backend деплоится через CI ([../.github/workflows/deploy-backend.y
 
 Backend workflow предполагает существование `/etc/trainer-miniapp/backend.env` на VPS
 (там же лежит `ANTHROPIC_API_KEY`).
+
+Код едет каталогами: `server.py` поимённо, `trainer/`, `jobs/`, `prompts/`, `copy/` целиком и
+вместе с ними все юниты и таймеры из `deploy/`. Таймеры деплой не включает: новый таймер один
+раз `systemctl enable --now` руками.
 
 ## GitHub Actions
 

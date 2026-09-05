@@ -18,13 +18,14 @@ import sys
 from datetime import date
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Скрипт запускается как файл, а не как модуль: корень backend (там пакет
+# trainer) в sys.path кладём сами.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import backend_store
-import coach_state
-import recommender
+from trainer import backend_store
+from trainer.coach import coach_state, recommender
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parents[1]  # backend/: там data/ и static/
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
 STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "static")))
 STATE_PATH = coach_state.default_state_path(DB_PATH)

@@ -9,8 +9,7 @@ from pathlib import Path
 
 import support  # noqa: F401 — adds backend to sys.path
 
-import coach_features
-import coach_state
+from trainer.coach import coach_features, coach_state
 
 
 def _workout(when: str) -> dict:

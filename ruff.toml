@@ -14,13 +14,14 @@
 target-version = "py313"
 line-length = 100
 
-# Корни импорта. Отсюда ruff понимает, что coach_prompts и backend_store —
-# свои модули, а не пакеты с PyPI, и раскладывает импорты по секциям сам.
+# Корни импорта. Отсюда ruff понимает, что trainer и jobs — свои пакеты, а не
+# пакеты с PyPI, и раскладывает импорты по секциям сам.
 # Побочный эффект здесь важнее основного: backend/tests/support.py в эти корни
 # НЕ входит, поэтому `support` попадает в секцию выше backend-модулей — а он
 # обязан импортироваться первым, он и кладёт backend/ в sys.path. Без этого
-# isort сортирует всё в одну кучу по алфавиту, `import coach_prompts` уезжает
-# выше `import support`, и запуск одного файла тестов падает на ImportError.
+# isort сортирует всё в одну кучу по алфавиту, `from trainer.coach import
+# coach_prompts` уезжает выше `import support`, и запуск одного файла тестов
+# падает на ImportError.
 src = ["backend", "coach_mcp"]
 
 # Воркдиры Claude Code — полные копии репозитория; линтить их второй раз незачем.

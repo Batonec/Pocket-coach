@@ -85,7 +85,7 @@ sync_dir() {
 
   if command -v rsync >/dev/null 2>&1 && remote_has_rsync; then
     log "Syncing $(basename "$src") with rsync"
-    rsync -az --delete "${src}/" "${TARGET_HOST}:${dest}/"
+    rsync -az --delete --exclude __pycache__ "${src}/" "${TARGET_HOST}:${dest}/"
     return
   fi
 
@@ -93,7 +93,7 @@ sync_dir() {
 
   local archive
   archive="$(mktemp "${TMPDIR:-/tmp}/trainer-miniapp.XXXXXX.tar")"
-  tar -C "$src" -cf "$archive" .
+  tar -C "$src" --exclude __pycache__ -cf "$archive" .
   scp "$archive" "${TARGET_HOST}:/tmp/trainer-miniapp-sync.tar" >/dev/null
   rm -f "$archive"
 
@@ -123,23 +123,6 @@ deploy_bot() {
 }
 
 
-# Keep this module list in sync with .github/workflows/deploy-backend.yml.
-BACKEND_MODULES=(
-  server.py
-  backend_store.py
-  recommender.py
-  prompt_builder.py
-  plan_validator.py
-  anthropic_client.py
-  coach_state.py
-  coach_features.py
-  coach_signals.py
-  coach_prompts.py
-  refresh_recommendation.py
-  weekly_report.py
-  backup_db.py
-)
-
 # The Coach MCP server on the VPS lives OUTSIDE $REMOTE_BASE (its own venv +
 # systemd unit) — this is the only scripted way to update it.
 COACH_MCP_REMOTE_DIR="${COACH_MCP_REMOTE_DIR:-/opt/coach-mcp/app}"
@@ -156,21 +139,23 @@ deploy_coach_mcp() {
 deploy_backend() {
   log "Deploying backend files to $TARGET_HOST"
   remote "mkdir -p '$REMOTE_BASE/app'"
-  local module
-  for module in "${BACKEND_MODULES[@]}"; do
-    scp "$MINIAPP_DIR/$module" "${TARGET_HOST}:${REMOTE_BASE}/app/$module" >/dev/null
-  done
-  # Проза промптов едет каталогом: поимённый список .md пришлось бы держать
-  # в синхроне так же, как список модулей, и он бы так же протух.
+  scp "$MINIAPP_DIR/server.py" "${TARGET_HOST}:${REMOTE_BASE}/app/server.py" >/dev/null
+  # Код едет каталогами, как и проза: пакет trainer/ и скрипты таймеров jobs/
+  # целиком. Поимённого списка модулей нет специально — новому файлу негде
+  # потеряться по дороге на прод.
+  sync_dir "$MINIAPP_DIR/trainer" "$REMOTE_BASE/app/trainer"
+  sync_dir "$MINIAPP_DIR/jobs" "$REMOTE_BASE/app/jobs"
   sync_dir "$MINIAPP_DIR/prompts" "$REMOTE_BASE/app/prompts"
   sync_dir "$MINIAPP_DIR/copy" "$REMOTE_BASE/app/copy"
+  # Юниты и таймеры едут все: таймеры ссылаются на пути скриптов в jobs/, и
+  # переезд скрипта без юнита молча остановил бы таймер. Новый таймер это не
+  # включает — enable делается руками один раз.
+  scp "$SCRIPT_DIR"/*.service "$SCRIPT_DIR"/*.timer "${TARGET_HOST}:/etc/systemd/system/" >/dev/null
   scp "$SCRIPT_DIR/trainer-miniapp-backend.service" "${TARGET_HOST}:/etc/systemd/system/${BACKEND_SERVICE}" >/dev/null
-
-  local remote_paths=""
-  for module in "${BACKEND_MODULES[@]}"; do
-    remote_paths+=" '$REMOTE_BASE/app/$module'"
-  done
-  remote "chmod 644 $remote_paths '/etc/systemd/system/$BACKEND_SERVICE'"
+  # Плоская раскладка до пакета trainer/ держала модули прямо в app/. Строку
+  # можно убрать после первого деплоя новой раскладки.
+  remote "cd '$REMOTE_BASE/app' && rm -f backend_store.py anthropic_client.py coach_features.py coach_prompts.py coach_signals.py coach_state.py plan_validator.py prompt_builder.py recommender.py backup_db.py refresh_recommendation.py weekly_report.py"
+  remote "find '$REMOTE_BASE/app' -name '*.py' -exec chmod 644 {} + && chmod 644 /etc/systemd/system/trainer-*.service /etc/systemd/system/trainer-*.timer"
   remote "test -f /etc/trainer-miniapp/backend.env"
   remote "systemctl daemon-reload && systemctl enable --now '$BACKEND_SERVICE' && systemctl restart '$BACKEND_SERVICE'"
 

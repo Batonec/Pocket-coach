@@ -7,5 +7,5 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=/opt/trainer-miniapp/app
 EnvironmentFile=/etc/trainer-miniapp/backend.env
-ExecStart=/usr/bin/python3 /opt/trainer-miniapp/app/weekly_report.py
+ExecStart=/usr/bin/python3 /opt/trainer-miniapp/app/jobs/weekly_report.py
 User=root
