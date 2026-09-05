@@ -347,7 +347,7 @@ class ServerApiTest(unittest.TestCase):
             )
 
             self.assertEqual(response.status, 400)
-            self.assertIn("greater than 0", response.payload["reason"])
+            self.assertIn("between 30 and 400", response.payload["reason"])
 
     def test_body_weights_endpoint_deletes_entry_via_api(self) -> None:
         with running_miniapp_server(allow_debug_user=True) as app:

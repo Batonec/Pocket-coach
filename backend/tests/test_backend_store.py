@@ -647,7 +647,7 @@ class NormalizeWorkoutPayloadTest(unittest.TestCase):
             )
 
     def test_rejects_non_numeric_set_values(self) -> None:
-        with self.assertRaisesRegex(ValueError, "must be numeric"):
+        with self.assertRaisesRegex(ValueError, "Set reps must be an integer"):
             normalize_workout_payload(
                 {
                     "client_id": "invalid-set-values",
@@ -685,7 +685,7 @@ class NormalizeWorkoutPayloadTest(unittest.TestCase):
             )
 
     def test_rejects_sets_with_negative_weight(self) -> None:
-        with self.assertRaisesRegex(ValueError, "zero or positive"):
+        with self.assertRaisesRegex(ValueError, "Set weight must be at least 0"):
             normalize_workout_payload(
                 {
                     "client_id": "invalid-weight",
@@ -786,7 +786,7 @@ class NormalizeBodyWeightPayloadTest(unittest.TestCase):
                 normalize_waist_payload({"entry_date": entry_date, "waist": 90.0})
 
     def test_rejects_non_positive_body_weight(self) -> None:
-        with self.assertRaisesRegex(ValueError, "greater than 0"):
+        with self.assertRaisesRegex(ValueError, "between 30 and 400"):
             normalize_body_weight_payload(
                 {
                     "entry_date": "2026-03-28",
