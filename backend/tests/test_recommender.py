@@ -304,7 +304,8 @@ class ProfileTests(unittest.TestCase):
         self.assertNotIn("гормонального цикла", prompt)
         self.assertIn("Фаза: «лёгкий дефицит-рекомп», неделя блока 1", prompt)
         self.assertNotIn("cut_recomp", prompt)
-        self.assertIn("Объём за последние 7 дней", prompt)
+        self.assertNotIn("Объём за последние 7 дней", prompt)  # темп — из явки
+        self.assertIn("Объём за КРУГ", prompt)
         self.assertIn("квадрицепс/ягодичные: 1 прямых / 1 эффективных", prompt)
         self.assertIn("Дней с последней тренировки: 2", prompt)
         # Явка и активное окно всегда в данных — шапка программы отправляет

@@ -392,38 +392,45 @@ def _render_attendance(workouts: list[dict[str, Any]], today: date) -> str:
     )
 
 
-def _render_volume(
+def _render_round_volume(
     workouts: list[dict[str, Any]],
     today: date,
     week_target: tuple[int, int] | None,
-    maintenance_sets: tuple[int, int] | None,
     params: dict[str, Any],
-) -> list[str]:
-    """Два блока объёма: за 7 дней — темп календарной недели, и за КРУГ из
-    последних четырёх тренировок — с целями по группам: цели программы описывают
-    один проход каркаса, и атлет через день по календарю вечно «недобирал» бы. В
-    режиме поддержания круга нет (одна сессия в неделю), цели остаются у недельного
-    блока. Общий для плана и отчёта.
+) -> str | None:
+    """Блок «Объём за КРУГ» из последних четырёх тренировок с целями по группам:
+    цели программы описывают один проход каркаса, и атлет через день по календарю
+    вечно «недобирал» бы. У плана это единственный блок объёма — темп он читает из
+    явки, а блок за 7 дней только тянул бы обратно к «недобору недели». ``None``
+    без единой тренировки. Общий для плана и отчёта.
+    """
+    volume, days = coach_features.round_volume(workouts, today)
+    if not days:
+        return None
+    return (
+        _block(
+            "round_volume_header",
+            count=str(len(days)),
+            start=days[0].isoformat(),
+            end=days[-1].isoformat(),
+        )
+        + "\n"
+        + render_weekly_volume(volume, week_target, None, params.get("group_targets"))
+    )
+
+
+def _render_weekly_volume(
+    workouts: list[dict[str, Any]],
+    today: date,
+    header: str,
+    maintenance_sets: tuple[int, int] | None = None,
+) -> str:
+    """Объём за 7 дней под данной подписью. У отчёта — темп календарной недели
+    рядом с кругом; у плана — только в режиме поддержания: одна сессия в неделю,
+    круга нет, цели недельные.
     """
     weekly = coach_features.weekly_volume(workouts, today)
-    if maintenance_sets:
-        return [
-            _block("volume_header") + "\n" + render_weekly_volume(weekly, None, maintenance_sets)
-        ]
-    chunks = [_block("volume_header") + "\n" + render_weekly_volume(weekly, None)]
-    volume, days = coach_features.round_volume(workouts, today)
-    if days:
-        chunks.append(
-            _block(
-                "round_volume_header",
-                count=str(len(days)),
-                start=days[0].isoformat(),
-                end=days[-1].isoformat(),
-            )
-            + "\n"
-            + render_weekly_volume(volume, week_target, None, params.get("group_targets"))
-        )
-    return chunks
+    return header + "\n" + render_weekly_volume(weekly, None, maintenance_sets)
 
 
 def previous_advice(rationale: str | None) -> str | None:
@@ -700,7 +707,16 @@ def _build_user_prompt(
     chunks = ["=== КОНТЕКСТ ===\n" + "\n".join(context_lines)]
 
     maintenance_sets = params.get("sets_per_group") if phase == "maintenance" else None
-    chunks.extend(_render_volume(workouts, today, week_target, maintenance_sets, params))
+    if maintenance_sets:
+        chunks.append(
+            _render_weekly_volume(
+                workouts, today, _block("maintenance_volume_header"), maintenance_sets
+            )
+        )
+    else:
+        round_block = _render_round_volume(workouts, today, week_target, params)
+        if round_block:
+            chunks.append(round_block)
     chunks.append(_render_attendance(workouts, today))
 
     measurement_lines = render_measurements(body_weights, waists, today)
@@ -1064,17 +1080,22 @@ def _build_report_prompt(
         else coach_state.weekly_volume_target(state, position["cycle_week"])
     )
     maintenance_sets = params.get("sets_per_group") if params["phase"] == "maintenance" else None
-    volume_chunks = _render_volume(workouts, today, week_target, maintenance_sets, params)
-    volume_chunks[0] = volume_chunks[0].replace(
-        _block("volume_header"),
-        _block(
-            "report_volume_header",
-            total=str(coach_features.sets_in_window(workouts, today)),
-            previous=str(coach_features.sets_in_window(workouts, today - timedelta(days=7))),
-        ),
-        1,
+    chunks.append(
+        _render_weekly_volume(
+            workouts,
+            today,
+            _block(
+                "report_volume_header",
+                total=str(coach_features.sets_in_window(workouts, today)),
+                previous=str(coach_features.sets_in_window(workouts, today - timedelta(days=7))),
+            ),
+            maintenance_sets,
+        )
     )
-    chunks.extend(volume_chunks)
+    if not maintenance_sets:
+        round_block = _render_round_volume(workouts, today, week_target, params)
+        if round_block:
+            chunks.append(round_block)
     chunks.append(_render_attendance(workouts, today))
 
     summaries = coach_features.exercise_summaries(workouts, catalog, today)

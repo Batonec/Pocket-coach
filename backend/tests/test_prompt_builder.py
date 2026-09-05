@@ -37,24 +37,24 @@ class VolumeBlocksTests(unittest.TestCase):
         workouts = [self._workout(day) for day in reversed(days)]
         return prompt_builder._build_user_prompt(workouts, [], date(2026, 6, 10), 10, state=state)
 
-    def test_targets_live_on_the_round_block_only(self) -> None:
+    def test_plan_judges_volume_by_the_round_only(self) -> None:
+        """У плана один блок объёма — за круг из четырёх тренировок с целями: темп
+        он читает из явки, а блок за 7 дней только тянул бы к «недобору недели»."""
         state = coach_state.default_state()
         state["phase_params"] = {"cut_recomp": {"group_targets": {"грудь": [12, 14]}}}
         prompt = self._prompt(
             state, ["2026-06-01", "2026-06-03", "2026-06-05", "2026-06-07", "2026-06-09"]
         )
-        weekly, round_block = prompt.split("Объём за КРУГ", 1)
-        self.assertIn("Объём за последние 7 дней — темп календарной недели", weekly)
-        self.assertIn("грудь: 9 прямых / 9 эффективных", weekly)  # три сессии за 7 дней
-        self.assertNotIn("(цель ", weekly)
-        self.assertIn("последние 4 тренировки (2026-06-03 – 2026-06-09)", round_block)
-        self.assertIn("грудь: 12 прямых (цель 12–14)", round_block)
-        self.assertIn("Цели — в ПРЯМЫХ сетах на круг из четырёх тренировок", round_block)
+        self.assertNotIn("Объём за последние 7 дней", prompt)
+        self.assertIn("Объём за КРУГ — последние 4 тренировки (2026-06-03 – 2026-06-09)", prompt)
+        self.assertIn("грудь: 12 прямых (цель 12–14)", prompt)
+        self.assertIn("Цели — в ПРЯМЫХ сетах на круг из четырёх тренировок", prompt)
 
     def test_maintenance_keeps_targets_on_the_week_and_has_no_round(self) -> None:
         state = coach_state.default_state()
         state["phase"] = "maintenance"
         prompt = self._prompt(state, ["2026-06-02", "2026-06-09"])
+        self.assertIn("Объём за последние 7 дней", prompt)
         self.assertIn("Режим поддержания", prompt)
         self.assertNotIn("Объём за КРУГ", prompt)
 
