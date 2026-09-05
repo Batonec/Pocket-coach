@@ -836,7 +836,7 @@ def pre_break_working_weights(
     валидатор держит, что возвратная сессия не место для нового ПР. ``until``
     смотрит на историю по состоянию на тот день (последняя доперерывная сессия)
     для уже идущего возврата. Зовут ``prompt_builder`` и
-    ``plan_validator._comeback_ceilings``.
+    ``plan_validator.bounds_from_history``.
     """
     names = {item["id"]: item["name"] for item in catalog}
     items: list[dict[str, Any]] = []

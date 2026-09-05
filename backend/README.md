@@ -10,16 +10,16 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 
 - [backend/server.py](./server.py) — HTTP API, резолв сессии (iOS fixed-user + browser debug), раздача каталога упражнений
 - [backend/trainer/data/backend_store.py](./trainer/data/backend_store.py) — SQLite-хранилище: только SQL, решения берёт из `domain/rules.py`
-- [backend/trainer/domain/rules.py](./trainer/domain/rules.py) — форма и границы входа: тренировка, замеры, события, снапшот совета, даты
+- [backend/trainer/domain/rules.py](./trainer/domain/rules.py) — форма и границы входа: тренировка, замеры, события, снапшот совета, план от модели, даты
 - [backend/trainer/data/files.py](./trainer/data/files.py) — файлы рядом с базой и каталог упражнений: чтение и запись состояния, профиля, стратегии
 - [backend/trainer/domain/recommender.py](./trainer/domain/recommender.py) — точка входа «Совета тренера»: загрузка каталога, профиля и стратегии, оба вызова модели (план и недельный отчёт), один авто-репромпт по нарушениям валидатора
 - [backend/trainer/domain/prompt_builder.py](./trainer/domain/prompt_builder.py) — всё, что читает модель: системный промпт, user-промпт с вычисленными фичами и историей, JSON-схема ответа, промпт недельного отчёта; проза берётся из [prompts/](./prompts), здесь только слоты
-- [backend/trainer/domain/plan_validator.py](./trainer/domain/plan_validator.py) — проверка плана модели: санитизация по границам, которых нет в JSON-схеме, три жёсткие границы методики и детерминированное разрешение после неудачного репромпта
+- [backend/trainer/domain/plan_validator.py](./trainer/domain/plan_validator.py) — три жёсткие границы методики таблицей `RULES` (формулировки — в [prompts/plan_rules.md](./prompts/plan_rules.md), откуда они уходят и в системный промпт, и в репромпт) и детерминированное разрешение после неудачного репромпта; санитизация ответа — в `rules.py`
 - [backend/trainer/data/anthropic_client.py](./trainer/data/anthropic_client.py) — HTTP-вызов Claude Messages API на stdlib `urllib`: ретраи на временные сбои, prompt caching, structured output; единственное место, где открывается соединение с API
 - [backend/trainer/domain/coach_state.py](./trainer/domain/coach_state.py) — машина фаз подготовки (cut_recomp / lean_bulk / maintenance), volume ramp по неделям блока
 - [backend/trainer/domain/coach_features.py](./trainer/domain/coach_features.py) — вычисляемые фичи истории: per-exercise сводки (пики, e1RM, ПР), детектор застоя, ступени разгона после перерыва, эффективные недельные объёмы, тренды веса/талии и матрица питания
 - [backend/trainer/domain/coach_signals.py](./trainer/domain/coach_signals.py) — детерминированные баннеры коуча; каноническая спецификация — [docs/COACH_SIGNALS.md](../docs/COACH_SIGNALS.md)
-- [backend/resources](./resources) — два файла, которые читает клиент, а не модель: `exercises.json` (каталог упражнений, отдаётся по `/data/exercises.json`) и `signals.md` (тексты баннеров)
+- [backend/resources](./resources) — три файла, которые читает клиент, а не модель: `exercises.json` (каталог упражнений, отдаётся по `/data/exercises.json`), `signals.md` (тексты баннеров) и `plan_notes.md` (пометки «Проверка методики», которые валидатор дописывает в rationale)
 - [backend/infra/jobs](./infra/jobs) — скрипты systemd-таймеров: авто-свежесть совета, недельный отчёт, бэкап базы
 - [backend/infra/deploy](./infra/deploy) — деплой на VPS и systemd-юниты
 - [backend/tests](./tests) — тесты backend
@@ -188,7 +188,9 @@ MCP, когда ищет отчёт в кэше. Якорь общий не дл
 уходит модели одним авто-репромптом; повторный промах разрешается детерминированно
 (возвратные веса клампятся к доперерывным, лишние подходы режутся с хвоста плана по
 одному на упражнение, незакрытое покрытие дописывается в rationale) — из-за методики
-генерация больше не падает. Замеры талии хранятся в таблице `waists` (пишутся через
+генерация больше не падает. Правила — таблица `plan_validator.RULES`; их формулировки в
+`prompts/plan_rules.md` рендерятся в блок «ЖЁСТКИЕ ГРАНИЦЫ» системного промпта, так что модель
+читает ровно то, что сервер проверяет. Замеры талии хранятся в таблице `waists` (пишутся через
 Coach MCP); единый допустимый диапазон записи и аналитики — 50–160 см. Значение вне
 диапазона возвращает HTTP 400 и не может попасть в состояние «в UI сохранено, коучем
 проигнорировано». Правило свежести общее с весом: данные старше 14 дней → советы по

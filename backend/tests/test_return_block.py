@@ -11,7 +11,7 @@ import unittest
 import return_block_fixture as fx
 import support  # noqa: F401 — кладёт backend в sys.path
 
-from trainer.domain import coach_features, coach_state, plan_validator, prompt_builder
+from trainer.domain import coach_features, coach_state, plan_validator, prompt_builder, rules
 
 
 class ActiveWindowTests(unittest.TestCase):
@@ -134,7 +134,7 @@ class SessionCapTests(unittest.TestCase):
     def _plan(self, per_exercise: list[int]) -> dict:
         """Санитизированный план из числа сетов на упражнение."""
         ids = [18, 9, 8, 13, 11, 12, 17, 15, 16, 19]
-        return plan_validator._validate(
+        return rules.normalize_model_plan(
             {
                 "focus": "f",
                 "load_type": "medium",
@@ -153,19 +153,21 @@ class SessionCapTests(unittest.TestCase):
         )
 
     def test_twenty_two_sets_violate_the_phase_cap(self) -> None:
-        cap = plan_validator._session_cap(coach_state.phase_params(fx.STATE))
+        cap = plan_validator.phase_session_cap(coach_state.phase_params(fx.STATE))
         self.assertEqual(cap, 20)
         plan = self._plan([4, 4, 4, 3, 3, 2, 2])  # 22 сета, как карточка от 24.08
-        violations = plan_validator._semantic_violations(
-            plan, fx.CATALOG, fx.workouts(), fx.TODAY, session_cap=cap
+        bounds = plan_validator.bounds_from_history(
+            fx.workouts(), fx.CATALOG, fx.TODAY, session_cap=cap
         )
+        violations = plan_validator.violations(plan, bounds)
         self.assertEqual(len(violations), 1)
         self.assertIn("22 рабочих подходов при потолке сессии 20", violations[0])
 
     def test_trim_cuts_from_the_tail_and_keeps_every_exercise(self) -> None:
         plan = self._plan([4, 4, 4, 3, 3, 2, 2])
-        removed = plan_validator._trim_to_cap(plan, 20)
+        headline, removed = plan_validator._trim_to_cap(plan, plan_validator.Bounds(session_cap=20))
         self.assertEqual(plan_validator._planned_sets(plan), 20)
+        self.assertIn("сокращена до 20 рабочих подходов", headline)
         # С хвоста, по сету на упражнение за проход: два последних (изоляция)
         # теряют по сету; базовые в начале не тронуты.
         self.assertEqual([len(e["sets"]) for e in plan["exercises"]], [4, 4, 4, 3, 3, 1, 1])

@@ -21,7 +21,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from trainer.data import coach_prompts
-from trainer.domain import coach_features, coach_state, limits
+from trainer.domain import coach_features, coach_state, limits, plan_validator
 
 # Сколько сырых тренировок видит модель; всё старше покрывают вычисленные
 # сводки по упражнениям (промпт не должен расти от работы фич).
@@ -399,6 +399,9 @@ def _days_since_last(workouts: list[dict[str, Any]], today: date) -> int | None:
 _BLOCKS = coach_prompts.fragments("user_blocks")
 _PHASE_POLICY_TEMPLATE = coach_prompts.load("phase_policy")
 _PHASE_POLICY_SLOTS = coach_prompts.slots(_PHASE_POLICY_TEMPLATE)
+# Формулировки жёстких границ — тот же файл, из которого plan_validator берёт
+# строки нарушений: модель читает ровно то, что сервер проверяет.
+_RULES = coach_prompts.fragments("plan_rules")
 
 
 def _block(name: str, **values: str) -> str:
@@ -470,6 +473,29 @@ def _render_phase_policy(state: dict[str, Any] | None = None) -> str:
     return coach_prompts.render(_PHASE_POLICY_TEMPLATE, **values)
 
 
+def _render_hard_rules() -> str:
+    """Блок «ЖЁСТКИЕ ГРАНИЦЫ» системного промпта: нумерованный список формулировок
+    из ``plan_rules.md``. Первым — ``catalog_only`` (свойство JSON-схемы, а не
+    правило валидатора), дальше ``plan_validator.RULES`` в их порядке: список для
+    модели строится из той же таблицы, что проверяет сервер, и добавить проверку,
+    не сказав о ней модели, нельзя.
+    """
+    sentences = [_RULES["catalog_only"], *(_RULES[rule.name] for rule in plan_validator.RULES)]
+    last = len(sentences)
+    return "\n".join(
+        f"{index}) {sentence}{'.' if index == last else ';'}"
+        for index, sentence in enumerate(sentences, start=1)
+    )
+
+
+def _build_reprompt(violations: list[str]) -> str:
+    """Исправляющее сообщение после нарушений жёстких границ: строки валидатора
+    списком внутри текста ``reprompt`` из ``plan_rules.md``. Зовёт
+    ``recommender.generate_with_trace`` один раз, в том же разговоре.
+    """
+    return coach_prompts.render(_RULES["reprompt"], violations="- " + "\n- ".join(violations))
+
+
 def _build_system_prompt(
     catalog: list[dict[str, Any]],
     profile: dict[str, Any] | None = None,
@@ -478,8 +504,9 @@ def _build_system_prompt(
 ) -> str:
     """Системный промпт из шаблона ``prompts/system.md``.
 
-    Проза живёт в шаблоне; здесь только пять слотов: профиль, каталог с семантикой
-    тренажёров (без дубля id 1), пробелы каталога, политика фаз, срез стратегии.
+    Проза живёт в шаблоне; здесь только шесть слотов: профиль, каталог с семантикой
+    тренажёров (без дубля id 1), пробелы каталога, политика фаз, жёсткие границы
+    (из ``plan_rules.md`` в порядке ``plan_validator.RULES``), срез стратегии.
     Всё, что не вычисленное значение, должно уйти в markdown. Зовут
     ``recommender.generate_with_trace`` и Coach MCP (``coach_preview_prompt``).
     """
@@ -494,6 +521,7 @@ def _build_system_prompt(
         catalog=catalog_lines,
         catalog_gaps=CATALOG_GAPS,
         phase_policy=_render_phase_policy(state),
+        hard_rules=_render_hard_rules(),
         program=_render_program(strategy),
     )
 

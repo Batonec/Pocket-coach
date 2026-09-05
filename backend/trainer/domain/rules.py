@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Правила формы и границ входных данных.
 
-Всё, что сервер решает о присланном клиентом или MCP, до того как оно попадёт
-в базу: какие поля допустимы у тренировки, замера и события, что считается
-валидной датой, как санитизируется снапшот совета. Сами пределы — словари
-меток, диапазоны и потолки — лежат в ``limits`` с объяснением каждого числа.
-Хранилище (``data/backend_store``) зовёт эти функции и записывает то, что
-они вернули; само оно ничего не решает.
+Всё, что сервер решает о присланном клиентом, MCP или моделью, до того как
+оно попадёт в базу или к атлету: какие поля допустимы у тренировки, замера и
+события, что считается валидной датой, как санитизируются снапшот совета и
+план, который вернула модель. Сами пределы — словари меток, диапазоны и
+потолки — лежат в ``limits`` с объяснением каждого числа. Хранилище
+(``data/backend_store``) и ``recommender`` зовут эти функции и берут то, что
+они вернули; сами они ничего не решают.
 
 Механика разбора — типы, границы, тексты ошибок — вынесена в ``parsing``,
 чтобы здесь остались только правила и решения, то есть сама методика.
@@ -32,7 +33,7 @@ from trainer.data.parsing import (
     maybe_int,
     required_text,
 )
-from trainer.domain import limits
+from trainer.domain import coach_features, limits
 
 
 def normalize_load_type(value: object) -> str | None:
@@ -73,9 +74,12 @@ def _snapshot_text(value: object, limit: int) -> str | None:
     return as_text(value, limit=limit) if isinstance(value, str) else None
 
 
-def _snapshot_set(raw: object) -> dict[str, Any] | None:
-    """Подход из снапшота или ``None``, если он кривой. Величины не отвергаются,
-    а зажимаются: это копия нашего же совета, в ней важна форма, а не точность."""
+def _clamped_set(raw: object, *, max_reps: int, max_weight: float) -> dict[str, Any] | None:
+    """Подход из плана-эха — снапшота или ответа модели — либо ``None``, если он
+    кривой: не объект, повторы не целое от единицы, вес не конечное число.
+    Величины не отвергаются, а зажимаются: в копии совета важна форма, а не
+    точность; потолки у двух источников свои, из ``limits``.
+    """
     if not isinstance(raw, dict):
         return None
     try:
@@ -83,10 +87,7 @@ def _snapshot_set(raw: object) -> dict[str, Any] | None:
         weight = as_float(raw.get("weight"), "weight")
     except ValueError:
         return None
-    return {
-        "reps": min(reps, limits.SNAPSHOT_MAX_REPS),
-        "weight": min(max(weight, 0.0), limits.SNAPSHOT_MAX_WEIGHT),
-    }
+    return {"reps": min(reps, max_reps), "weight": min(max(weight, 0.0), max_weight)}
 
 
 def _snapshot_exercise(raw: object) -> dict[str, Any] | None:
@@ -96,7 +97,12 @@ def _snapshot_exercise(raw: object) -> dict[str, Any] | None:
     exercise_id = maybe_int(raw.get("exercise_id"))
     sets = [
         normalized
-        for normalized in (_snapshot_set(item) for item in raw["sets"][: limits.MAX_SNAPSHOT_SETS])
+        for normalized in (
+            _clamped_set(
+                item, max_reps=limits.SNAPSHOT_MAX_REPS, max_weight=limits.SNAPSHOT_MAX_WEIGHT
+            )
+            for item in raw["sets"][: limits.MAX_SNAPSHOT_SETS]
+        )
         if normalized is not None
     ]
     if exercise_id is None or not sets:
@@ -145,6 +151,84 @@ def normalize_recommendation_snapshot(value: object) -> dict[str, Any] | None:
 
     encoded = json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
     return snapshot if len(encoded) <= limits.MAX_RECOMMENDATION_SNAPSHOT_BYTES else None
+
+
+# --------------------------------------------------------------------------- #
+# План от модели: форма ответа поверх JSON-схемы
+# --------------------------------------------------------------------------- #
+def _plan_exercise(raw: object, names: dict[int, str]) -> dict[str, Any] | None:
+    """Упражнение из ответа модели или ``None``: не объект, id не каноническая
+    строка каталога, ни одного годного подхода. Имя — из каталога, а не то, что
+    модель повторила; алиас id (1 → 18) переводится в канонический, хотя enum
+    схемы его и так не предлагает. Годных подходов не больше
+    ``MAX_SETS_PER_EXERCISE``: кривые пропускаются, а не занимают место.
+    """
+    if not isinstance(raw, dict) or not isinstance(raw.get("sets"), list):
+        return None
+    exercise_id = coach_features.canonical_exercise_id(raw.get("exercise_id"))
+    if exercise_id is None or exercise_id not in names:
+        return None
+    sets = [
+        normalized
+        for normalized in (
+            _clamped_set(item, max_reps=limits.MAX_REPS, max_weight=limits.MAX_WEIGHT)
+            for item in raw["sets"]
+        )
+        if normalized is not None
+    ][: limits.MAX_SETS_PER_EXERCISE]
+    if not sets:
+        return None
+    return {
+        "exercise_id": exercise_id,
+        "name": names[exercise_id],
+        "note": as_text(raw.get("note")) or "",
+        "sets": sets,
+    }
+
+
+def normalize_model_plan(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, Any]:
+    """Форма плана, который вернула модель, поверх JSON-схемы.
+
+    Схема не умеет числовых диапазонов, поэтому повторы, веса, число подходов и
+    упражнений клампятся и фильтруются после разбора. Это гигиена, а не методика:
+    жёсткие границы держит ``plan_validator``. Метка нагрузки только из
+    ``PLANNED_LOAD_TYPES`` (иначе ``medium``); ``rest_days`` — целое в
+    0..``MAX_REST_DAYS``, кривое или пустое — 1, молча и без репромпта;
+    упражнения — только с каноническими id каталога и хотя бы одним годным
+    подходом, не больше ``MAX_EXERCISES``, имя каталожное. Ни одного упражнения —
+    ``ValueError``: для генерации это провал, а не пустой совет (``recommender``
+    переводит его в ``RecommendationError``).
+    """
+    names = {
+        item["id"]: item["name"]
+        for item in catalog
+        if item["id"] not in coach_features.EXERCISE_ALIASES
+    }
+    load_type = raw.get("load_type")
+    if load_type not in limits.PLANNED_LOAD_TYPES:
+        load_type = "medium"
+    try:
+        rest_days = min(max(as_int(raw.get("rest_days"), "rest_days"), 0), limits.MAX_REST_DAYS)
+    except ValueError:
+        rest_days = 1
+    raw_exercises = raw.get("exercises")
+    exercises = [
+        normalized
+        for normalized in (
+            _plan_exercise(item, names)
+            for item in (raw_exercises if isinstance(raw_exercises, list) else [])
+        )
+        if normalized is not None
+    ][: limits.MAX_EXERCISES]
+    if not exercises:
+        raise ValueError("Модель не предложила ни одного валидного упражнения")
+    return {
+        "focus": as_text(raw.get("focus")) or "",
+        "load_type": load_type,
+        "rest_days": rest_days,
+        "rationale": as_text(raw.get("rationale")) or "",
+        "exercises": exercises,
+    }
 
 
 # --------------------------------------------------------------------------- #

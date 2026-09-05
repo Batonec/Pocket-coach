@@ -27,7 +27,7 @@ class PromptTemplateTests(unittest.TestCase):
         """
         self.assertEqual(
             coach_prompts.slots(coach_prompts.load("system")),
-            {"profile", "catalog", "catalog_gaps", "phase_policy", "program"},
+            {"profile", "catalog", "catalog_gaps", "phase_policy", "hard_rules", "program"},
         )
 
     def test_missing_slot_raises(self):

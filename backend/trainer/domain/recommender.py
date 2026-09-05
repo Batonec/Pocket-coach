@@ -30,7 +30,7 @@ from trainer.data.anthropic_client import (
     DEFAULT_TIMEOUT,
     RecommendationError,
 )
-from trainer.domain import coach_features, coach_state, plan_validator, prompt_builder
+from trainer.domain import coach_features, coach_state, plan_validator, prompt_builder, rules
 
 DEFAULT_HISTORY_LIMIT = int(os.getenv("RECOMMENDATION_HISTORY_LIMIT", "20"))
 
@@ -75,11 +75,12 @@ def generate_with_trace(
     """То же, что :func:`generate`, плюс трасса попыток
     ``[{raw, adjustments, violations, usage}, ...]`` для отладочных инструментов MCP.
 
-    Порядок: системный промпт → user-промпт → JSON-схема → вызов модели →
-    санитизация (``plan_validator._validate``) → три жёсткие границы
-    (``_semantic_violations``) → при нарушениях один исправляющий репромпт в том же
-    разговоре → если модель промахнулась снова, детерминированное разрешение
-    (``_resolve_violations``) с пометкой в rationale → дата следующей тренировки и
+    Порядок: рамки сессии из истории (``plan_validator.bounds_from_history``) →
+    системный промпт → user-промпт → JSON-схема → вызов модели → форма ответа
+    (``rules.normalize_model_plan``) → три жёсткие границы
+    (``plan_validator.violations``) → при нарушениях один исправляющий репромпт в
+    том же разговоре → если модель промахнулась снова, детерминированное разрешение
+    (``plan_validator.resolve``) с пометкой в rationale → дата следующей тренировки и
     ``coach_context`` для клиента. Семантические нарушения никогда не роняют
     генерацию: ``RecommendationError`` только для API и структурных сбоев.
     Зовут :func:`generate` и ``coach_debug_recommendation`` в Coach MCP.
@@ -93,7 +94,12 @@ def generate_with_trace(
 
     today = today or date.today()
     state = state if state is not None else coach_state.default_state()
-    session_cap = plan_validator._session_cap(coach_state.phase_params(state))
+    bounds = plan_validator.bounds_from_history(
+        workouts,
+        catalog,
+        today,
+        session_cap=plan_validator.phase_session_cap(coach_state.phase_params(state)),
+    )
     system = prompt_builder._build_system_prompt(catalog, profile, state, strategy)
     user = prompt_builder._build_user_prompt(
         workouts,
@@ -120,10 +126,8 @@ def generate_with_trace(
 
     trace: list[dict[str, Any]] = []
     parsed, usage = call(user)
-    recommendation = plan_validator._validate(parsed, catalog)
-    violations = plan_validator._semantic_violations(
-        recommendation, catalog, workouts, today, session_cap=session_cap
-    )
+    recommendation = _normalized(parsed, catalog)
+    violations = plan_validator.violations(recommendation, bounds)
     trace.append(
         {
             "raw": parsed,
@@ -138,27 +142,16 @@ def generate_with_trace(
         # поимённо и просим переосмыслить план. Если модель промахивается
         # снова, сервер чинит детерминированно (ограничивает возвратные веса,
         # дописывает rationale), а не роняет генерацию.
-        reprompt = (
-            "Твой план нарушает жёсткие границы:\n- "
-            + "\n- ".join(violations)
-            + "\nИсправь ТОЛЬКО эти нарушения, сохрани остальную логику и верни "
-            "полный план заново в той же JSON-схеме."
-        )
+        reprompt = prompt_builder._build_reprompt(violations)
         messages = [
             {"role": "user", "content": user},
             {"role": "assistant", "content": json.dumps(parsed, ensure_ascii=False)},
             {"role": "user", "content": reprompt},
         ]
         parsed, usage_retry = call(messages)
-        recommendation = plan_validator._validate(parsed, catalog)
-        violations = plan_validator._semantic_violations(
-            recommendation, catalog, workouts, today, session_cap=session_cap
-        )
-        adjustments: list[str] = []
-        if violations:
-            adjustments = plan_validator._resolve_violations(
-                recommendation, catalog, workouts, today, session_cap=session_cap
-            )
+        recommendation = _normalized(parsed, catalog)
+        violations = plan_validator.violations(recommendation, bounds)
+        adjustments = plan_validator.resolve(recommendation, bounds) if violations else []
         trace.append(
             {
                 "raw": parsed,
@@ -177,6 +170,15 @@ def generate_with_trace(
     ).isoformat()
     recommendation["coach_context"] = _coach_context(state, workouts, today)
     return recommendation, usage, model, trace
+
+
+def _normalized(parsed: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, Any]:
+    """Форма ответа модели по ``rules``. План без единого годного упражнения — провал
+    генерации (``RecommendationError``), а не 400, как у кривого входа с клиента."""
+    try:
+        return rules.normalize_model_plan(parsed, catalog)
+    except ValueError as exc:
+        raise RecommendationError(str(exc)) from exc
 
 
 def _coach_context(
