@@ -98,20 +98,21 @@ REPORT_STRATEGY_SECTIONS = [
 
 
 def _render_program(strategy: str | None, sections: list[str] = STRATEGY_SECTIONS) -> str:
-    """Слот {{program}}: срез стратегии по ``sections`` либо пустая строка.
+    """Слот {{program}}: текст под заголовком «=== ПРОГРАММА ===», который держат
+    сами шаблоны, — подпись о приоритетах и срез стратегии по ``sections``.
 
-    Пустая строка намеренно: секция появляется целиком или не появляется
-    вовсе — иначе в промпте остался бы заголовок без содержания.
+    Без файла стратегии — строка-предупреждение, а не пустота: заголовок держит
+    шаблон, и секция без содержания читалась бы моделью как пропуск данных.
     """
     if not strategy:
-        return ""
+        return _block("program_absent")
     body, missing = coach_prompts.document_sections(strategy, sections)
     parts = [_block("program_header")]
     if missing:
         parts.append(_block("program_missing", sections=", ".join(missing)))
     if body:
         parts.append(body)
-    return "\n\n".join(parts) + "\n\n"
+    return "\n\n".join(parts)
 
 
 def _render_profile(profile: dict[str, Any] | None) -> str:

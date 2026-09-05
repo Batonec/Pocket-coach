@@ -78,9 +78,12 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertIn("Гейт этапа", built)
 
     def test_report_prompt_without_profile_still_builds(self):
+        """Заголовок «ПРОГРАММА» держит шаблон, поэтому без файла стратегии под ним
+        стоит предупреждение, а не пустота."""
         built = prompt_builder._build_report_system_prompt()
         self.assertNotIn("{{", built)
-        self.assertNotIn("=== ПРОГРАММА", built)
+        self.assertIn("=== ПРОГРАММА ===\nПРЕДУПРЕЖДЕНИЕ: документ стратегии не загружен", built)
+        self.assertEqual(built.count("=== ПРОГРАММА"), 1)
 
     def test_report_template_expects_exactly_the_computed_slots(self):
         self.assertEqual(
@@ -129,7 +132,7 @@ class PromptTemplateTests(unittest.TestCase):
         )
         built = prompt_builder._build_report_system_prompt()
         self.assertNotIn("<!--", built)
-        self.assertTrue(built.startswith("Ты — персональный силовой тренер"))
+        self.assertTrue(built.startswith("Ты — персональный фитнес-тренер"))
 
     def test_report_states_its_general_task_and_asks_the_four_course_questions(self):
         """Генеральная задача отчёта — курс к долгосрочной цели, а не только неделя:
@@ -210,10 +213,12 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertEqual(missing, ["Тренировочные дни"])
         self.assertIn("тело", body)
 
-    def test_program_slot_is_empty_without_a_strategy(self):
-        """Секция появляется целиком или не появляется вовсе."""
-        self.assertEqual(prompt_builder._render_program(None), "")
-        self.assertEqual(prompt_builder._render_program(""), "")
+    def test_program_slot_warns_without_a_strategy(self):
+        """Заголовок секции — в шаблоне, значит, слот не может быть пустым."""
+        for absent in (None, ""):
+            self.assertIn("документ стратегии не загружен", prompt_builder._render_program(absent))
+        # Со стратегией заголовка внутри слота нет: его печатает шаблон.
+        self.assertNotIn("===", prompt_builder._render_program("## 1. Прогрессия\nтело\n"))
 
     def test_program_warns_about_renamed_sections(self):
         rendered = prompt_builder._render_program("## 1. Прогрессия\nтело\n")
@@ -256,6 +261,12 @@ class BuiltPromptTests(unittest.TestCase):
         self.assertNotIn("{{", prompt)
         self.assertIn("=== ТРЕНАЖЁРЫ (каталог) ===", prompt)
         self.assertIn("=== ФАЗЫ ПОДГОТОВКИ ===", prompt)
+        self.assertEqual(prompt.count("=== ПРОГРАММА"), 1)
+        with_doc = prompt_builder._build_system_prompt(
+            catalog, strategy="## 4. Тренировочные дни\nкаркас\n"
+        )
+        self.assertEqual(with_doc.count("=== ПРОГРАММА"), 1)
+        self.assertIn("=== ПРОГРАММА ===\nНиже — куски рабочего документа", with_doc)
 
 
 if __name__ == "__main__":
