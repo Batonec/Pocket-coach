@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import io
-import json
 import unittest
-import urllib.error
 
 import support  # noqa: F401 — adds backend to sys.path
 from support import STATIC_DIR
 
+import anthropic_client
 import recommender
 
 CATALOG = [
@@ -378,7 +376,7 @@ class RestDaysTests(unittest.TestCase):
 
         os.environ["ANTHROPIC_API_KEY"] = "test-key"
         self.addCleanup(lambda: os.environ.pop("ANTHROPIC_API_KEY", None))
-        orig = recommender._call_anthropic
+        orig = anthropic_client._call_anthropic
         self.addCleanup(lambda: setattr(recommender, "_call_anthropic", orig))
         # Fullbody-ish plan over fresh history → no hard-bound violations.
         raw = self._raw(
@@ -398,7 +396,10 @@ class RestDaysTests(unittest.TestCase):
                 },
             ],
         )
-        recommender._call_anthropic = lambda *a, **k: (raw, {"input_tokens": 1, "output_tokens": 1})
+        anthropic_client._call_anthropic = lambda *a, **k: (
+            raw,
+            {"input_tokens": 1, "output_tokens": 1},
+        )
 
         # Recent history touches every coverage group, so the plan above is clean.
         history = [
@@ -1018,155 +1019,6 @@ class ReturnCeilingTests(unittest.TestCase):
         self.assertNotIn("связк", text)
 
 
-class RequestModelCachingTests(unittest.TestCase):
-    def test_body_carries_cache_control_and_optional_schema(self) -> None:
-        captured: dict = {}
-
-        class _Resp:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def read(self):
-                return json.dumps(
-                    {
-                        "content": [{"type": "text", "text": "привет"}],
-                        "usage": {"input_tokens": 1, "output_tokens": 2},
-                    }
-                ).encode("utf-8")
-
-        def fake_urlopen(request, timeout=None):
-            captured["body"] = json.loads(request.data.decode("utf-8"))
-            return _Resp()
-
-        orig = recommender.urllib.request.urlopen
-        self.addCleanup(lambda: setattr(recommender.urllib.request, "urlopen", orig))
-        recommender.urllib.request.urlopen = fake_urlopen
-
-        text, _usage = recommender._request_model(
-            "system text",
-            "user text",
-            schema=None,
-            model="m",
-            max_tokens=10,
-            api_key="k",
-            timeout=1,
-        )
-        self.assertEqual(text, "привет")
-        body = captured["body"]
-        self.assertEqual(body["system"][0]["cache_control"], {"type": "ephemeral"})
-        first_content = body["messages"][0]["content"]
-        self.assertEqual(first_content[0]["cache_control"], {"type": "ephemeral"})
-        # Без схемы формат не задаётся; effort живёт в том же output_config и
-        # к схеме отношения не имеет.
-        self.assertNotIn("format", body.get("output_config", {}))
-
-        recommender._request_model(
-            "system text",
-            "user text",
-            schema={"type": "object"},
-            model="m",
-            max_tokens=10,
-            api_key="k",
-            timeout=1,
-        )
-        self.assertIn("format", captured["body"]["output_config"])
-
-    def test_effort_is_sent_when_configured(self) -> None:
-        captured: dict = {}
-
-        class _Resp:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def read(self):
-                return json.dumps(
-                    {
-                        "content": [{"type": "text", "text": "ок"}],
-                        "usage": {},
-                    }
-                ).encode("utf-8")
-
-        def fake_urlopen(request, timeout=None):
-            captured["body"] = json.loads(request.data.decode("utf-8"))
-            return _Resp()
-
-        orig = recommender.urllib.request.urlopen
-        self.addCleanup(lambda: setattr(recommender.urllib.request, "urlopen", orig))
-        recommender.urllib.request.urlopen = fake_urlopen
-
-        orig_effort = recommender.DEFAULT_EFFORT
-        self.addCleanup(lambda: setattr(recommender, "DEFAULT_EFFORT", orig_effort))
-
-        recommender.DEFAULT_EFFORT = "medium"
-        recommender._request_model(
-            "s",
-            "u",
-            schema=None,
-            model="m",
-            max_tokens=10,
-            api_key="k",
-            timeout=1,
-        )
-        self.assertEqual(captured["body"]["output_config"]["effort"], "medium")
-
-        # Пустая строка — способ вообще не слать effort (например, на модели,
-        # где уровень недоступен).
-        recommender.DEFAULT_EFFORT = ""
-        recommender._request_model(
-            "s",
-            "u",
-            schema=None,
-            model="m",
-            max_tokens=10,
-            api_key="k",
-            timeout=1,
-        )
-        self.assertNotIn("output_config", captured["body"])
-
-    def test_max_tokens_stop_reason_names_the_budget(self) -> None:
-        """Мышление тратит тот же max_tokens, поэтому обрезанный ответ должен
-        жаловаться на бюджет, а не выглядеть как сломанная схема."""
-
-        class _Resp:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def read(self):
-                return json.dumps(
-                    {
-                        "stop_reason": "max_tokens",
-                        "content": [{"type": "text", "text": '{"focus": "нез'}],
-                        "usage": {},
-                    }
-                ).encode("utf-8")
-
-        orig = recommender.urllib.request.urlopen
-        self.addCleanup(lambda: setattr(recommender.urllib.request, "urlopen", orig))
-        recommender.urllib.request.urlopen = lambda request, timeout=None: _Resp()
-
-        with self.assertRaises(recommender.RecommendationError) as ctx:
-            recommender._request_model(
-                "s",
-                "u",
-                schema={"type": "object"},
-                model="m",
-                max_tokens=777,
-                api_key="k",
-                timeout=1,
-            )
-        self.assertIn("777", str(ctx.exception))
-        self.assertIn("ANTHROPIC_MAX_TOKENS", str(ctx.exception))
-
-
 class WeeklyReportTests(unittest.TestCase):
     def test_report_prompt_assembles_and_returns_text(self) -> None:
         import os
@@ -1180,9 +1032,9 @@ class WeeklyReportTests(unittest.TestCase):
             seen["system"], seen["user"] = system, user
             return "**Итоги недели** — всё по плану.", {"input_tokens": 3, "output_tokens": 4}
 
-        orig = recommender._request_model
+        orig = anthropic_client._request_model
         self.addCleanup(lambda: setattr(recommender, "_request_model", orig))
-        recommender._request_model = fake_request
+        anthropic_client._request_model = fake_request
 
         workouts = [
             {
@@ -1234,7 +1086,7 @@ class GenerateRepromptTests(unittest.TestCase):
 
         os.environ["ANTHROPIC_API_KEY"] = "test-key"
         self.addCleanup(lambda: os.environ.pop("ANTHROPIC_API_KEY", None))
-        self._orig = recommender._call_anthropic
+        self._orig = anthropic_client._call_anthropic
         self.addCleanup(lambda: setattr(recommender, "_call_anthropic", self._orig))
 
     def _history(self, when: str = "2026-06-10"):
@@ -1323,7 +1175,7 @@ class GenerateRepromptTests(unittest.TestCase):
             calls.append(user if isinstance(user, list) else [{"role": "user", "content": user}])
             return answers[len(calls) - 1], {"input_tokens": 10, "output_tokens": 5}
 
-        recommender._call_anthropic = fake_call
+        anthropic_client._call_anthropic = fake_call
         rec, usage, _model, trace = recommender.generate_with_trace(
             self._dry_hamstrings_history(), [], self.CATALOG, today=_date(2026, 6, 12)
         )
@@ -1346,7 +1198,7 @@ class GenerateRepromptTests(unittest.TestCase):
             calls += 1
             return self._fullbody_raw(), {"input_tokens": 10, "output_tokens": 5}
 
-        recommender._call_anthropic = fake_call
+        anthropic_client._call_anthropic = fake_call
         # 13 sets under the default cut_recomp cap of 20: served untouched — the
         # lower bound of the corridor is not policed, and nothing is trimmed.
         rec, _usage, _model, trace = recommender.generate_with_trace(
@@ -1371,7 +1223,7 @@ class GenerateRepromptTests(unittest.TestCase):
             calls += 1
             return self._fullbody_raw(), {"input_tokens": 10, "output_tokens": 5}
 
-        recommender._call_anthropic = fake_call
+        anthropic_client._call_anthropic = fake_call
         # 13 sets against the maintenance cap of 12, twice: one reprompt names
         # the cap, then the server drops a set from the tail and says so.
         state = dict(coach_state.load_state(None), phase="maintenance")
@@ -1392,7 +1244,7 @@ class GenerateRepromptTests(unittest.TestCase):
 
         # The model ignores the dry hamstrings twice → the plan is still
         # served, with the unmet bound surfaced in the rationale.
-        recommender._call_anthropic = lambda *a, **k: (
+        anthropic_client._call_anthropic = lambda *a, **k: (
             self._fullbody_raw(with_hamstrings=False),
             {"input_tokens": 1, "output_tokens": 1},
         )
@@ -1410,7 +1262,7 @@ class GenerateRepromptTests(unittest.TestCase):
 
         # 21 days off; the model insists on 105 over the pre-break 100 twice →
         # the server clamps the offending sets and says so in the rationale.
-        recommender._call_anthropic = lambda *a, **k: (
+        anthropic_client._call_anthropic = lambda *a, **k: (
             self._fullbody_raw(leg_press=105),
             {"input_tokens": 1, "output_tokens": 1},
         )
@@ -1423,79 +1275,6 @@ class GenerateRepromptTests(unittest.TestCase):
         self.assertTrue(all(s["weight"] == 100 for s in leg_press["sets"]))
         self.assertIn("Проверка методики", rec["rationale"])
         self.assertIn("доперерывным", rec["rationale"])
-
-
-class _FakeResponse:
-    def __init__(self, body: bytes) -> None:
-        self._body = body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc) -> bool:
-        return False
-
-    def read(self) -> bytes:
-        return self._body
-
-
-def _http_error(code: int) -> urllib.error.HTTPError:
-    return urllib.error.HTTPError("http://x", code, "msg", None, io.BytesIO(b"detail"))
-
-
-class FetchRetryTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self._orig = recommender.urllib.request.urlopen
-        self.addCleanup(lambda: setattr(recommender.urllib.request, "urlopen", self._orig))
-        self.slept: list[float] = []
-
-    def _fetch(self, max_retries: int = 2):
-        return recommender._fetch_anthropic(
-            object(),
-            timeout=1,
-            max_retries=max_retries,
-            backoff=0.5,
-            sleep=self.slept.append,
-        )
-
-    def _patch(self, sequence) -> list[int]:
-        calls = {"n": 0}
-        it = iter(sequence)
-
-        def fake_urlopen(request, timeout=None):
-            calls["n"] += 1
-            item = next(it)
-            if isinstance(item, Exception):
-                raise item
-            return _FakeResponse(item)
-
-        recommender.urllib.request.urlopen = fake_urlopen
-        return calls
-
-    def test_retries_transient_then_succeeds(self) -> None:
-        calls = self._patch([_http_error(503), b"ok"])
-        self.assertEqual(self._fetch(), "ok")
-        self.assertEqual(calls["n"], 2)
-        self.assertEqual(self.slept, [0.5])  # one backoff before the 2nd try
-
-    def test_permanent_error_is_not_retried(self) -> None:
-        calls = self._patch([_http_error(400)])
-        with self.assertRaises(recommender.RecommendationError):
-            self._fetch()
-        self.assertEqual(calls["n"], 1)
-        self.assertEqual(self.slept, [])
-
-    def test_exhausts_retries_on_persistent_transient(self) -> None:
-        calls = self._patch([_http_error(529), _http_error(529), _http_error(529)])
-        with self.assertRaisesRegex(recommender.RecommendationError, "529"):
-            self._fetch(max_retries=2)
-        self.assertEqual(calls["n"], 3)  # initial + 2 retries
-        self.assertEqual(self.slept, [0.5, 1.0])  # exponential backoff
-
-    def test_url_error_retried_then_raised(self) -> None:
-        calls = self._patch([urllib.error.URLError("conn reset"), b"ok"])
-        self.assertEqual(self._fetch(), "ok")
-        self.assertEqual(calls["n"], 2)
 
 
 if __name__ == "__main__":

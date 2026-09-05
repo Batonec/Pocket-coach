@@ -128,7 +128,7 @@ Claude Desktop ──MCP──►  coach_mcp/server.py  ────────
 | --- | --- | :---: |
 | [`coach_state.py`](./backend/coach_state.py) | фаза подготовки, неделя блока, ramp объёма, плановый deload, режим возврата после перерыва | — |
 | [`coach_features.py`](./backend/coach_features.py) | e1RM, ПР, % от пика, эффективные объёмы, детектор застоя, тренды веса и талии, дисциплина | — |
-| [`recommender.py`](./backend/recommender.py) | промпт → structured output → семантический валидатор → один авто-репромпт | **да** |
+| [`recommender.py`](./backend/recommender.py) | промпт → structured output → семантический валидатор → один авто-репромпт; сам HTTP к API — в [`anthropic_client.py`](./backend/anthropic_client.py) | **да** |
 | [`coach_signals.py`](./backend/coach_signals.py) | баннеры: пороги, шаблоны текста, схлопывание семей | — |
 
 Валидатор проверяет **ровно две жёсткие границы**: покрытие мышечных групп и возвратный потолок весов после перерыва. Диапазоны повторов, размер сессии и чередование нагрузок сознательно не проверяются — это суждение модели, направляемое промптом, а не константы в коде.

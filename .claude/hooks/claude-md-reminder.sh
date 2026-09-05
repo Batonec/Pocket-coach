@@ -7,7 +7,8 @@
 #   1) появился или исчез модуль в backend/ · coach_mcp/ · ios/TrainerIOS/;
 #   2) тронуты места, которые надо держать в синхроне руками
 #      (CI-воркфлоу, deploy.sh, project.pbxproj);
-#   3) тронута граница «алгоритм / LLM» (recommender.py, coach_signals.py).
+#   3) тронута граница «алгоритм / LLM» (recommender.py, anthropic_client.py,
+#      coach_signals.py).
 set -uo pipefail
 
 repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)" || exit 0
@@ -47,7 +48,7 @@ printf '%s\n' "$paths" \
   && add_reason "тронуты места ручного синхрона (CI / deploy.sh / project.pbxproj)"
 
 printf '%s\n' "$paths" \
-  | grep -qE '^backend/(recommender|coach_signals)\.py$' \
+  | grep -qE '^backend/(recommender|anthropic_client|coach_signals)\.py$' \
   && add_reason "тронута граница «алгоритм / LLM»"
 
 [ -n "$reasons" ] || exit 0

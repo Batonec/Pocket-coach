@@ -74,6 +74,7 @@ jobs:
             backend/server.py \
             backend/backend_store.py \
             backend/recommender.py \
+            backend/anthropic_client.py \
             backend/coach_state.py \
             backend/coach_features.py \
             backend/coach_signals.py \
@@ -103,7 +104,7 @@ jobs:
         run: |
           set -eu
           ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "\
-            chmod 644 '$DEPLOY_BASE/app/server.py' '$DEPLOY_BASE/app/backend_store.py' '$DEPLOY_BASE/app/recommender.py' '$DEPLOY_BASE/app/coach_state.py' '$DEPLOY_BASE/app/coach_features.py' '$DEPLOY_BASE/app/coach_signals.py' '$DEPLOY_BASE/app/coach_prompts.py' '$DEPLOY_BASE/app/refresh_recommendation.py' '$DEPLOY_BASE/app/weekly_report.py' '$DEPLOY_BASE/app/backup_db.py' '/etc/systemd/system/$BACKEND_SERVICE' && \
+            chmod 644 '$DEPLOY_BASE/app/server.py' '$DEPLOY_BASE/app/backend_store.py' '$DEPLOY_BASE/app/recommender.py' '$DEPLOY_BASE/app/anthropic_client.py' '$DEPLOY_BASE/app/coach_state.py' '$DEPLOY_BASE/app/coach_features.py' '$DEPLOY_BASE/app/coach_signals.py' '$DEPLOY_BASE/app/coach_prompts.py' '$DEPLOY_BASE/app/refresh_recommendation.py' '$DEPLOY_BASE/app/weekly_report.py' '$DEPLOY_BASE/app/backup_db.py' '/etc/systemd/system/$BACKEND_SERVICE' && \
             chmod 644 '$DEPLOY_BASE/app/prompts/'*.md '$DEPLOY_BASE/app/copy/'*.md && \
             test -f /etc/trainer-miniapp/backend.env && \
             systemctl daemon-reload && \
