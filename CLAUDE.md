@@ -18,7 +18,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Всё запускается из корня репозитория. Backend — **чистый stdlib Python**, без зависимостей и без
 venv; единственный компонент с pip-зависимостями — `coach_mcp/`. **На VPS системный Python 3.10**,
 локально 3.13: CI гоняет suite на обеих, а `target-version = "py310"` в `ruff.toml` держит pyupgrade
-от подсказок в сторону 3.11+ (`datetime.UTC`, `tomllib`, `StrEnum`, вложенные кавычки в f-строках).
+от подсказок в сторону 3.11+ (`datetime.UTC`, `tomllib`, `StrEnum`, вложенные кавычки в f-строках,
+`date.fromisoformat`, который там принимает и `20260801`: даты с клиента гейтит регулярка в
+`backend_store._parse_input_date`).
 Ничего из этого в `backend/` и `coach_mcp/` не использовать, пока VPS не обновлён; тогда поднять и
 матрицу, и target-version.
 

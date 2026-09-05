@@ -13,6 +13,7 @@ if str(MINIAPP_DIR) not in sys.path:
 from trainer.backend_store import (
     MiniAppStore,
     normalize_body_weight_payload,
+    normalize_waist_payload,
     normalize_workout_payload,
 )
 
@@ -693,25 +694,31 @@ class NormalizeWorkoutPayloadTest(unittest.TestCase):
             )
 
     def test_rejects_invalid_workout_date_format(self) -> None:
-        with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
-            normalize_workout_payload(
-                {
-                    "client_id": "invalid-date",
-                    "workout_date": "28-03-2026",
-                    "plan_id": None,
-                    "data": {
-                        "notes": None,
-                        "load_type": None,
-                        "exercises": [
-                            {
-                                "exercise_id": 1,
-                                "name": "Bench",
-                                "sets": [{"reps": 10, "weight": 80}],
-                            }
-                        ],
-                    },
-                }
-            )
+        # «20260328» в 3.11+ прошёл бы через date.fromisoformat, на VPS (3.10) — нет;
+        # формат один для любого интерпретатора: только YYYY-MM-DD.
+        for workout_date in ("28-03-2026", "20260328"):
+            with (
+                self.subTest(workout_date=workout_date),
+                self.assertRaisesRegex(ValueError, "YYYY-MM-DD"),
+            ):
+                normalize_workout_payload(
+                    {
+                        "client_id": "invalid-date",
+                        "workout_date": workout_date,
+                        "plan_id": None,
+                        "data": {
+                            "notes": None,
+                            "load_type": None,
+                            "exercises": [
+                                {
+                                    "exercise_id": 1,
+                                    "name": "Bench",
+                                    "sets": [{"reps": 10, "weight": 80}],
+                                }
+                            ],
+                        },
+                    }
+                )
 
     def test_requires_client_id_or_id(self) -> None:
         with self.assertRaisesRegex(ValueError, "client_id is required"):
@@ -749,13 +756,20 @@ class NormalizeBodyWeightPayloadTest(unittest.TestCase):
         self.assertEqual(payload["notes"], "Morning")
 
     def test_rejects_invalid_body_weight_date(self) -> None:
-        with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
-            normalize_body_weight_payload(
-                {
-                    "entry_date": "28-03-2026",
-                    "weight": 82.4,
-                }
-            )
+        for entry_date in ("28-03-2026", "20260328"):
+            with (
+                self.subTest(entry_date=entry_date),
+                self.assertRaisesRegex(ValueError, "YYYY-MM-DD"),
+            ):
+                normalize_body_weight_payload({"entry_date": entry_date, "weight": 82.4})
+
+    def test_rejects_invalid_waist_date(self) -> None:
+        for entry_date in ("28-03-2026", "20260328"):
+            with (
+                self.subTest(entry_date=entry_date),
+                self.assertRaisesRegex(ValueError, "YYYY-MM-DD"),
+            ):
+                normalize_waist_payload({"entry_date": entry_date, "waist": 90.0})
 
     def test_rejects_non_positive_body_weight(self) -> None:
         with self.assertRaisesRegex(ValueError, "greater than 0"):
