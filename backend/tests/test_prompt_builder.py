@@ -1,12 +1,16 @@
-"""Сборка промпта: отчёт «факт против плана» и сериализация истории с RIR и каноническими именами."""
+"""Сборка промпта: отчёт «факт против плана», сериализация истории с RIR и
+каноническими именами, состав user-промпта недельного отчёта."""
 
 from __future__ import annotations
 
 import unittest
+from datetime import date
 
 import support  # noqa: F401 — кладёт backend в sys.path
+from support import CATALOG_PATH
 
-from trainer.domain import prompt_builder, rules
+from trainer.data import files
+from trainer.domain import coach_state, prompt_builder, rules
 
 
 class CoachContextTests(unittest.TestCase):
@@ -103,3 +107,51 @@ class SerializationTests(unittest.TestCase):
         out = rules.normalize_model_plan(raw, catalog)
         self.assertEqual(out["exercises"][0]["exercise_id"], 18)
         self.assertEqual(out["exercises"][0]["name"], "Жим в тренажере")
+
+
+class ReportPromptTests(unittest.TestCase):
+    """User-промпт недельного отчёта: что в нём есть кроме тренировок недели."""
+
+    TODAY = date(2026, 6, 14)  # воскресенье закрытой недели 8–14 июня
+
+    def _workout(self, when: str, weight: float) -> dict:
+        """Жим ногами тремя подходами на одном весе."""
+        return {
+            "workout_date": when,
+            "data": {
+                "load_type": "medium",
+                "exercises": [
+                    {
+                        "exercise_id": 8,
+                        "name": "Жим ногами",
+                        "sets": [{"reps": 10, "weight": weight, "effort": "hard"}] * 3,
+                    }
+                ],
+            },
+        }
+
+    def _report(self, workouts: list[dict]) -> str:
+        """Промпт отчёта на настоящем каталоге и состоянии по умолчанию."""
+        return prompt_builder._build_report_prompt(
+            workouts,
+            [],
+            [],
+            files.load_catalog(CATALOG_PATH),
+            coach_state.default_state(),
+            self.TODAY,
+            7,
+        )
+
+    def test_summaries_give_the_report_a_baseline_beyond_the_week(self) -> None:
+        """Отчёт видит одну неделю сырых подходов; «движение весов» и силовой гейт
+        подтверждаются только сводкой по тренажёрам — той же, что читает план."""
+        prompt = self._report([self._workout("2026-06-12", 105), self._workout("2026-06-03", 100)])
+        self.assertIn("Сводка по тренажёрам за ВСЮ историю", prompt)
+        self.assertIn("Жим ногами: пик 105×10", prompt)
+        # Легенда стоит у сырых строк недели — метка «+» иначе читалась бы наугад.
+        self.assertIn("Тренировки за период (1), от старых к новым. Формат строки", prompt)
+        self.assertIn("105кг×10+", prompt)
+
+    def test_single_session_history_has_no_summary_block(self) -> None:
+        prompt = self._report([self._workout("2026-06-12", 105)])
+        self.assertNotIn("Сводка по тренажёрам", prompt)

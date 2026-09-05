@@ -662,7 +662,7 @@ def _build_user_prompt(
 
     raw_count = min(history_limit, RAW_HISTORY_COUNT)
     shown_events, dropped_events = _clip_events(events)
-    header = [_block("raw_history_header", count=str(raw_count))]
+    header = [_block("raw_history_header", count=str(raw_count), legend=_block("history_legend"))]
     if shown_events:
         header.append(_block("raw_history_events"))
     if dropped_events:
@@ -773,17 +773,21 @@ _REPORT_TEMPLATE = coach_prompts.load("report")
 def _build_report_system_prompt(
     profile: dict[str, Any] | None = None,
     strategy: str | None = None,
+    state: dict[str, Any] | None = None,
 ) -> str:
-    """Системный промпт недельного отчёта.
+    """Системный промпт недельного отчёта: профиль, политика фаз, срез программы.
 
     До этого он был константой: отчёт не получал ни профиля, ни программы, то
     есть писался про абстрактного атлета. Гейту этапа при этом негде было
     прозвучать — а гейт жёсткий, и должно существовать место, где его статус
-    называют вслух.
+    называют вслух. Политика фаз — та же, что у плана, и рендерится из
+    параметров атлета: без неё блок «без ПР — и почему это ок» писался бы, не
+    зная, что на срезе плато по весам не проблема, а на удержании объём не растёт.
     """
     return coach_prompts.render(
         _REPORT_TEMPLATE,
         profile=_render_profile(profile),
+        phase_policy=_render_phase_policy(state),
         program=_render_program(strategy),
     )
 
@@ -800,11 +804,12 @@ def _build_report_prompt(
 ) -> str:
     """User-промпт недельного отчёта за ``days`` дней до ``today`` включительно.
 
-    Период и фаза → тренировки периода хроникой → события периода (пустой блок
-    тоже нужен: «событий нет» значит, что пропуски ничем не объяснены) → объём →
-    явка → ПР периода → предусловия и застой → замеры и матрица питания →
-    дисциплина → что дальше (разгрузка сейчас, скоро или цель следующей недели)
-    → задача. Зовёт ``recommender.generate_weekly_report``.
+    Период и фаза → тренировки периода хроникой (с той же легендой, что у
+    плана) → события периода (пустой блок тоже нужен: «событий нет» значит, что
+    пропуски ничем не объяснены) → объём → явка → ПР периода → сводки по
+    тренажёрам → предусловия и застой → замеры и матрица питания → дисциплина →
+    что дальше (разгрузка сейчас, скоро или цель следующей недели) → задача.
+    Зовёт ``recommender.generate_weekly_report``.
     """
     params = coach_state.phase_params(state)
     position = coach_state.cycle_position(state, workouts, today)
@@ -837,7 +842,11 @@ def _build_report_prompt(
 
     if week_workouts:
         chunks.append(
-            _block("report_workouts_header", count=str(len(week_workouts)))
+            _block(
+                "report_workouts_header",
+                count=str(len(week_workouts)),
+                legend=_block("history_legend"),
+            )
             + "\n"
             + _serialize_history(week_workouts, len(week_workouts), catalog)
         )
@@ -892,6 +901,11 @@ def _build_report_prompt(
     chunks.append(
         _block("report_prs_header") + "\n" + "\n".join(prs) if prs else _block("report_no_prs")
     )
+    # Сводки по тренажёрам — те же, что читает план: без них отчёт видел одну
+    # неделю сырых подходов без прошлой, и «движение весов» с силовым гейтом
+    # ему было нечем подтвердить.
+    if summaries:
+        chunks.append(_block("summaries_header") + "\n" + render_exercise_summaries(summaries))
 
     matrix = coach_features.nutrition_matrix(state, params, body_weights, waists, today)
     chunks.append(_render_stall(workouts, summaries, matrix, params, state, today))

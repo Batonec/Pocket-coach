@@ -298,7 +298,7 @@ def generate_weekly_report(
         workouts, body_weights, waists, catalog, state, today, max(1, int(days)), events=events
     )
     text, usage = anthropic_client._request_model(
-        prompt_builder._build_report_system_prompt(profile, strategy),
+        prompt_builder._build_report_system_prompt(profile, strategy, state),
         user,
         schema=None,
         model=model,

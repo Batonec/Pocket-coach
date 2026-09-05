@@ -82,6 +82,24 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertNotIn("{{", built)
         self.assertNotIn("=== ПРОГРАММА", built)
 
+    def test_report_template_expects_exactly_the_computed_slots(self):
+        self.assertEqual(
+            coach_prompts.slots(coach_prompts.load("report")),
+            {"profile", "phase_policy", "program"},
+        )
+
+    def test_report_prompt_carries_the_athletes_phase_policy(self):
+        """Политика фаз в отчёте рендерится из параметров атлета, как у плана:
+        «без ПР — и почему это ок» иначе судилось бы без правил самой фазы."""
+        from trainer.domain import coach_state
+
+        state = coach_state.default_state()
+        state["phase_params"] = {"cut_recomp": {"calories": [1850, 1950]}}
+        built = prompt_builder._build_report_system_prompt(state=state)
+        self.assertIn("=== ФАЗЫ ПОДГОТОВКИ ===", built)
+        self.assertIn("калории 1850–1950 ккал", built)
+        self.assertNotIn("{{", built)
+
     def test_header_comment_is_stripped_on_load(self):
         """Шапка «<!-- … -->» в начале файла — для человека: у цельного шаблона без
         среза она уехала бы в системный промпт, а слот, упомянутый в ней, стал бы
