@@ -122,10 +122,7 @@ def _render_profile(profile: dict[str, Any] | None) -> str:
     строку; без профиля — нейтральный фолбэк про взрослого здорового любителя.
     """
     if not profile:
-        return (
-            "Профиль атлета не настроен — веди как взрослого здорового любителя, "
-            "цель: качественный набор мышечной массы."
-        )
+        return _block("profile_absent")
     parts = []
     for title, text in profile.get("blocks", {}).items():
         body = str(text).strip()
@@ -478,9 +475,7 @@ def _render_previous_card(
         else 0
     )
     status = (
-        f"после неё записано тренировок: {newer} — она уже отработана"
-        if newer
-        else "тренировок по ней ещё не было — ты пересобираешь ту же сессию"
+        _block("previous_card_used", count=str(newer)) if newer else _block("previous_card_unused")
     )
     exercises = ", ".join(
         f"{exercise.get('name') or exercise.get('exercise_id')} ×{len(exercise.get('sets') or [])}"
@@ -496,7 +491,7 @@ def _render_previous_card(
         focus=" ".join(str(payload.get("focus") or "").split()) or "—",
         load=str(payload.get("load_type") or "?"),
         exercises=exercises or "—",
-        advice=f" Обещание на следующую сессию из её rationale: «{advice}»." if advice else "",
+        advice=_block("previous_card_promise", advice=advice) if advice else "",
     )
 
 
@@ -1249,25 +1244,27 @@ def render_weekly_volume(
             line = f"  {group}: {counts['direct']} прямых / {effective} эффективных"
         lines.append(line)
     if group_targets:
-        lines.append(
-            "  Цели — в ПРЯМЫХ сетах на круг из четырёх тренировок (один проход каркаса; по "
-            "программе это неделя четырёхдневки) и на объём ЗРЕЛОГО блока; на неделях разгона "
-            "идём к ним снизу, ориентир — в разделе ПРОГРАММА. Эффективные сеты справочные: "
-            "показывают, сколько косвенной работы группа уже получила, но цель не закрывают."
-        )
+        lines.append(_block("round_targets_note"))
     elif week_target:
         small = ", ".join(
             f"{group} {low}–{high}"
             for group, (low, high) in coach_features.SMALL_GROUP_TARGETS.items()
         )
         lines.append(
-            f"  Цель круга (недели блока) для крупных групп: {week_target[0]}–{week_target[1]} "
-            f"эффективных сетов; ориентиры малых групп (прямых): {small}."
+            _block(
+                "round_default_targets",
+                low=str(week_target[0]),
+                high=str(week_target[1]),
+                small=small,
+            )
         )
     elif maintenance_sets:
         lines.append(
-            f"  Режим поддержания: {maintenance_sets[0]}–{maintenance_sets[1]} сета на группу "
-            "в неделю, объём НЕ растёт."
+            _block(
+                "maintenance_targets",
+                low=str(maintenance_sets[0]),
+                high=str(maintenance_sets[1]),
+            )
         )
     return "\n".join(lines)
 
@@ -1281,38 +1278,27 @@ def render_stall_report(report: dict[str, Any]) -> str:
         f"{group} {value:.1f} (порог {threshold:g})"
         for group, (value, threshold) in report["volume_per_round"].items()
     )
-    facts = (
-        f"Активное окно {report['window_days']} дн. (с {report['window_start'].isoformat()}; "
-        "перерыв ≥14 дней и прошлая фаза в него не входят): "
-        f"частота {report['frequency']:.1f}/нед; прямых сетов за круг из "
-        f"{coach_features.ROUND_SESSIONS} тренировок: {volume}."
+    facts = _block(
+        "stall_window",
+        days=str(report["window_days"]),
+        start=report["window_start"].isoformat(),
+        frequency=f"{report['frequency']:.1f}",
+        sessions=str(coach_features.ROUND_SESSIONS),
+        volume=volume,
     )
     if report["too_short"]:
-        verdict = (
-            f"Окно короче {coach_features.STALL_MIN_WINDOW_DAYS} дней — предусловия прогресса и застой "
-            "пока не оцениваются."
-        )
+        verdict = _block("stall_too_short", days=str(coach_features.STALL_MIN_WINDOW_DAYS))
     elif not report["preconditions_ok"]:
-        verdict = (
-            "Предусловия прогресса НЕ выполнены ("
-            + "; ".join(report["reasons"])
-            + ") — плато, если оно есть, объясняй посещаемостью/питанием, а не потолком."
-        )
+        verdict = _block("stall_preconditions_failed", reasons="; ".join(report["reasons"]))
     elif report["stalled"]:
         names = ", ".join(
             f"{s['name']} (без прироста {s['quiet_days']} дн.)" for s in report["stalled"]
         )
-        verdict = (
-            f"ЗАСТОЙ при выполненных предусловиях (частота/объём/питание в норме): {names}. "
-            "Предложи deload −10% с разгоном или вариацию по этим движениям."
-        )
+        verdict = _block("stall_detected", names=names)
     elif report["window_days"] < coach_features.STALL_NO_PR_DAYS:
-        verdict = (
-            f"Предусловия прогресса выполнены; окну меньше {coach_features.STALL_NO_PR_DAYS} дней — "
-            "застой ещё не оценивается."
-        )
+        verdict = _block("stall_window_young", days=str(coach_features.STALL_NO_PR_DAYS))
     else:
-        verdict = "Предусловия прогресса выполнены, застоя по упражнениям нет."
+        verdict = _block("stall_clear")
     return f"{facts}\n{verdict}"
 
 
@@ -1338,13 +1324,7 @@ def render_pre_break_weights(items: list[dict[str, Any]], break_days: int) -> st
         f"  {item['name']}: {item['last_working']:g}" + (" противовеса" if item["inverted"] else "")
         for item in items
     ]
-    return (
-        f"Рабочие веса в последней сессии ПЕРЕД перерывом ({break_days} дн. "
-        "назад). Это форма до паузы, а не сегодняшняя: отметки усилия и RIR в "
-        "истории тоже относятся к тем сессиям. Насколько снизить вход и как "
-        "быстро возвращаться к этим весам — решай сам по принципам возврата "
-        "после перерыва.\n" + "\n".join(lines)
-    )
+    return _block("pre_break_header", days=str(break_days)) + "\n" + "\n".join(lines)
 
 
 def render_comeback_ramp(items: list[dict[str, Any]]) -> list[str]:
@@ -1378,7 +1358,7 @@ def render_measurements(
         count = coach_features.weigh_ins_in_window(weights, today)
         line = f"Вес тела: {tail}. Дней с последнего замера: {age}. Замеров за последние 7 дней: {count}"
         line += (
-            f" (для недельной средней нужно ≥{coach_features.WEEKLY_MEAN_MIN_POINTS})."
+            _block("weekly_mean_hint", points=str(coach_features.WEEKLY_MEAN_MIN_POINTS)) + "."
             if count < coach_features.WEEKLY_MEAN_MIN_POINTS
             else "."
         )
