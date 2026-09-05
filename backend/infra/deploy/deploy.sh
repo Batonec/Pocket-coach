@@ -132,9 +132,6 @@ deploy_backend() {
   # включает — enable делается руками один раз.
   scp "$SCRIPT_DIR"/*.service "$SCRIPT_DIR"/*.timer "${TARGET_HOST}:/etc/systemd/system/" >/dev/null
   scp "$SCRIPT_DIR/trainer-miniapp-backend.service" "${TARGET_HOST}:/etc/systemd/system/${BACKEND_SERVICE}" >/dev/null
-  # Плоская раскладка до пакета trainer/ держала модули прямо в app/, а тексты
-  # баннеров — в app/copy/. Строку можно убрать после первого деплоя новой раскладки.
-  remote "cd '$REMOTE_BASE/app' && rm -f backend_store.py anthropic_client.py coach_features.py coach_prompts.py coach_signals.py coach_state.py plan_validator.py prompt_builder.py recommender.py backup_db.py refresh_recommendation.py weekly_report.py && rm -rf copy"
   remote "find '$REMOTE_BASE/app' -name '*.py' -exec chmod 644 {} + && chmod 644 /etc/systemd/system/trainer-*.service /etc/systemd/system/trainer-*.timer"
   remote "test -f /etc/trainer-miniapp/backend.env"
   remote "systemctl daemon-reload && systemctl enable --now '$BACKEND_SERVICE' && systemctl restart '$BACKEND_SERVICE'"

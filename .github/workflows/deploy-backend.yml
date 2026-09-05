@@ -104,7 +104,6 @@ jobs:
         run: |
           set -eu
           ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "\
-            cd '$DEPLOY_BASE/app' && rm -f backend_store.py anthropic_client.py coach_features.py coach_prompts.py coach_signals.py coach_state.py plan_validator.py prompt_builder.py recommender.py backup_db.py refresh_recommendation.py weekly_report.py && rm -rf copy && \
             find '$DEPLOY_BASE/app' -name '*.py' -exec chmod 644 {} + && \
             chmod 644 '$DEPLOY_BASE/app/prompts/'*.md '$DEPLOY_BASE/app/resources/'* /etc/systemd/system/trainer-*.service /etc/systemd/system/trainer-*.timer && \
             test -f /etc/trainer-miniapp/backend.env && \
