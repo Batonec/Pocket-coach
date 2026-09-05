@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 from contextlib import closing, contextmanager, suppress
@@ -202,11 +203,7 @@ def normalize_workout_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
             }
         )
 
-    workout_date = str(payload.get("workout_date", "")).strip()
-    try:
-        date.fromisoformat(workout_date)
-    except ValueError as exc:
-        raise ValueError("workout_date must be in YYYY-MM-DD format") from exc
+    workout_date = _parse_input_date(payload.get("workout_date"), "workout_date").isoformat()
 
     client_id = str(payload.get("client_id") or payload.get("id") or "").strip()
     if not client_id:
@@ -240,11 +237,7 @@ MAX_BODY_WEIGHT_KG = 400.0
 
 
 def normalize_body_weight_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    entry_date = str(payload.get("entry_date", "")).strip()
-    try:
-        date.fromisoformat(entry_date)
-    except ValueError as exc:
-        raise ValueError("entry_date must be in YYYY-MM-DD format") from exc
+    entry_date = _parse_input_date(payload.get("entry_date"), "entry_date").isoformat()
 
     try:
         weight = float(payload.get("weight", 0))
@@ -274,11 +267,7 @@ MAX_WAIST_CM = 160.0
 
 
 def normalize_waist_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    entry_date = str(payload.get("entry_date", "")).strip()
-    try:
-        date.fromisoformat(entry_date)
-    except ValueError as exc:
-        raise ValueError("entry_date must be in YYYY-MM-DD format") from exc
+    entry_date = _parse_input_date(payload.get("entry_date"), "entry_date").isoformat()
 
     try:
         waist = float(payload.get("waist", 0))
@@ -295,20 +284,33 @@ def normalize_waist_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _normalize_event_date(value: object, field: str) -> str:
-    """Дата события: формат + запрет будущего (планирование отложено, событие
-    описывает то, что уже случилось).
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
-    `date.fromisoformat` принимает и «20260820», поэтому наружу отдаётся
-    канонический вид: периоды сравниваются и сортируются как строки.
-    «Сегодня» — локальный день сервера; VPS живёт в Europe/Moscow, то есть в
-    том же дне, что и атлет, как и весь остальной слой коуча.
+
+def _parse_input_date(value: object, field: str) -> date:
+    """Дата с клиента — строго YYYY-MM-DD, одинаково на любом интерпретаторе.
+
+    `date.fromisoformat` в 3.11+ принимает и «20260801», и недельные формы, а на
+    VPS (Python 3.10) — только с дефисами. Без регулярки один и тот же ввод
+    проходил бы в разработке и отвергался на проде; с ней формат один, и
+    периоды сравниваются и сортируются как строки без канонизации.
     """
     text = str(value or "").strip()
+    if not _ISO_DATE.fullmatch(text):
+        raise ValueError(f"{field} must be in YYYY-MM-DD format")
     try:
-        parsed = date.fromisoformat(text)
-    except ValueError as exc:
+        return date.fromisoformat(text)
+    except ValueError as exc:  # форма верная, даты такой нет: 2026-02-30
         raise ValueError(f"{field} must be in YYYY-MM-DD format") from exc
+
+
+def _normalize_event_date(value: object, field: str) -> str:
+    """Дата события: формат + запрет будущего (планирование отложено, событие
+    описывает то, что уже случилось). «Сегодня» — локальный день сервера; VPS
+    живёт в Europe/Moscow, то есть в том же дне, что и атлет, как и весь
+    остальной слой коуча.
+    """
+    parsed = _parse_input_date(value, field)
     if parsed > date.today():
         raise ValueError(f"{field} must not be in the future")
     return parsed.isoformat()

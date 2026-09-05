@@ -117,10 +117,17 @@ jobs:
         run: actionlint
 
   test:
-    name: Run test suite
+    name: Run test suite (Python ${{ matrix.python-version }})
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # На VPS системный Python 3.10, разработка идёт на 3.13. Ночной бэкап базы
+      # три недели падал на `from datetime import UTC` (3.11+), а suite на 3.13
+      # этого не видел — поэтому обе версии, пока VPS не обновлён.
+      matrix:
+        python-version: ["3.10", "3.13"]
 
     steps:
       - name: Check out repository
@@ -129,7 +136,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
 
       - name: Run automated tests
         run: python -m unittest discover -s backend/tests -p "test_*.py" -v

@@ -52,11 +52,16 @@ def _workout(
 
 
 class EventNormalizationTests(unittest.TestCase):
-    def test_dates_come_back_canonical_and_text_is_trimmed(self) -> None:
-        # date.fromisoformat() принимает и «20260801»: наружу обязан уйти
-        # канонический вид, иначе периоды перестанут сравниваться как строки.
+    def test_dates_are_strict_iso_on_every_python_and_text_is_trimmed(self) -> None:
+        # В 3.11+ date.fromisoformat принимает и «20260801», на VPS (3.10) — нет.
+        # Формат один для любого интерпретатора: только YYYY-MM-DD, иначе периоды
+        # перестали бы сравниваться как строки.
+        with self.assertRaisesRegex(ValueError, "YYYY-MM-DD"):
+            backend_store.normalize_event_payload(
+                {"start_date": "20260801", "end_date": "2026-08-05", "text": "болел"}
+            )
         normalized = backend_store.normalize_event_payload(
-            {"start_date": "20260801", "end_date": "2026-08-05", "text": "  болел  "}
+            {"start_date": " 2026-08-01 ", "end_date": "2026-08-05", "text": "  болел  "}
         )
         self.assertEqual(normalized["start_date"], "2026-08-01")
         self.assertEqual(normalized["end_date"], "2026-08-05")
