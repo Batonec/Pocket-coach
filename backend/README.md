@@ -76,7 +76,8 @@ Messages API (structured outputs, чистый stdlib `urllib` — без SDK/ve
 
 [infra/jobs/backup_db.py](./infra/jobs/backup_db.py) делает консистентный снапшот `trainer.db` через SQLite
 online-backup API (без остановки сервиса, без зависимостей), сжимает в gzip и копирует
-рядом профиль атлета; держит последние `BACKUP_KEEP` копий. Запускается ночным
+рядом профиль атлета, состояние коуча и рабочую стратегию; держит последние
+`BACKUP_KEEP` согласованных комплектов. Запускается ночным
 systemd-таймером
 ([infra/deploy/trainer-db-backup.timer](./infra/deploy/trainer-db-backup.timer), 04:00 МСК).
 Восстановление: `gunzip -c backups/trainer-<stamp>.db.gz > trainer.db`.

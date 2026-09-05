@@ -1166,6 +1166,7 @@ class MiniAppStore:
                    COALESCE(SUM(output_tokens), 0) AS output_tokens
             FROM coach_reports
             WHERE user_id = ?
+            GROUP BY month, model
             ORDER BY month DESC, source
         """
         with self._connection() as connection:

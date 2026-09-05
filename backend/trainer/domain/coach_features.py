@@ -21,6 +21,7 @@ Stdlib-only, like the rest of the backend.
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from datetime import date, timedelta
 from itertools import pairwise
@@ -160,9 +161,15 @@ _EFFORT_MARK = {"easy": "-", "ok": "", "hard": "+"}
 
 
 def canonical_exercise_id(exercise_id: Any) -> int | None:
+    if isinstance(exercise_id, bool):
+        return None
+    if isinstance(exercise_id, float) and (
+        not math.isfinite(exercise_id) or not exercise_id.is_integer()
+    ):
+        return None
     try:
         parsed = int(exercise_id)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return EXERCISE_ALIASES.get(parsed, parsed)
 
@@ -193,12 +200,19 @@ def _iter_exercise_sessions(
                 continue
             sets: list[dict[str, Any]] = []
             for workout_set in exercise.get("sets", []) or []:
-                try:
-                    reps = int(workout_set.get("reps", 0))
-                    weight = float(workout_set.get("weight", 0))
-                except (TypeError, ValueError):
+                if not isinstance(workout_set, dict):
                     continue
-                if reps < 1:
+                raw_reps = workout_set.get("reps", 0)
+                if isinstance(raw_reps, bool) or isinstance(workout_set.get("weight"), bool):
+                    continue
+                if isinstance(raw_reps, float) and not raw_reps.is_integer():
+                    continue
+                try:
+                    reps = int(raw_reps)
+                    weight = float(workout_set.get("weight", 0))
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if reps < 1 or not math.isfinite(weight):
                     continue
                 sets.append(
                     {
@@ -1283,9 +1297,9 @@ def recent_weight_range(
             for workout_set in exercise.get("sets", []) or []:
                 try:
                     weight = float(workout_set.get("weight", 0))
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     continue
-                if weight > 0:
+                if math.isfinite(weight) and weight > 0:
                     weights.append(weight)
     if not weights:
         return None
