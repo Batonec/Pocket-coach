@@ -1,1 +1,1 @@
-"""Coach MCP — read-only MCP server over the Trainer data + recommendation debug tools."""
+"""Coach MCP — MCP-сервер над данными Trainer: история, замеры, события, состояние, отладка советов."""

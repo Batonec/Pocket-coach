@@ -1,3 +1,5 @@
+"""Скрипт бэкапа: gzip-дамп восстанавливается в рабочую базу, ротация оставляет N новейших."""
+
 from __future__ import annotations
 
 import gzip
@@ -6,12 +8,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import support  # noqa: F401  (puts backend/ on sys.path)
+import support  # noqa: F401  (кладёт backend/ в sys.path)
 
 from infra.jobs import backup_db
 
 
 class BackupDbTests(unittest.TestCase):
+    """Бэкап и ротация на временной базе из одной таблицы."""
+
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

@@ -1,3 +1,7 @@
+"""Граничные случаи слоя domain: bool, nan, inf и дроби во входе тренировок,
+снапшотов, параметров фазы, ответа модели и рендеров.
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +11,7 @@ from copy import deepcopy
 from datetime import date
 from unittest import mock
 
-import support  # noqa: F401 — adds backend/ to sys.path
+import support  # noqa: F401 — кладёт backend в sys.path
 from support import sample_workout_payload
 
 from trainer.data.anthropic_client import RecommendationError
@@ -24,6 +28,7 @@ CATALOG = [{"id": 18, "name": "Жим в тренажере"}]
 
 
 def _snapshot(sets: list[dict[str, object]]) -> dict[str, object]:
+    """Снапшот совета с заданными подходами."""
     return {
         "focus": "Тест",
         "load_type": "medium",
@@ -38,6 +43,7 @@ def _snapshot(sets: list[dict[str, object]]) -> dict[str, object]:
 
 
 def _plan(sets: object, *, rest_days: object = 1) -> dict[str, object]:
+    """Сырой ответ модели с заданными подходами и ``rest_days``."""
     return {
         "focus": "Тест",
         "load_type": "medium",
@@ -55,6 +61,8 @@ def _plan(sets: object, *, rest_days: object = 1) -> dict[str, object]:
 
 
 class WorkoutRuleEdgeCaseTests(unittest.TestCase):
+    """``rules``: форма тренировки и RIR."""
+
     def test_workout_requires_an_object_data_block(self) -> None:
         for invalid in (None, [], "payload", 7):
             payload = sample_workout_payload(client_id="invalid-data")
@@ -100,6 +108,8 @@ class WorkoutRuleEdgeCaseTests(unittest.TestCase):
 
 
 class SnapshotRuleEdgeCaseTests(unittest.TestCase):
+    """Снапшот совета: не-числа и лимит размера в байтах."""
+
     def test_snapshot_drops_non_finite_boolean_and_fractional_sets(self) -> None:
         snapshot = _snapshot(
             [
@@ -151,6 +161,8 @@ class SnapshotRuleEdgeCaseTests(unittest.TestCase):
 
 
 class CoachStateEdgeCaseTests(unittest.TestCase):
+    """Состояние: независимые дефолты, атомарность смены фазы, нормализация."""
+
     def test_default_state_returns_independent_nested_containers(self) -> None:
         first = coach_state.default_state()
         second = coach_state.default_state()
@@ -214,6 +226,8 @@ class CoachStateEdgeCaseTests(unittest.TestCase):
 
 
 class PlanSanitizerEdgeCaseTests(unittest.TestCase):
+    """Санитизация ответа модели и потолок сессии."""
+
     def test_validate_skips_non_finite_and_non_integer_sets(self) -> None:
         recommendation = plan_validator._validate(
             _plan(
@@ -275,6 +289,8 @@ class PlanSanitizerEdgeCaseTests(unittest.TestCase):
 
 
 class DefensiveRenderingEdgeCaseTests(unittest.TestCase):
+    """Фичи, сериализация и отсрочки на битом входе."""
+
     def test_feature_sessions_ignore_malformed_and_non_finite_sets(self) -> None:
         workouts = [
             {

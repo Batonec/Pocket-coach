@@ -1,3 +1,5 @@
+"""Подписанная cookie сессии: round-trip, подделка подписи, кривая форма."""
+
 from __future__ import annotations
 
 import tempfile
@@ -8,6 +10,8 @@ from support import load_server_module
 
 
 class ServerUtilsTest(unittest.TestCase):
+    """``make_session_value`` и ``read_session_user_id`` на свежезагруженном модуле."""
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "trainer.db"
@@ -20,6 +24,7 @@ class ServerUtilsTest(unittest.TestCase):
         *,
         session_secret: str = "server-utils-session-secret",
     ):
+        """Загрузить ``server.py`` с заданным секретом сессии."""
         return load_server_module(
             db_path=self.db_path,
             session_secret=session_secret,

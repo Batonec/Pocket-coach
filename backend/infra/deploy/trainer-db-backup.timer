@@ -2,7 +2,7 @@
 Description=Trainer: nightly trainer.db backup
 
 [Timer]
-# 04:00 Europe/Moscow (low-traffic hour). Persistent catches up after downtime.
+# 04:00 Europe/Moscow (тихий час). Persistent догоняет пропуск после простоя.
 OnCalendar=*-*-* 04:00:00
 Persistent=true
 RandomizedDelaySec=300

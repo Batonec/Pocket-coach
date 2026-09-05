@@ -1,3 +1,7 @@
+"""SQLite-стор и нормализация payload'ов: пользователи, тренировки (дедуп по
+client_id, порядок), замеры веса, журнал генераций.
+"""
+
 from __future__ import annotations
 
 import sys
@@ -19,6 +23,8 @@ from trainer.domain.rules import (
 
 
 class MiniAppStoreTest(unittest.TestCase):
+    """Стор на временной базе: пользователи, тренировки и взвешивания."""
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.store = MiniAppStore(Path(self.temp_dir.name) / "trainer.db")
@@ -411,9 +417,11 @@ class MiniAppStoreTest(unittest.TestCase):
 
 
 class NormalizeWorkoutPayloadTest(unittest.TestCase):
+    """``rules.normalize_workout_payload``: что принимается, что отвергается и с каким текстом."""
+
     def test_missing_load_type_stays_unknown(self) -> None:
-        # The old tonnage fallback (≥3000 kg → heavy) labeled nearly every real
-        # session heavy; an absent label is now stored honestly as None.
+        # Старый фолбэк по тоннажу (≥3000 кг → heavy) метил тяжёлой почти каждую
+        # реальную сессию; отсутствующая метка теперь честно хранится как None.
         payload, client_id = normalize_workout_payload(
             {
                 "client_id": "load-unknown",
@@ -742,6 +750,8 @@ class NormalizeWorkoutPayloadTest(unittest.TestCase):
 
 
 class NormalizeBodyWeightPayloadTest(unittest.TestCase):
+    """Нормализация взвешивания и замера талии: даты и правдоподобные границы."""
+
     def test_normalizes_valid_body_weight_payload(self) -> None:
         payload = normalize_body_weight_payload(
             {
@@ -781,7 +791,7 @@ class NormalizeBodyWeightPayloadTest(unittest.TestCase):
             )
 
     def test_rejects_implausible_body_weight(self) -> None:
-        # The 22kg "exercise weight typed into the weigh-in field" bug.
+        # Баг «22 кг: вес с тренажёра, вбитый в поле взвешивания».
         with self.assertRaisesRegex(ValueError, "between"):
             normalize_body_weight_payload({"entry_date": "2026-03-28", "weight": 22})
         with self.assertRaisesRegex(ValueError, "between"):
@@ -799,6 +809,8 @@ class NormalizeBodyWeightPayloadTest(unittest.TestCase):
 
 
 class RecommendationLogTest(unittest.TestCase):
+    """Append-only журнал генераций рядом с перезаписываемым кэшем."""
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
@@ -806,6 +818,7 @@ class RecommendationLogTest(unittest.TestCase):
         self.uid = int(self.store.ensure_debug_user("log-user")["id"])
 
     def _rec(self, focus: str) -> dict:
+        """Минимальный совет с заданным фокусом."""
         return {
             "focus": focus,
             "load_type": "medium",
@@ -819,7 +832,7 @@ class RecommendationLogTest(unittest.TestCase):
         self.store.save_recommendation(self.uid, 1, 5, "m", self._rec("A"), 10, 20)
         self.store.save_recommendation(self.uid, 2, 6, "m", self._rec("B"), 11, 21)
         log = self.store.list_recommendation_log(self.uid)
-        self.assertEqual([e["recommendation"]["focus"] for e in log], ["B", "A"])  # newest first
+        self.assertEqual([e["recommendation"]["focus"] for e in log], ["B", "A"])  # новые сверху
         self.assertEqual(log[0]["status"], "ready")
         self.assertEqual(log[0]["input_tokens"], 11)
 

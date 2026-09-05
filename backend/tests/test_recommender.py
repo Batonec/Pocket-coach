@@ -1,8 +1,13 @@
+"""Точка входа генерации: каталог и JSON-схема, санитизация ответа, системный и
+user-промпт, недельный отчёт, жизненный цикл совета, репромпт по нарушениям
+валидатора и детерминированное разрешение.
+"""
+
 from __future__ import annotations
 
 import unittest
 
-import support  # noqa: F401 — adds backend to sys.path
+import support  # noqa: F401 — кладёт backend в sys.path
 from support import CATALOG_PATH
 
 from trainer.data import anthropic_client, files
@@ -16,6 +21,8 @@ CATALOG = [
 
 
 class RecommenderTests(unittest.TestCase):
+    """Каталог, схема, санитизация, сериализация истории."""
+
     def test_load_catalog_reads_the_resources_file(self) -> None:
         catalog = files.load_catalog(CATALOG_PATH)
         self.assertTrue(catalog)
@@ -24,10 +31,10 @@ class RecommenderTests(unittest.TestCase):
     def test_build_schema_enum_lists_catalog_ids_and_requires_note(self) -> None:
         schema = prompt_builder._build_schema(CATALOG)
         item = schema["properties"]["exercises"]["items"]
-        # id 1 is the catalog duplicate of 18 — never offered to the model.
+        # id 1 — дубль 18 в каталоге, модели не предлагается никогда.
         self.assertEqual(item["properties"]["exercise_id"]["enum"], [8, 9])
         self.assertIn("note", item["required"])
-        # The model never writes names — the server injects catalog names.
+        # Модель никогда не пишет имена — их подставляет сервер из каталога.
         self.assertNotIn("name", item["properties"])
         self.assertNotIn("name", item["required"])
 
@@ -43,11 +50,11 @@ class RecommenderTests(unittest.TestCase):
                     "note": "+вес",
                     "sets": [
                         {"reps": 11, "weight": 120},
-                        {"reps": 0, "weight": 50},  # reps < 1 → dropped
-                        {"reps": 10, "weight": 99999},  # weight clamped
+                        {"reps": 0, "weight": 50},  # повторы < 1 → отброшен
+                        {"reps": 10, "weight": 99999},  # вес зажат
                     ],
                 },
-                {  # hallucinated id → dropped
+                {  # выдуманный id → отброшен
                     "exercise_id": 999,
                     "name": "выдумка",
                     "note": "n",
@@ -59,7 +66,7 @@ class RecommenderTests(unittest.TestCase):
         self.assertEqual(len(out["exercises"]), 1)
         exercise = out["exercises"][0]
         self.assertEqual(exercise["exercise_id"], 8)
-        self.assertEqual(exercise["name"], "Жим ногами")  # catalog name, not model echo
+        self.assertEqual(exercise["name"], "Жим ногами")  # имя из каталога, а не эхо модели
         self.assertEqual(exercise["note"], "+вес")
         self.assertEqual([s["reps"] for s in exercise["sets"]], [11, 10])
         self.assertEqual(exercise["sets"][1]["weight"], plan_validator.MAX_WEIGHT)
@@ -88,7 +95,7 @@ class RecommenderTests(unittest.TestCase):
             plan_validator._validate(raw, CATALOG)
 
     def test_serialize_history_is_oldest_first_with_effort_marks(self) -> None:
-        # list_workouts() returns newest-first; the serializer flips to oldest-first.
+        # list_workouts() отдаёт новые сверху; сериализатор переворачивает к старым сверху.
         workouts = [
             {
                 "workout_date": "2026-05-29",
@@ -114,8 +121,8 @@ class RecommenderTests(unittest.TestCase):
         ]
         text = prompt_builder._serialize_history(workouts, 20)
         self.assertTrue(text.splitlines()[0].startswith("2026-05-26"))
-        self.assertIn("120кг×10+", text)  # hard → '+'
-        self.assertIn("50кг×8-", text)  # easy → '-'
+        self.assertIn("120кг×10+", text)  # hard → «+»
+        self.assertIn("50кг×8-", text)  # easy → «-»
 
     def test_generate_requires_history(self) -> None:
         with self.assertRaises(recommender.RecommendationError):
@@ -123,6 +130,8 @@ class RecommenderTests(unittest.TestCase):
 
 
 class ProfileTests(unittest.TestCase):
+    """Профиль атлета в файле и в системном промпте; контекст user-промпта."""
+
     def test_load_profile_reads_valid_file(self) -> None:
         import tempfile
         from pathlib import Path
@@ -161,12 +170,12 @@ class ProfileTests(unittest.TestCase):
             self.assertEqual(updated["blocks"]["Цель"], "новый текст")
             reloaded = files.load_profile(path)
             self.assertEqual(reloaded["blocks"]["Цель"], "новый текст")
-            self.assertEqual(reloaded["blocks"]["Атлет"], "а")  # untouched
+            self.assertEqual(reloaded["blocks"]["Атлет"], "а")  # не тронут
             backups = list(Path(tmp).glob("coach_profile.json.bak-*"))
             self.assertEqual(len(backups), 1)
             self.assertIn("старый текст", backups[0].read_text("utf-8"))
 
-            # Empty text deletes the block.
+            # Пустой текст удаляет блок.
             files.update_profile_block(path, "Атлет", "")
             self.assertNotIn("Атлет", files.load_profile(path)["blocks"])
 
@@ -188,15 +197,15 @@ class ProfileTests(unittest.TestCase):
         profile = {"schema": 1, "blocks": {"Цель": "lean bulk, потолок 84 кг"}}
         prompt = prompt_builder._build_system_prompt(CATALOG, profile)
         self.assertIn("lean bulk, потолок 84 кг", prompt)
-        self.assertIn("широчайшие", prompt)  # catalog semantics
+        self.assertIn("широчайшие", prompt)  # семантика каталога
         self.assertIn("ТРЕНЕРСКАЯ ПОЛИТИКА", prompt)
         self.assertIn("rationale", prompt)
-        # The policy is explicitly defaults; the hard bounds are named apart.
+        # Политика — явно дефолты; жёсткие границы названы отдельно.
         self.assertIn("ориентиры по умолчанию", prompt)
         self.assertIn("ЖЁСТКИЕ ГРАНИЦЫ", prompt)
-        # Planning no longer schedules around the injection cycle.
+        # Планирование больше не строится вокруг цикла инъекций.
         self.assertNotIn("гормональный цикл", prompt.lower())
-        # The medical boundary must survive the cycle removal.
+        # Медицинская граница обязана пережить удаление цикла.
         self.assertIn("зона лечащего врача", prompt)
 
     def test_system_prompt_without_profile_uses_fallback(self) -> None:
@@ -204,9 +213,10 @@ class ProfileTests(unittest.TestCase):
         self.assertIn("Профиль атлета не настроен", prompt)
 
     def test_active_phase_policy_uses_athlete_overrides(self):
-        """The active phase must be rendered from phase_params, not defaults:
-        otherwise the policy block and the КОНТЕКСТ block carry different
-        numbers and the model gets two contradicting methodologies."""
+        """Активная фаза рендерится из phase_params, а не из дефолтов: иначе блок
+        политики и блок КОНТЕКСТ несут разные числа, и модель получает две
+        противоречащие методики.
+        """
         from trainer.domain import coach_state
 
         state = coach_state.default_state()
@@ -216,13 +226,14 @@ class ProfileTests(unittest.TestCase):
         self.assertIn("Ф0 · возврат", prompt)
         self.assertIn("2450–2550", prompt)
         self.assertNotIn("2100–2200", prompt)
-        # the two inactive phases keep the stock text
+        # две неактивные фазы держат стандартный текст
         self.assertIn("lean_bulk", prompt)
         self.assertIn("maintenance", prompt)
 
     def test_phase_policy_survives_a_malformed_override(self):
-        """A range key overridden with a scalar must not crash prompt building:
-        generation never fails over methodology."""
+        """Ключ-диапазон, переопределённый скаляром, не должен ронять сборку промпта:
+        генерация никогда не падает из-за методики.
+        """
         from trainer.domain import coach_state
 
         state = coach_state.default_state()
@@ -258,8 +269,8 @@ class ProfileTests(unittest.TestCase):
         self.assertIn("Объём за последние 7 дней", prompt)
         self.assertIn("квадрицепс/ягодичные: 1 прямых / 1 эффективных", prompt)
         self.assertIn("Дней с последней тренировки: 2", prompt)
-        # The attendance and the active window are always in the data — the
-        # programme header sends the model there for the real frequency.
+        # Явка и активное окно всегда в данных — шапка программы отправляет
+        # модель туда за настоящей частотой.
         self.assertIn("Тренировки по календарным неделям (пн–вс", prompt)
         self.assertIn("2026-06-08…2026-06-14 (текущая, по 2026-06-12): 1", prompt)
         self.assertIn("Активное окно", prompt)
@@ -286,15 +297,18 @@ class ProfileTests(unittest.TestCase):
         prompt = prompt_builder._build_user_prompt(workouts, [], date(2026, 6, 12), 20)
         self.assertIn("ВОЗВРАТ ПОСЛЕ ПЕРЕРЫВА", prompt)
         self.assertIn("неделя блока 1", prompt)
-        # The comeback methodology is delegated: the context names the single
-        # hard bound and prescribes no percentages or set counts.
+        # Методика возврата делегирована: контекст называет единственную жёсткую
+        # границу и не предписывает ни процентов, ни числа сетов.
         self.assertIn("не выше доперерывных", prompt)
         self.assertNotIn("85–90%", prompt)
         self.assertNotIn("10–14 подходов", prompt)
 
 
 class RestDaysTests(unittest.TestCase):
+    """``rest_days`` в схеме и ответе, дата следующей тренировки, контекст коуча."""
+
     def _raw(self, **extra):
+        """Сырой ответ модели с переопределениями."""
         base = {
             "focus": "f",
             "load_type": "medium",
@@ -337,7 +351,7 @@ class RestDaysTests(unittest.TestCase):
         self.addCleanup(lambda: os.environ.pop("ANTHROPIC_API_KEY", None))
         orig = anthropic_client._call_anthropic
         self.addCleanup(lambda: setattr(recommender, "_call_anthropic", orig))
-        # Fullbody-ish plan over fresh history → no hard-bound violations.
+        # Почти fullbody-план на свежей истории → без нарушений жёстких границ.
         raw = self._raw(
             rest_days=2,
             exercises=[
@@ -360,7 +374,7 @@ class RestDaysTests(unittest.TestCase):
             {"input_tokens": 1, "output_tokens": 1},
         )
 
-        # Recent history touches every coverage group, so the plan above is clean.
+        # Недавняя история задевает все группы покрытия, поэтому план выше чистый.
         history = [
             {
                 "workout_date": "2026-06-05",
@@ -398,10 +412,10 @@ class RestDaysTests(unittest.TestCase):
         )
         self.assertEqual(rec["rest_days"], 2)
         self.assertEqual(rec["next_workout_date"], "2026-06-14")
-        # Phase/cycle context ships with the payload for the iOS client.
+        # Контекст фазы и цикла едет в payload для iOS-клиента.
         context = rec["coach_context"]
         self.assertEqual(context["phase"], "cut_recomp")
-        self.assertEqual(context["block_week"], 2)  # anchored on the 06-05 workout
+        self.assertEqual(context["block_week"], 2)  # якорь — тренировка 06-05
         self.assertFalse(context["deload_week"])
         self.assertEqual(context["weekly_target"], [7, 10])
         self.assertEqual(context["group_targets"]["грудь"], [7, 10])
@@ -409,6 +423,8 @@ class RestDaysTests(unittest.TestCase):
 
 
 class WeeklyReportTests(unittest.TestCase):
+    """Промпт и текст недельного отчёта."""
+
     def test_report_prompt_assembles_and_returns_text(self) -> None:
         import os
         from datetime import date as _date
@@ -489,6 +505,10 @@ class AdviceLifecycleTests(unittest.TestCase):
 
 
 class GenerateRepromptTests(unittest.TestCase):
+    """Полный прогон ``generate_with_trace``: репромпт, обрезка до потолка, честная
+    пометка, кламп возврата.
+    """
+
     CATALOG = [
         {"id": 8, "name": "Жим ногами"},
         {"id": 9, "name": "Тяга верт."},
@@ -505,6 +525,7 @@ class GenerateRepromptTests(unittest.TestCase):
         self.addCleanup(lambda: setattr(recommender, "_call_anthropic", self._orig))
 
     def _history(self, when: str = "2026-06-10"):
+        """Fullbody-история, покрывающая все группы правила."""
         return [
             {
                 "workout_date": when,
@@ -537,6 +558,7 @@ class GenerateRepromptTests(unittest.TestCase):
         ]
 
     def _fullbody_raw(self, leg_press: float = 100.0, with_hamstrings: bool = True):
+        """Сырой fullbody-ответ; ``with_hamstrings`` добавляет сгибания ног."""
         exercises = [
             {"exercise_id": 8, "note": "n", "sets": [{"reps": 10, "weight": leg_press}] * 4},
             {"exercise_id": 9, "note": "n", "sets": [{"reps": 12, "weight": 60}] * 4},
@@ -555,7 +577,8 @@ class GenerateRepromptTests(unittest.TestCase):
         }
 
     def _dry_hamstrings_history(self):
-        # Hamstrings last trained 12 days ago → the coverage rule demands them.
+        # Бицепс бедра тренировали 12 дней назад → правило покрытия его требует.
+        """История, где бицепс бедра сухой 12 дней — правило покрытия его требует."""
         workouts = self._history()
         workouts[0]["data"]["exercises"] = [
             ex for ex in workouts[0]["data"]["exercises"] if ex["exercise_id"] != 15
@@ -581,8 +604,8 @@ class GenerateRepromptTests(unittest.TestCase):
         from datetime import date as _date
 
         answers = [
-            self._fullbody_raw(with_hamstrings=False),  # dry group missing
-            self._fullbody_raw(with_hamstrings=True),  # fixed on retry
+            self._fullbody_raw(with_hamstrings=False),  # сухая группа пропущена
+            self._fullbody_raw(with_hamstrings=True),  # исправлено на повторе
         ]
         calls: list[list[dict]] = []
 
@@ -599,7 +622,7 @@ class GenerateRepromptTests(unittest.TestCase):
         self.assertEqual(trace[1]["violations"], [])
         self.assertEqual(rec["exercises"][-1]["exercise_id"], 15)
         self.assertEqual(usage, {"input_tokens": 20, "output_tokens": 10})
-        # The reprompt continues the same conversation and lists the violations.
+        # Репромпт продолжает тот же разговор и перечисляет нарушения.
         self.assertEqual(len(calls[1]), 3)
         self.assertIn("жёсткие границы", calls[1][2]["content"])
 
@@ -614,8 +637,8 @@ class GenerateRepromptTests(unittest.TestCase):
             return self._fullbody_raw(), {"input_tokens": 10, "output_tokens": 5}
 
         anthropic_client._call_anthropic = fake_call
-        # 13 sets under the default cut_recomp cap of 20: served untouched — the
-        # lower bound of the corridor is not policed, and nothing is trimmed.
+        # 13 сетов при дефолтном потолке cut_recomp в 20: отдаётся как есть —
+        # нижняя граница коридора не проверяется, и ничего не режется.
         rec, _usage, _model, trace = recommender.generate_with_trace(
             self._history(), [], self.CATALOG, today=_date(2026, 6, 12)
         )
@@ -639,8 +662,8 @@ class GenerateRepromptTests(unittest.TestCase):
             return self._fullbody_raw(), {"input_tokens": 10, "output_tokens": 5}
 
         anthropic_client._call_anthropic = fake_call
-        # 13 sets against the maintenance cap of 12, twice: one reprompt names
-        # the cap, then the server drops a set from the tail and says so.
+        # 13 сетов против потолка поддержания в 12, дважды: один репромпт
+        # называет потолок, потом сервер убирает сет с хвоста и говорит об этом.
         state = dict(coach_state.default_state(), phase="maintenance")
         rec, _usage, _model, trace = recommender.generate_with_trace(
             self._history(), [], self.CATALOG, today=_date(2026, 6, 12), state=state
@@ -651,14 +674,14 @@ class GenerateRepromptTests(unittest.TestCase):
         self.assertEqual(sum(len(exercise["sets"]) for exercise in rec["exercises"]), 12)
         self.assertEqual(trace[1]["adjustments"], ["Сгибания ног −1"])
         hamstrings = next(e for e in rec["exercises"] if e["exercise_id"] == 15)
-        self.assertEqual(len(hamstrings["sets"]), 1)  # trimmed, never removed
+        self.assertEqual(len(hamstrings["sets"]), 1)  # урезано, не удалено
         self.assertIn("сокращена до 12 рабочих подходов", rec["rationale"])
 
     def test_unresolved_coverage_is_served_with_an_honest_note(self) -> None:
         from datetime import date as _date
 
-        # The model ignores the dry hamstrings twice → the plan is still
-        # served, with the unmet bound surfaced in the rationale.
+        # Модель дважды игнорирует сухой бицепс бедра → план всё равно отдаётся,
+        # а невыполненная граница названа в rationale.
         anthropic_client._call_anthropic = lambda *a, **k: (
             self._fullbody_raw(with_hamstrings=False),
             {"input_tokens": 1, "output_tokens": 1},
@@ -675,8 +698,8 @@ class GenerateRepromptTests(unittest.TestCase):
     def test_comeback_overshoot_is_clamped_after_a_failed_reprompt(self) -> None:
         from datetime import date as _date
 
-        # 21 days off; the model insists on 105 over the pre-break 100 twice →
-        # the server clamps the offending sets and says so in the rationale.
+        # 21 день без зала; модель дважды настаивает на 105 против доперерывных
+        # 100 → сервер зажимает провинившиеся сеты и говорит об этом в rationale.
         anthropic_client._call_anthropic = lambda *a, **k: (
             self._fullbody_raw(leg_press=105),
             {"input_tokens": 1, "output_tokens": 1},

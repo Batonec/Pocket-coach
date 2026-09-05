@@ -1,3 +1,7 @@
+"""HTTP API через живой сервер: health, сессии (debug и iOS), тренировки и замеры
+по REST, недельный отчёт из кэша, таблица маршрутов.
+"""
+
 from __future__ import annotations
 
 import unittest
@@ -11,6 +15,8 @@ from support import (
 
 
 class ServerApiTest(unittest.TestCase):
+    """Сессии, тренировки и взвешивания через REST."""
+
     def test_health_endpoint_reports_runtime_flags(self) -> None:
         with running_miniapp_server(allow_debug_user=True, dev_mode=True) as app:
             client = JsonHttpClient(app.base_url)
@@ -416,6 +422,8 @@ if __name__ == "__main__":
 
 
 class WeeklyReportEndpointTest(unittest.TestCase):
+    """Эндпоинт недельного отчёта отдаёт только кэш."""
+
     def test_weekly_report_serves_cache_only(self) -> None:
         with running_miniapp_server(allow_debug_user=True) as app:
             client = JsonHttpClient(app.base_url)
@@ -473,7 +481,7 @@ class RoutingTest(unittest.TestCase):
         with running_miniapp_server(allow_debug_user=True) as app:
             client = JsonHttpClient(app.base_url)
 
-            # GET has no per-id endpoints, and PUT covers workouts and events only.
+            # У GET нет эндпоинтов по id, а PUT есть только у тренировок и событий.
             self.assertEqual(client.request_json("GET", "/api/workouts/1").status, 404)
             self.assertEqual(client.request_json("PUT", "/api/waists/1", {}).status, 404)
 

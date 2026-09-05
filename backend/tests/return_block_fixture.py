@@ -183,6 +183,7 @@ STATE: dict[str, Any] = {
 
 
 def _parse_sets(spec: str) -> list[dict[str, Any]]:
+    """Разобрать «вес×повторы[+|-],...» в подходы с меткой тяжести."""
     sets: list[dict[str, Any]] = []
     for token in spec.split(","):
         effort = None
@@ -199,6 +200,7 @@ def _parse_sets(spec: str) -> list[dict[str, Any]]:
 
 
 def _workout(index: int, session: tuple[str, str | None, str, str | None]) -> dict[str, Any]:
+    """Собрать тренировку в форме backend_store из компактной записи сессии."""
     when, load_type, spec, note = session
     exercises = []
     for part in spec.split(";"):

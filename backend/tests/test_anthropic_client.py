@@ -1,3 +1,7 @@
+"""HTTP-клиент Claude API: тело запроса (кэширование промпта, схема, effort),
+обрезка по max_tokens и ретраи на временные сбои.
+"""
+
 from __future__ import annotations
 
 import io
@@ -5,12 +9,14 @@ import json
 import unittest
 import urllib.error
 
-import support  # noqa: F401 — adds backend to sys.path
+import support  # noqa: F401 — кладёт backend в sys.path
 
 from trainer.data import anthropic_client
 
 
 class RequestModelCachingTests(unittest.TestCase):
+    """Что уходит в тело запроса ``_request_model`` и как читается ответ."""
+
     def test_body_carries_cache_control_and_optional_schema(self) -> None:
         captured: dict = {}
 
@@ -160,30 +166,40 @@ class RequestModelCachingTests(unittest.TestCase):
 
 
 class _FakeResponse:
+    """Заглушка ответа urlopen с готовым телом."""
+
     def __init__(self, body: bytes) -> None:
+        """Тело ответа байтами."""
         self._body = body
 
     def __enter__(self):
+        """Контекст-менеджер, как у настоящего ответа."""
         return self
 
     def __exit__(self, *exc) -> bool:
+        """Исключения не гасит."""
         return False
 
     def read(self) -> bytes:
+        """Отдать тело."""
         return self._body
 
 
 def _http_error(code: int) -> urllib.error.HTTPError:
+    """``HTTPError`` с кодом и телом «detail», как от API."""
     return urllib.error.HTTPError("http://x", code, "msg", None, io.BytesIO(b"detail"))
 
 
 class FetchRetryTests(unittest.TestCase):
+    """Ретраи ``_fetch_anthropic``: временные коды повторяются с экспоненциальной паузой, постоянные — нет."""
+
     def setUp(self) -> None:
         self._orig = anthropic_client.urllib.request.urlopen
         self.addCleanup(lambda: setattr(anthropic_client.urllib.request, "urlopen", self._orig))
         self.slept: list[float] = []
 
     def _fetch(self, max_retries: int = 2):
+        """Вызвать ``_fetch_anthropic`` с записью пауз вместо реального сна."""
         return anthropic_client._fetch_anthropic(
             object(),
             timeout=1,
@@ -193,6 +209,7 @@ class FetchRetryTests(unittest.TestCase):
         )
 
     def _patch(self, sequence) -> list[int]:
+        """Подменить urlopen последовательностью ответов и исключений; вернуть счётчик вызовов."""
         calls = {"n": 0}
         it = iter(sequence)
 
@@ -210,7 +227,7 @@ class FetchRetryTests(unittest.TestCase):
         calls = self._patch([_http_error(503), b"ok"])
         self.assertEqual(self._fetch(), "ok")
         self.assertEqual(calls["n"], 2)
-        self.assertEqual(self.slept, [0.5])  # one backoff before the 2nd try
+        self.assertEqual(self.slept, [0.5])  # одна пауза перед второй попыткой
 
     def test_permanent_error_is_not_retried(self) -> None:
         calls = self._patch([_http_error(400)])
@@ -223,8 +240,8 @@ class FetchRetryTests(unittest.TestCase):
         calls = self._patch([_http_error(529), _http_error(529), _http_error(529)])
         with self.assertRaisesRegex(anthropic_client.RecommendationError, "529"):
             self._fetch(max_retries=2)
-        self.assertEqual(calls["n"], 3)  # initial + 2 retries
-        self.assertEqual(self.slept, [0.5, 1.0])  # exponential backoff
+        self.assertEqual(calls["n"], 3)  # первая попытка + 2 ретрая
+        self.assertEqual(self.slept, [0.5, 1.0])  # экспоненциальная пауза
 
     def test_url_error_retried_then_raised(self) -> None:
         calls = self._patch([urllib.error.URLError("conn reset"), b"ok"])

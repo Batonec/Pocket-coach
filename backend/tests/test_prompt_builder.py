@@ -1,14 +1,19 @@
+"""Сборка промпта: отчёт «факт против плана» и сериализация истории с RIR и каноническими именами."""
+
 from __future__ import annotations
 
 import unittest
 
-import support  # noqa: F401 — adds backend to sys.path
+import support  # noqa: F401 — кладёт backend в sys.path
 
 from trainer.domain import plan_validator, prompt_builder
 
 
 class CoachContextTests(unittest.TestCase):
+    """Отчёт дисциплины по снапшотам."""
+
     def _workout(self, when: str, exercise_id: int, sets: int, with_snapshot: bool = False):
+        """Тренировка с ``sets`` подходами и, по флагу, снапшотом плана из двух упражнений."""
         workout = {
             "workout_date": when,
             "data": {
@@ -43,8 +48,8 @@ class CoachContextTests(unittest.TestCase):
     def test_plan_adherence_report_compares_fact_vs_plan(self) -> None:
         workouts = [self._workout("2026-06-10", 18, 3, with_snapshot=True)]
         report = prompt_builder._plan_adherence_report(workouts)
-        self.assertIn("3/5", report)  # 3 of 5 planned sets done
-        self.assertIn("пропущено", report)  # hamstring exercise skipped
+        self.assertIn("3/5", report)  # 3 из 5 плановых сетов выполнены
+        self.assertIn("пропущено", report)  # сгибания ног пропущены
 
     def test_plan_adherence_none_without_snapshots(self) -> None:
         self.assertIsNone(
@@ -53,6 +58,8 @@ class CoachContextTests(unittest.TestCase):
 
 
 class SerializationTests(unittest.TestCase):
+    """Сериализация истории и ремап дубля в валидаторе."""
+
     def test_serialize_history_shows_rir_and_canonical_name(self) -> None:
         catalog = [{"id": 18, "name": "Жим в тренажере"}, {"id": 1, "name": "Жим гор."}]
         workouts = [
@@ -62,7 +69,7 @@ class SerializationTests(unittest.TestCase):
                     "load_type": "medium",
                     "exercises": [
                         {
-                            "exercise_id": 1,  # duplicate id from old history
+                            "exercise_id": 1,  # дублирующий id из старой истории
                             "name": "Жим гор.",
                             "sets": [
                                 {"reps": 10, "weight": 50, "effort": None, "rir": 2},
@@ -73,9 +80,9 @@ class SerializationTests(unittest.TestCase):
             }
         ]
         text = prompt_builder._serialize_history(workouts, 20, catalog)
-        self.assertIn("Жим в тренажере", text)  # renamed onto the canonical id
+        self.assertIn("Жим в тренажере", text)  # переименовано на канонический id
         self.assertNotIn("Жим гор.", text)
-        self.assertIn("50кг×10@2", text)  # RIR shown as @N
+        self.assertIn("50кг×10@2", text)  # RIR показан как @N
 
     def test_validate_remaps_duplicate_id_to_canonical(self) -> None:
         catalog = [{"id": 18, "name": "Жим в тренажере"}, {"id": 1, "name": "Жим гор."}]

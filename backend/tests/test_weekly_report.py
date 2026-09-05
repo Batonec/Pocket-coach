@@ -24,6 +24,8 @@ from trainer.domain import coach_state, recommender
 
 
 class LastClosedWeekEndTests(unittest.TestCase):
+    """Якорь последней закрытой недели."""
+
     def test_every_weekday_points_at_the_previous_sunday(self) -> None:
         # 2026-08-31 — понедельник; неделя 24–30 августа только что закрылась.
         expected = date(2026, 8, 30)
@@ -54,6 +56,7 @@ class ReportPeriodTests(unittest.TestCase):
     """`weekly_report.run` — что уезжает в модель и подо что ложится в кэш."""
 
     def _store(self) -> tuple[backend_store.MiniAppStore, int]:
+        """Стор с одной тренировкой."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         store = backend_store.MiniAppStore(Path(tmp.name) / "trainer.db")
@@ -62,6 +65,8 @@ class ReportPeriodTests(unittest.TestCase):
         return store, uid
 
     def _capture(self, seen: dict[str, object]):
+        """Подменить ``generate_weekly_report`` захватом kwargs."""
+
         def capture(workouts, body_weights, waists, catalog, **kwargs):
             seen.update(kwargs)
             return "отчёт", {"input_tokens": 1, "output_tokens": 2}, "claude-test"

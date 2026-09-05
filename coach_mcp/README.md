@@ -1,81 +1,87 @@
 # Coach MCP
 
-MCP server over the Trainer mini-app data, plus tools to **debug the
-next-workout recommendations** and manage the **coaching state** (preparation
-phase, waist measurements, injection-cycle config). It reads the same SQLite
-database the backend uses (`backend`) and reuses `recommender.py` /
-`prompt_builder.py` / `coach_state.py` / `coach_features.py`, so what you see
-here is exactly what the app's backend generates.
+MCP-сервер над данными Trainer: инструменты для разговора с Claude как с
+«тренером» о своих тренировках, для **отладки рекомендаций «следующая
+тренировка»** и для управления **состоянием подготовки** (фаза, замеры талии,
+события). Читает ту же базу SQLite, что и backend, и импортирует
+`backend_store` / `recommender` / `prompt_builder` / `coach_state` /
+`coach_features` напрямую, поэтому здесь видно ровно то, что генерирует backend
+приложения.
 
-Use it to chat with Claude as a "coach" about your training, and to inspect the
-recommendation pipeline (the exact prompt, the model's attempts with semantic-
-validator violations and the auto-reprompt, token usage and cost).
+Второй сценарий — разбор пайплайна рекомендаций: точный промпт, попытки модели с
+нарушениями семантического валидатора и авто-репромптом, токены и стоимость.
 
-## Tools
+## Инструменты
 
-### Data (read-only)
+### Данные (только чтение)
 
-| Tool | What it does |
+| Инструмент | Что делает |
 |------|--------------|
-| `coach_list_workouts(limit=20)` | Workout history (newest first) + the compact serialization the model sees |
-| `coach_get_workout(workout_id)` | One workout, full payload |
-| `coach_list_body_weights()` | Body-weight history |
-| `coach_list_waists()` | Waist-measurement history (cm) |
-| `coach_get_catalog()` | The exercise catalog (only these exercises exist) |
-| `coach_get_state()` | Coaching state: phase + params, block week, weekly volume target, return-from-break flag, hormone-cycle day |
-| `coach_list_events()` | Events — gaps in training with a reason (newest first); `end_date: null` marks the one that is still running |
+| `coach_list_workouts(limit=20)` | История тренировок (новые сверху) плюс компактная сериализация, которую видит модель |
+| `coach_get_workout(workout_id)` | Одна тренировка целиком |
+| `coach_list_body_weights()` | История взвешиваний |
+| `coach_list_waists()` | История замеров талии (см) |
+| `coach_get_catalog()` | Каталог упражнений (других не существует) |
+| `coach_get_state()` | Состояние подготовки: фаза и её параметры, неделя блока, целевой объём недели, плановая разгрузка, флаг возврата после перерыва |
+| `coach_list_events()` | События — перерывы в тренировках с причиной (новые сверху); `end_date: null` — то, которое идёт сейчас |
 
-### Coaching state (writing)
+### Состояние подготовки (запись)
 
-| Tool | What it does |
+| Инструмент | Что делает |
 |------|--------------|
-| `coach_set_phase(phase, params?)` | Switch the preparation phase by hand (`cut_recomp` / `lean_bulk` / `maintenance`); stamps today as the phase start. No automatic switching ever — when a phase goal is reached, the prompt only asks the model to *suggest* the switch |
-| `coach_update_state(waist_limit_cm?, waist_base_cm?)` | Global knobs: hard waist limit, phase-base waist |
-| `coach_update_profile(block, text?)` | Replace one profile block (empty text deletes it); previous file kept as a timestamped `.bak` |
-| `coach_add_waist(waist_cm, entry_date?)` | Record a waist measurement (upserts per date) |
-| `coach_delete_waist(entry_id)` | Remove a mistyped measurement |
-| `coach_add_event(text, start_date?, end_date?)` | Record an event — a gap in training with a reason ("was ill", "business trip"). No end date means it is still running, and only one event may be open; future dates are rejected |
-| `coach_update_event(event_id, text?, start_date?, end_date?)` | Edit an event; omitted fields keep their current value, so "it ended yesterday" is one call with `end_date`. Pass `end_date=""` to reopen it |
-| `coach_delete_event(event_id)` | Remove an event recorded by mistake |
+| `coach_set_phase(phase, params?)` | Переключить фазу руками (`cut_recomp` / `lean_bulk` / `maintenance`); стартом фазы становится сегодня. Автопереключений нет: при достигнутой цели промпт лишь просит модель *предложить* смену |
+| `coach_update_state(waist_limit_cm?, waist_base_cm?)` | Глобальные ручки: жёсткий лимит талии, базовая талия фазы |
+| `coach_update_profile(block, text?)` | Заменить один блок профиля (пустой текст удаляет блок); прошлая версия файла остаётся рядом как `.bak` с таймстампом |
+| `coach_add_waist(waist_cm, entry_date?)` | Записать замер талии (один на дату, повтор перезаписывает) |
+| `coach_delete_waist(entry_id)` | Удалить ошибочный замер |
+| `coach_add_event(text, start_date?, end_date?)` | Записать событие — перерыв с причиной («болел», «командировка»). Без даты конца событие идёт сейчас, и открытым может быть только одно; будущие даты отвергаются |
+| `coach_update_event(event_id, text?, start_date?, end_date?)` | Поправить событие; не переданные поля не меняются, так что «закончилось вчера» — один вызов с `end_date`. `end_date=""` открывает событие снова |
+| `coach_delete_event(event_id)` | Удалить событие, записанное по ошибке |
 
-### Recommendation engine
+### Движок рекомендаций
 
-| Tool | What it does |
+| Инструмент | Что делает |
 |------|--------------|
-| `coach_get_stored_recommendation()` | The recommendation currently cached for the app (status/based_on/payload/tokens/stale) |
-| `coach_preview_prompt(limit=20)` | The exact system+user prompt and JSON schema — **no API call** (free). Includes phase, block week and cycle info |
-| `coach_debug_recommendation(limit=20)` | Full generation run with the semantic validator: every attempt (raw output + violations + reprompt), final result, tokens/cost. Does not write to the DB |
-| `coach_generate_recommendation(limit=20, store=false)` | Generate a validated recommendation; `store=true` overwrites the app's cached recommendation |
-| `coach_weekly_report(days=7, fresh=false)` | Coach-style weekly retrospective (Markdown): week totals vs targets, PRs, weight/waist trends, discipline, next-week focus. Always covers the last **closed** calendar week (Mon–Sun), served from the cache instantly (a Monday-midnight timer pre-generates it); `fresh=true` regenerates for tokens |
-| `coach_phase_summary(history_index?)` | What a preparation phase delivered: duration, sessions + frequency, weight/waist start→finish with rate, PRs, discipline. No args — the current phase; an index — a closed phase from the journal |
-| `coach_costs()` | Monthly Claude API spend: recommendation generations + weekly reports (calls, tokens, estimated USD) |
+| `coach_get_stored_recommendation()` | Совет, который сейчас лежит в кэше приложения (status / based_on / payload / токены / stale) |
+| `coach_preview_prompt(limit=20)` | Точный system+user промпт и JSON-схема — **без вызова API** (бесплатно). Включает фазу, неделю блока и положение в цикле |
+| `coach_debug_recommendation(limit=20)` | Полный прогон генерации с семантическим валидатором: каждая попытка (сырой ответ + нарушения + репромпт), итог, токены и стоимость. В базу не пишет |
+| `coach_generate_recommendation(limit=20, store=false)` | Сгенерировать валидированный совет; `store=true` перезаписывает кэш приложения |
+| `coach_weekly_report(days=7, fresh=false)` | Недельный отчёт тренера (Markdown): итоги недели против целей, ПР, тренды веса и талии, дисциплина, фокус следующей недели. Всегда про последнюю **закрытую** календарную неделю (пн–вс), отдаётся из кэша мгновенно (таймер в ночь на понедельник генерирует его заранее); `fresh=true` пересобирает за токены |
+| `coach_phase_summary(history_index?)` | Что дала фаза подготовки: длительность, сессии и частота, вес и талия старт→финиш с темпом, ПР, дисциплина. Без аргументов — текущая фаза; индекс — закрытая фаза из журнала |
+| `coach_costs()` | Расход на Claude API по месяцам: генерации совета и недельные отчёты (вызовы, токены, оценка в USD) |
 
-All tools accept an optional `user_id` (defaults to the configured user).
+Все инструменты принимают необязательный `user_id` (по умолчанию — настроенный
+пользователь).
 
-## State files (next to the DB)
+## Файлы состояния (рядом с базой)
 
-- `coach_profile.json` — athlete prose profile (personal/medical context; never
-  in the repo, shape documented in `backend/README.md`; override path with
-  `COACH_PROFILE_PATH`);
-- `coach_state.json` — structured coaching state: phase, phase start, per-phase
-  overrides, waist limit/base (override path with `COACH_STATE_PATH`).
+- `coach_profile.json` — текстовый профиль атлета (личный и медицинский
+  контекст; в репозитории его нет, форма описана в `backend/README.md`; путь
+  переопределяется `COACH_PROFILE_PATH`);
+- `coach_strategy.md` — рабочий документ стратегии, срез которого уезжает в
+  промпт (`COACH_STRATEGY_PATH`);
+- `coach_state.json` — структурированное состояние подготовки: фаза, её старт,
+  переопределения по фазам, лимит и база талии, журнал фаз (`COACH_STATE_PATH`).
 
-## Environment
+## Окружение
 
-| Var | Default | Notes |
+| Переменная | По умолчанию | Примечание |
 |-----|---------|-------|
-| `ANTHROPIC_API_KEY` | — | Required for `coach_debug_recommendation` / `coach_generate_recommendation` |
-| `COACH_MCP_BACKEND_DIR` | `../backend` | Backend root holding the `trainer/` package. On the VPS: `/opt/trainer-miniapp/app` |
-| `MINIAPP_DB_PATH` | `<backend_dir>/data/trainer.db` | SQLite path. On the VPS: `/opt/trainer-miniapp/data/trainer.db` |
-| `EXERCISE_CATALOG_PATH` | `<backend_dir>/resources/exercises.json` | Exercise catalog JSON; ships with the backend code. On the VPS: `/opt/trainer-miniapp/app/resources/exercises.json` |
-| `COACH_MCP_USER_ID` | `3` | Which user to operate on |
-| `ANTHROPIC_MODEL` | from `recommender` (`claude-opus-5`) | Model for generation |
-| `COACH_MCP_HOST` / `COACH_MCP_PORT` | `127.0.0.1` / `8001` | streamable-http bind (8001 to avoid investor-mcp's 8000) |
-| `COACH_MCP_PATH` | `/mcp` | HTTP path; use a secret path in production |
-| `COACH_MCP_AUTH_TOKEN` | — | If set, require `Authorization: Bearer <token>` |
-| `COACH_MCP_ALLOWED_HOSTS` | — | Comma list → enables strict DNS-rebinding protection |
+| `ANTHROPIC_API_KEY` | — | Нужен для `coach_debug_recommendation` / `coach_generate_recommendation` / `coach_weekly_report` |
+| `COACH_MCP_BACKEND_DIR` | `../backend` | Корень backend с пакетом `trainer/`. На VPS: `/opt/trainer-miniapp/app` |
+| `MINIAPP_DB_PATH` | `<backend_dir>/data/trainer.db` | Путь к SQLite. На VPS: `/opt/trainer-miniapp/data/trainer.db` |
+| `EXERCISE_CATALOG_PATH` | `<backend_dir>/resources/exercises.json` | Каталог упражнений; едет с кодом backend. На VPS: `/opt/trainer-miniapp/app/resources/exercises.json` |
+| `COACH_MCP_PROFILE_PATH` / `COACH_PROFILE_PATH` | `<каталог базы>/coach_profile.json` | Профиль атлета; первая переменная имеет приоритет |
+| `COACH_MCP_STRATEGY_PATH` / `COACH_STRATEGY_PATH` | `<каталог базы>/coach_strategy.md` | Документ стратегии |
+| `COACH_STATE_PATH` | `<каталог базы>/coach_state.json` | Состояние подготовки |
+| `COACH_MCP_USER_ID` | `3` | Для какого пользователя работать |
+| `ANTHROPIC_MODEL` | из `anthropic_client` (`claude-opus-5`) | Модель генерации |
+| `COACH_MCP_HOST` / `COACH_MCP_PORT` | `127.0.0.1` / `8001` | Адрес streamable-http (8001, чтобы не пересечься с investor-mcp на 8000) |
+| `COACH_MCP_PATH` | `/mcp` | HTTP-путь; в проде — секретный |
+| `COACH_MCP_AUTH_TOKEN` | — | Если задан, требуется `Authorization: Bearer <token>` |
+| `COACH_MCP_ALLOWED_HOSTS` | — | Список через запятую → строгая защита от DNS-rebinding |
 
-## Run locally (stdio, e.g. Claude Desktop)
+## Локальный запуск (stdio, например Claude Desktop)
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
@@ -83,32 +89,33 @@ pip install -r coach_mcp/requirements.txt
 ANTHROPIC_API_KEY=sk-ant-... python coach_mcp/server.py
 ```
 
-## Deploy on the VPS (streamable-http behind Cloudflare tunnel)
+## Деплой на VPS (streamable-http за Cloudflare Tunnel)
 
-Same shape as `investor-mcp`. The backend already lives at
-`/opt/trainer-miniapp/app`, so point the importer there and reuse the existing
-`backend.env` secrets.
+Та же схема, что у `investor-mcp`. Backend уже лежит в `/opt/trainer-miniapp/app`,
+поэтому импортёр указывает туда и переиспользует секреты из `backend.env`.
+Обновление кода — `./backend/infra/deploy/deploy.sh coach-mcp`: копирует
+`server.py` и этот README и перезапускает юнит.
 
 ```bash
-# one-time
+# один раз
 python3 -m venv /opt/coach-mcp/venv
 /opt/coach-mcp/venv/bin/pip install -r requirements.txt
-# env (own EnvironmentFile, or reuse the backend's):
+# окружение (свой EnvironmentFile или тот же, что у backend):
 #   COACH_MCP_BACKEND_DIR=/opt/trainer-miniapp/app
 #   MINIAPP_DB_PATH=/opt/trainer-miniapp/data/trainer.db
-#   ANTHROPIC_API_KEY=...           (already in /etc/trainer-miniapp/backend.env)
-#   COACH_MCP_PATH=/<random-secret-path>/mcp
+#   ANTHROPIC_API_KEY=...           (уже есть в /etc/trainer-miniapp/backend.env)
+#   COACH_MCP_PATH=/<случайный-секретный-путь>/mcp
 /opt/coach-mcp/venv/bin/python server.py --transport streamable-http --host 127.0.0.1 --port 8001
 ```
 
-Then add a Cloudflare tunnel public hostname → `http://localhost:8001` and use
-`https://<host>/<secret-path>/mcp` as the connector URL in Claude.
+Дальше — публичный hostname в Cloudflare Tunnel → `http://localhost:8001`, а URL
+коннектора в Claude — `https://<host>/<секретный-путь>/mcp`.
 
-> **RAM note:** the VPS is ~1 GB and already runs the backend, two Caddy
-> containers, cloudflared and the investor-mcp tunnel. A second `mcp`+uvicorn
-> process adds ~50–80 MB — check `free -m` headroom (or run it on demand) before
-> leaving it always-on.
+> **Про память:** на VPS ~1 ГБ, и там уже крутятся backend, два контейнера Caddy,
+> cloudflared и туннель investor-mcp. Второй процесс `mcp`+uvicorn добавляет
+> ~50–80 МБ — проверь запас по `free -m` (или запускай по требованию), прежде чем
+> оставлять его постоянно.
 
-> **Security:** these tools expose the user's full training history and can spend
-> Anthropic tokens (`coach_debug_recommendation` / `coach_generate_recommendation`).
-> Behind a public tunnel, use a secret `COACH_MCP_PATH` and/or `COACH_MCP_AUTH_TOKEN`.
+> **Безопасность:** инструменты открывают всю историю тренировок и умеют тратить
+> токены Anthropic (`coach_debug_recommendation` / `coach_generate_recommendation`).
+> За публичным туннелем — секретный `COACH_MCP_PATH` и/или `COACH_MCP_AUTH_TOKEN`.

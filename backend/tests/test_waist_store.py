@@ -1,3 +1,7 @@
+"""Замеры талии: нормализация и границы (совпадают с фильтром коуча), стор, кэш
+отчётов и расход токенов, RIR подхода.
+"""
+
 from __future__ import annotations
 
 import sys
@@ -21,6 +25,8 @@ from trainer.domain.rules import (
 
 
 class WaistNormalizationTests(unittest.TestCase):
+    """``normalize_waist_payload`` и синхрон границ с ``coach_features``."""
+
     def test_valid_payload(self) -> None:
         normalized = normalize_waist_payload(
             {"entry_date": "2026-08-14", "waist": "84.5", "notes": " утро "}
@@ -54,6 +60,8 @@ class WaistNormalizationTests(unittest.TestCase):
 
 
 class WaistStoreTests(unittest.TestCase):
+    """Замеры талии в сторе: апсерт, удаление, изоляция по пользователям."""
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
@@ -89,6 +97,8 @@ class WaistStoreTests(unittest.TestCase):
 
 
 class CoachReportStoreTests(unittest.TestCase):
+    """Кэш недельных отчётов и агрегат расхода токенов."""
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
@@ -122,6 +132,8 @@ class CoachReportStoreTests(unittest.TestCase):
 
 
 class SetRirTests(unittest.TestCase):
+    """RIR подхода: нормализация, payload, round-trip через стор."""
+
     def test_normalize_set_rir_values(self) -> None:
         self.assertIsNone(normalize_set_rir(None))
         self.assertIsNone(normalize_set_rir(""))

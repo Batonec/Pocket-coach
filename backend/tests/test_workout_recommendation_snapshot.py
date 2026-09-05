@@ -1,3 +1,7 @@
+"""Снапшот совета внутри тренировки: нормализация формы и размера, POST/PUT через
+API, ретрай без затирания.
+"""
+
 from __future__ import annotations
 
 import unittest
@@ -8,11 +12,12 @@ from support import (
     sample_workout_payload,
 )
 
-from trainer.data import backend_store  # support puts backend/ on sys.path
+from trainer.data import backend_store  # support кладёт backend/ в sys.path
 from trainer.domain import rules
 
 
 def sample_snapshot(**overrides):
+    """Валидный снапшот совета с переопределениями."""
     snapshot = {
         "schema": 1,
         "source": "coach",
@@ -36,12 +41,15 @@ def sample_snapshot(**overrides):
 
 
 def payload_with_snapshot(client_id: str, snapshot) -> dict:
+    """Payload тренировки со снапшотом внутри."""
     payload = sample_workout_payload(client_id=client_id)
     payload["data"]["recommendation"] = snapshot
     return payload
 
 
 class NormalizeSnapshotTests(unittest.TestCase):
+    """Нормализация снапшота: ``rules.normalize_recommendation_snapshot``."""
+
     def test_valid_snapshot_passes_with_defaults(self) -> None:
         out = rules.normalize_recommendation_snapshot(sample_snapshot())
         self.assertIsNotNone(out)
@@ -63,7 +71,7 @@ class NormalizeSnapshotTests(unittest.TestCase):
         self.assertIsNone(rules.normalize_recommendation_snapshot("nope"))
         self.assertIsNone(rules.normalize_recommendation_snapshot({}))
         self.assertIsNone(rules.normalize_recommendation_snapshot({"exercises": []}))
-        # reps < 1 drops the set, empty sets drop the exercise, no exercises -> None
+        # повторы < 1 убирают подход, пустые подходы — упражнение, без упражнений → None
         self.assertIsNone(
             rules.normalize_recommendation_snapshot(
                 {
@@ -92,7 +100,7 @@ class NormalizeSnapshotTests(unittest.TestCase):
                 for i in range(1, 11)
             ]
         )
-        # ~10 exercises x 12 sets with max-length names: force > 8KB via long names
+        # ~10 упражнений × 12 подходов с именами максимальной длины: > 8 КБ за счёт имён
         result = rules.normalize_recommendation_snapshot(big)
         if result is not None:
             self.assertLessEqual(
@@ -102,6 +110,8 @@ class NormalizeSnapshotTests(unittest.TestCase):
 
 
 class SnapshotAPITests(unittest.TestCase):
+    """Снапшот через POST и PUT на живом сервере."""
+
     def test_post_with_snapshot_persists_and_lists(self) -> None:
         with running_miniapp_server() as app:
             client = JsonHttpClient(app.base_url)
@@ -182,7 +192,7 @@ class SnapshotAPITests(unittest.TestCase):
             retry = client.request_json(
                 "POST", "/api/workouts", payload_with_snapshot("w-retry", sample_snapshot())
             )
-            self.assertEqual(retry.status, 200)  # dedupe path, created=False
+            self.assertEqual(retry.status, 200)  # путь дедупа, created=False
             self.assertFalse(retry.payload["created"])
             backfilled = retry.payload["workout"]["data"].get("recommendation")
             self.assertIsNotNone(backfilled)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import unittest
 
 import return_block_fixture as fx
-import support  # noqa: F401 — adds backend to sys.path
+import support  # noqa: F401 — кладёт backend в sys.path
 
 from trainer.domain import coach_features, coach_state, plan_validator, prompt_builder
 
@@ -40,13 +40,13 @@ class ActiveWindowTests(unittest.TestCase):
         self.assertEqual(self.report["window_days"], 23)
 
     def test_frequency_is_the_real_one(self) -> None:
-        # 9 sessions in 23 days ≈ 2.7/week — not «1.5/нед за 6 недель».
+        # 9 сессий за 23 дня ≈ 2.7/нед — а не «1.5/нед за 6 недель».
         self.assertAlmostEqual(self.report["frequency"], 9 / (23 / 7), places=2)
         self.assertFalse(any("частота" in reason for reason in self.report["reasons"]))
 
     def test_volume_is_judged_against_the_phase_targets(self) -> None:
         per_week = self.report["volume_per_week"]
-        self.assertEqual(per_week["квадрицепс/ягодичные"][1], 8)  # not a flat 10
+        self.assertEqual(per_week["квадрицепс/ягодичные"][1], 8)  # не плоские 10
         self.assertEqual(per_week["грудь"][1], 12)
         text = prompt_builder.render_stall_report(self.report)
         self.assertIn("Активное окно 23 дн. (с 2026-08-14", text)
@@ -60,27 +60,27 @@ class ReturnLadderTests(unittest.TestCase):
     """П.3 разбора: при закрытом возврате лесенка к пикам не печатается."""
 
     def test_no_ladder_once_the_pre_break_weights_are_back(self) -> None:
-        # Press 60 ≥ 55, vertical row 65 ≥ 65, leg press 100 ≥ 80 → nothing to climb.
+        # Жим 60 ≥ 55, тяга верт. 65 ≥ 65, жим ногами 100 ≥ 80 → подниматься некуда.
         self.assertEqual(
             coach_features.comeback_ramp_steps(fx.workouts(), fx.CATALOG, fx.TODAY), []
         )
 
     def test_ladder_on_the_second_session_targets_the_pre_break_weight(self) -> None:
-        # The morning after the comeback session (14.08 at 50): 52.5 → 55, not 65 → 67.5.
+        # Утро после возвратной сессии (14.08 на 50): 52.5 → 55, а не 65 → 67.5.
         history = [w for w in fx.workouts() if w["workout_date"] <= "2026-08-14"]
         items = coach_features.comeback_ramp_steps(
             history, fx.CATALOG, fx.TODAY.replace(month=8, day=15)
         )
         press = next(item for item in items if item["exercise_id"] == 18)
         self.assertEqual((press["current"], press["target"]), (50, 55))
-        # The rung is the machine step as the HISTORY shows it: with only two
-        # sessions on record (55 → 50) that is 5 kg, hence one rung to 55; the
-        # live history has 2.5-kg changes and yields 52.5 → 55.
+        # Ступень — шаг стека, каким его показывает ИСТОРИЯ: при двух сессиях в
+        # записи (55 → 50) это 5 кг, отсюда одна ступень до 55; живая история
+        # держит шаги по 2.5 кг и даёт 52.5 → 55.
         self.assertEqual(press["steps"][-1], 55)
         self.assertTrue(all(step - 50 <= 5 for step in press["steps"]))
         vertical = next(item for item in items if item["exercise_id"] == 9)
         self.assertEqual((vertical["current"], vertical["target"]), (60, 65))
-        # The leg press is already back at its pre-break 80 → not listed.
+        # Жим ногами уже вернулся к доперерывным 80 → не в списке.
         self.assertEqual({item["exercise_id"] for item in items}, {18, 9})
 
 
@@ -132,6 +132,7 @@ class SessionCapTests(unittest.TestCase):
     """П.4 разбора: размер сессии — жёсткая граница фазы, не пожелание."""
 
     def _plan(self, per_exercise: list[int]) -> dict:
+        """Санитизированный план из числа сетов на упражнение."""
         ids = [18, 9, 8, 13, 11, 12, 17, 15, 16, 19]
         return plan_validator._validate(
             {
@@ -154,7 +155,7 @@ class SessionCapTests(unittest.TestCase):
     def test_twenty_two_sets_violate_the_phase_cap(self) -> None:
         cap = plan_validator._session_cap(coach_state.phase_params(fx.STATE))
         self.assertEqual(cap, 20)
-        plan = self._plan([4, 4, 4, 3, 3, 2, 2])  # 22 sets, like the card of 24.08
+        plan = self._plan([4, 4, 4, 3, 3, 2, 2])  # 22 сета, как карточка от 24.08
         violations = plan_validator._semantic_violations(
             plan, fx.CATALOG, fx.workouts(), fx.TODAY, session_cap=cap
         )
@@ -165,13 +166,15 @@ class SessionCapTests(unittest.TestCase):
         plan = self._plan([4, 4, 4, 3, 3, 2, 2])
         removed = plan_validator._trim_to_cap(plan, 20)
         self.assertEqual(plan_validator._planned_sets(plan), 20)
-        # Tail first, one set per exercise per pass: the two last (isolation)
-        # movements each lose a set; the compounds at the front are untouched.
+        # С хвоста, по сету на упражнение за проход: два последних (изоляция)
+        # теряют по сету; базовые в начале не тронуты.
         self.assertEqual([len(e["sets"]) for e in plan["exercises"]], [4, 4, 4, 3, 3, 1, 1])
         self.assertEqual(removed, ["Бабочка −1", "Трицепс −1"])
 
 
 class AssembledPromptTests(unittest.TestCase):
+    """Собранные промпты плана и отчёта на фикстуре."""
+
     def test_plan_prompt_carries_the_fixed_blocks(self) -> None:
         prompt = prompt_builder._build_user_prompt(
             fx.workouts(),

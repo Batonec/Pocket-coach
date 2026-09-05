@@ -103,8 +103,8 @@ sync_dir() {
 }
 
 
-# The Coach MCP server on the VPS lives OUTSIDE $REMOTE_BASE (its own venv +
-# systemd unit) — this is the only scripted way to update it.
+# Coach MCP на VPS живёт ВНЕ $REMOTE_BASE (свой venv и systemd-юнит) — это
+# единственный скриптовый способ его обновить.
 COACH_MCP_REMOTE_DIR="${COACH_MCP_REMOTE_DIR:-/opt/coach-mcp/app}"
 COACH_MCP_SERVICE="${COACH_MCP_SERVICE:-coach-mcp.service}"
 

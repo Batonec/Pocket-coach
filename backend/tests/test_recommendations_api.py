@@ -1,3 +1,7 @@
+"""API совета: GET next, ручной refresh с ошибками и кулдауном, фоновая пересборка
+после правок и схлопывание триггеров; жизненный цикл строки кэша в сторе.
+"""
+
 from __future__ import annotations
 
 import tempfile
@@ -16,7 +20,7 @@ from support import (
     temporary_env,
 )
 
-from trainer.data import backend_store  # support (imported below) puts backend on sys.path
+from trainer.data import backend_store  # support (импортирован выше) кладёт backend в sys.path
 
 FAKE_REC: dict[str, Any] = {
     "focus": "Тест",
@@ -29,10 +33,13 @@ FAKE_REC: dict[str, Any] = {
 
 
 def _fake_generate(workouts, body_weights, catalog, **kwargs):
+    """Подмена ``generate`` с фиксированным советом и расходом токенов."""
     return FAKE_REC, {"input_tokens": 100, "output_tokens": 50}, "claude-test"
 
 
 class RecommendationsAPITests(unittest.TestCase):
+    """Эндпоинты совета на живом сервере с подменённой генерацией."""
+
     @contextmanager
     def _server(
         self,
@@ -41,7 +48,10 @@ class RecommendationsAPITests(unittest.TestCase):
         generate=None,
         raises: str | None = None,
     ) -> Iterator[RunningMiniApp]:
-        # Drop the manual-refresh debounce so sequential calls in a test don't race it.
+        # Снимаем кулдаун ручного refresh, чтобы последовательные вызовы в тесте в него не упирались.
+        """Сервер с подменённой генерацией: ``auto_trigger`` включает фоновую
+        пересборку, ``raises`` делает генерацию падающей.
+        """
         with (
             temporary_env({"RECOMMENDATION_REFRESH_MIN_INTERVAL": "0"}),
             running_miniapp_server() as running,
@@ -91,7 +101,7 @@ class RecommendationsAPITests(unittest.TestCase):
             self.assertEqual(nxt.payload["recommendation"]["exercises"][0]["exercise_id"], 1)
 
     def test_stale_flag_set_after_newer_workout(self) -> None:
-        with self._server() as running:  # auto_trigger off → recommendation won't regenerate
+        with self._server() as running:  # auto_trigger выключен → совет не пересоберётся
             client = JsonHttpClient(running.base_url)
             client.request_json(
                 "POST",
@@ -221,8 +231,8 @@ class RecommendationsAPITests(unittest.TestCase):
 
     def test_measurements_regenerate_once_more_with_latest_weight_and_waist(self) -> None:
         def measurement_generate(workouts, body_weights, catalog, **kwargs):
-            # Keep the first measurement generation in flight long enough for
-            # the waist mutation to request a coalesced follow-up pass.
+            # Держим первую генерацию по замерам достаточно долго, чтобы правка
+            # талии успела запросить схлопнутый добавочный прогон.
             time.sleep(0.15)
             recommendation = dict(FAKE_REC)
             recommendation["focus"] = (
@@ -265,7 +275,10 @@ class RecommendationsAPITests(unittest.TestCase):
 
 
 class RecommendationStoreTests(unittest.TestCase):
+    """Строка кэша совета в сторе: none → pending → ready / failed."""
+
     def _store(self) -> tuple[backend_store.MiniAppStore, int]:
+        """Стор с одним debug-пользователем."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         store = backend_store.MiniAppStore(Path(tmp.name) / "trainer.db")
