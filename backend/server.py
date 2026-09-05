@@ -17,13 +17,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import coach_signals
-import coach_state
-import recommender
-from backend_store import MiniAppStore
+from trainer.backend_store import MiniAppStore
+from trainer.coach import coach_signals, coach_state, recommender
 
 BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "static"))).resolve()
+STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "resources" / "static"))).resolve()
 DATA_DIR = BASE_DIR / "data"
 HOST = os.getenv("MINIAPP_HOST", "127.0.0.1")
 PORT = int(os.getenv("MINIAPP_PORT", "8080"))

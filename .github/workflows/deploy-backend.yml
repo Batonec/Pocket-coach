@@ -69,33 +69,31 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -eu
-          ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "mkdir -p '$DEPLOY_BASE/app'"
-          scp -P "${VPS_PORT:-22}" \
-            backend/server.py \
-            backend/backend_store.py \
-            backend/recommender.py \
-            backend/prompt_builder.py \
-            backend/plan_validator.py \
-            backend/anthropic_client.py \
-            backend/coach_state.py \
-            backend/coach_features.py \
-            backend/coach_signals.py \
-            backend/coach_prompts.py \
-            backend/refresh_recommendation.py \
-            backend/weekly_report.py \
-            backend/backup_db.py \
-            "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/"
-          # Проза промптов — каталогом: файлы .md перечислять поимённо значит
-          # снова заводить список, который забудут обновить.
-          ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "mkdir -p '$DEPLOY_BASE/app/prompts' '$DEPLOY_BASE/app/copy'"
+          ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "mkdir -p '$DEPLOY_BASE/app/trainer' '$DEPLOY_BASE/app/infra/jobs' '$DEPLOY_BASE/app/prompts' '$DEPLOY_BASE/app/resources/copy'"
+          scp -P "${VPS_PORT:-22}" backend/server.py "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/"
+          # Код едет каталогами, как и проза: пакет trainer/ и скрипты таймеров
+          # infra/jobs/ целиком. Поимённого списка модулей нет специально — новому
+          # файлу негде потеряться по дороге на прод.
+          scp -P "${VPS_PORT:-22}" -r \
+            backend/trainer/. \
+            "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/trainer/"
+          scp -P "${VPS_PORT:-22}" -r \
+            backend/infra/jobs/. \
+            "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/infra/jobs/"
           scp -P "${VPS_PORT:-22}" -r \
             backend/prompts/. \
             "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/prompts/"
           scp -P "${VPS_PORT:-22}" -r \
-            backend/copy/. \
-            "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/copy/"
+            backend/resources/copy/. \
+            "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/resources/copy/"
+          # Юниты и таймеры — все: таймеры ссылаются на пути скриптов в infra/jobs/,
+          # и переезд скрипта без юнита молча остановил бы таймер. Новый таймер
+          # деплой не включает — enable делается руками один раз.
           scp -P "${VPS_PORT:-22}" \
-            backend/deploy/trainer-miniapp-backend.service \
+            backend/infra/deploy/*.service backend/infra/deploy/*.timer \
+            "$VPS_USER@$VPS_HOST:/etc/systemd/system/"
+          scp -P "${VPS_PORT:-22}" \
+            backend/infra/deploy/trainer-miniapp-backend.service \
             "$VPS_USER@$VPS_HOST:/etc/systemd/system/$BACKEND_SERVICE"
 
       - name: Restart backend service
@@ -106,8 +104,9 @@ jobs:
         run: |
           set -eu
           ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "\
-            chmod 644 '$DEPLOY_BASE/app/server.py' '$DEPLOY_BASE/app/backend_store.py' '$DEPLOY_BASE/app/recommender.py' '$DEPLOY_BASE/app/prompt_builder.py' '$DEPLOY_BASE/app/plan_validator.py' '$DEPLOY_BASE/app/anthropic_client.py' '$DEPLOY_BASE/app/coach_state.py' '$DEPLOY_BASE/app/coach_features.py' '$DEPLOY_BASE/app/coach_signals.py' '$DEPLOY_BASE/app/coach_prompts.py' '$DEPLOY_BASE/app/refresh_recommendation.py' '$DEPLOY_BASE/app/weekly_report.py' '$DEPLOY_BASE/app/backup_db.py' '/etc/systemd/system/$BACKEND_SERVICE' && \
-            chmod 644 '$DEPLOY_BASE/app/prompts/'*.md '$DEPLOY_BASE/app/copy/'*.md && \
+            cd '$DEPLOY_BASE/app' && rm -f backend_store.py anthropic_client.py coach_features.py coach_prompts.py coach_signals.py coach_state.py plan_validator.py prompt_builder.py recommender.py backup_db.py refresh_recommendation.py weekly_report.py && rm -rf copy && \
+            find '$DEPLOY_BASE/app' -name '*.py' -exec chmod 644 {} + && \
+            chmod 644 '$DEPLOY_BASE/app/prompts/'*.md '$DEPLOY_BASE/app/resources/copy/'*.md /etc/systemd/system/trainer-*.service /etc/systemd/system/trainer-*.timer && \
             test -f /etc/trainer-miniapp/backend.env && \
             systemctl daemon-reload && \
             systemctl enable --now '$BACKEND_SERVICE' && \

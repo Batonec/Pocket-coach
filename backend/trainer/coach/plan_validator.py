@@ -21,9 +21,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-import coach_features
-import coach_state
-from anthropic_client import RecommendationError
+from trainer.coach import coach_features, coach_state
+from trainer.coach.anthropic_client import RecommendationError
 
 # Server-side sanity bounds (JSON Schema can't express numeric ranges, so the
 # model output is clamped/filtered after parsing). These are sanitation, not

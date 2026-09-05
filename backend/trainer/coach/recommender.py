@@ -23,12 +23,14 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-import anthropic_client
-import coach_features
-import coach_state
-import plan_validator
-import prompt_builder
-from anthropic_client import (
+from trainer.coach import (
+    anthropic_client,
+    coach_features,
+    coach_state,
+    plan_validator,
+    prompt_builder,
+)
+from trainer.coach.anthropic_client import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
@@ -72,7 +74,7 @@ def load_profile(path: Path | str | None) -> dict[str, Any] | None:
 
     The real profile lives ONLY on the server next to the database — it holds
     personal/medical context and must never be committed to the public repo
-    (see coach_profile.example.json). Missing/broken file → None: generation
+    (the shape is documented in backend/README.md). Missing/broken file → None: generation
     still works, just without the personal context.
     """
     if not path:

@@ -13,12 +13,12 @@ Run (streamable-http, behind a Cloudflare tunnel like investor-mcp):
 
 Environment:
     ANTHROPIC_API_KEY        required for the generate/debug tools
-    COACH_MCP_BACKEND_DIR    dir containing backend_store.py + recommender.py
+    COACH_MCP_BACKEND_DIR    backend root holding the trainer/ package
                              (default: ../backend; on the VPS set it to
                              /opt/trainer-miniapp/app)
     MINIAPP_DB_PATH          SQLite path (default: <backend_dir>/data/trainer.db)
     COACH_MCP_STATIC_DIR     dir holding data/exercises.json (default:
-                             MINIAPP_STATIC_DIR, else <backend_dir>/static)
+                             MINIAPP_STATIC_DIR, else <backend_dir>/resources/static)
     COACH_MCP_USER_ID        user id to operate on (default:
                              MINIAPP_TELEGRAM_RECOVERY_USER_ID, else 3)
     ANTHROPIC_MODEL          override model (default from recommender)
@@ -44,7 +44,7 @@ try:
 except Exception:  # noqa: BLE001, S110 — dotenv опционален, .env может не быть
     pass
 
-# --- locate and import the backend modules (backend_store + recommender) ------
+# --- locate and import the backend package (trainer/) ------------------------
 _BACKEND_DIR = os.getenv("COACH_MCP_BACKEND_DIR") or str(
     Path(__file__).resolve().parent.parent / "backend"
 )
@@ -55,18 +55,20 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 from mcp.server.transport_security import TransportSecuritySettings  # noqa: E402
 from mcp.types import CallToolResult, TextContent  # noqa: E402
 
-import backend_store  # noqa: E402
-import coach_features  # noqa: E402
-import coach_state  # noqa: E402
-import prompt_builder  # noqa: E402
-import recommender  # noqa: E402
+from trainer import backend_store  # noqa: E402
+from trainer.coach import (  # noqa: E402
+    coach_features,
+    coach_state,
+    prompt_builder,
+    recommender,
+)
 
 # --- configuration ------------------------------------------------------------
 _DB_PATH = Path(os.getenv("MINIAPP_DB_PATH") or str(Path(_BACKEND_DIR) / "data" / "trainer.db"))
 _STATIC_DIR = Path(
     os.getenv("COACH_MCP_STATIC_DIR")
     or os.getenv("MINIAPP_STATIC_DIR")
-    or str(Path(_BACKEND_DIR) / "static")
+    or str(Path(_BACKEND_DIR) / "resources" / "static")
 )
 _PROFILE_PATH = Path(
     os.getenv("COACH_MCP_PROFILE_PATH")

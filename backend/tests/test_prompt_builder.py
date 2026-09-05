@@ -4,8 +4,7 @@ import unittest
 
 import support  # noqa: F401 — adds backend to sys.path
 
-import plan_validator
-import prompt_builder
+from trainer.coach import plan_validator, prompt_builder
 
 
 class CoachContextTests(unittest.TestCase):

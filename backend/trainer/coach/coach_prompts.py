@@ -23,10 +23,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-# Две поверхности, один механизм: prompts/ читает модель, copy/ — клиент.
+from trainer import BACKEND_DIR
+
+# Две поверхности, один механизм: prompts/ читает модель, resources/copy/ — клиент.
 # Держать их в одной папке значит смешать две разные аудитории.
-PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
-COPY_DIR = Path(__file__).resolve().parent / "copy"
+PROMPTS_DIR = BACKEND_DIR / "prompts"
+COPY_DIR = BACKEND_DIR / "resources" / "copy"
 
 _SLOT_RE = re.compile(r"\{\{([a-z_]+)\}\}")
 

@@ -4,7 +4,8 @@
 #
 # Триггеры выбраны по разделу «Поддержка этого файла» в CLAUDE.md — обычная
 # фича внутри существующих слоёв хук не будит:
-#   1) появился или исчез модуль в backend/ · coach_mcp/ · ios/TrainerIOS/ (и Views/);
+#   1) появился или исчез модуль в backend/ (включая trainer/ и infra/jobs/) · coach_mcp/ ·
+#      ios/TrainerIOS/ (и Views/);
 #   2) тронуты места, которые надо держать в синхроне руками
 #      (CI-воркфлоу, deploy.sh, project.pbxproj);
 #   3) тронута граница «алгоритм / LLM» (recommender.py и его модули prompt_builder.py,
@@ -40,15 +41,15 @@ reasons=""
 add_reason() { reasons="${reasons}${reasons:+; }$1"; }
 
 printf '%s\n' "$newgone" \
-  | grep -qE '^((backend|coach_mcp)/[^/]+\.py|ios/TrainerIOS(Tests)?/([^/]+/)?[^/]+\.swift)$' \
+  | grep -qE '^((backend|coach_mcp)/[^/]+\.py|backend/(trainer|infra/jobs)/.*\.py|ios/TrainerIOS(Tests)?/([^/]+/)?[^/]+\.swift)$' \
   && add_reason "появился или исчез модуль в backend/coach_mcp/ios"
 
 printf '%s\n' "$paths" \
-  | grep -qE '^(\.github/workflows/|backend/deploy/deploy\.sh$|ios/TrainerIOS\.xcodeproj/project\.pbxproj$)' \
+  | grep -qE '^(\.github/workflows/|backend/infra/deploy/deploy\.sh$|ios/TrainerIOS\.xcodeproj/project\.pbxproj$)' \
   && add_reason "тронуты места ручного синхрона (CI / deploy.sh / project.pbxproj)"
 
 printf '%s\n' "$paths" \
-  | grep -qE '^backend/(recommender|anthropic_client|plan_validator|prompt_builder|coach_signals)\.py$' \
+  | grep -qE '^backend/trainer/coach/(recommender|anthropic_client|plan_validator|prompt_builder|coach_signals)\.py$' \
   && add_reason "тронута граница «алгоритм / LLM»"
 
 [ -n "$reasons" ] || exit 0
