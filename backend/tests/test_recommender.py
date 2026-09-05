@@ -11,7 +11,7 @@ import support  # noqa: F401 — кладёт backend в sys.path
 from support import CATALOG_PATH
 
 from trainer.data import anthropic_client, files
-from trainer.domain import limits, plan_validator, prompt_builder, recommender
+from trainer.domain import limits, prompt_builder, recommender, rules
 
 CATALOG = [
     {"id": 8, "name": "Жим ногами"},
@@ -62,7 +62,7 @@ class RecommenderTests(unittest.TestCase):
                 },
             ],
         }
-        out = plan_validator._validate(raw, CATALOG)
+        out = rules.normalize_model_plan(raw, CATALOG)
         self.assertEqual(len(out["exercises"]), 1)
         exercise = out["exercises"][0]
         self.assertEqual(exercise["exercise_id"], 8)
@@ -80,7 +80,7 @@ class RecommenderTests(unittest.TestCase):
                 {"exercise_id": 8, "name": "x", "note": "n", "sets": [{"reps": 10, "weight": 50}]}
             ],
         }
-        self.assertEqual(plan_validator._validate(raw, CATALOG)["load_type"], "medium")
+        self.assertEqual(rules.normalize_model_plan(raw, CATALOG)["load_type"], "medium")
 
     def test_validate_raises_without_valid_exercises(self) -> None:
         raw = {
@@ -91,8 +91,10 @@ class RecommenderTests(unittest.TestCase):
                 {"exercise_id": 999, "name": "x", "note": "n", "sets": [{"reps": 10, "weight": 50}]}
             ],
         }
-        with self.assertRaises(recommender.RecommendationError):
-            plan_validator._validate(raw, CATALOG)
+        # Форма ответа — забота rules, и говорит она на языке rules: ValueError.
+        # В RecommendationError его переводит уже generate_with_trace (см. ниже).
+        with self.assertRaisesRegex(ValueError, "ни одного валидного"):
+            rules.normalize_model_plan(raw, CATALOG)
 
     def test_serialize_history_is_oldest_first_with_effort_marks(self) -> None:
         # list_workouts() отдаёт новые сверху; сериализатор переворачивает к старым сверху.
@@ -329,16 +331,18 @@ class RestDaysTests(unittest.TestCase):
         return base
 
     def test_validate_defaults_rest_days_when_missing(self) -> None:
-        self.assertEqual(plan_validator._validate(self._raw(), CATALOG)["rest_days"], 1)
+        self.assertEqual(rules.normalize_model_plan(self._raw(), CATALOG)["rest_days"], 1)
 
     def test_validate_clamps_and_coerces_rest_days(self) -> None:
         self.assertEqual(
-            plan_validator._validate(self._raw(rest_days=99), CATALOG)["rest_days"],
+            rules.normalize_model_plan(self._raw(rest_days=99), CATALOG)["rest_days"],
             limits.MAX_REST_DAYS,
         )
-        self.assertEqual(plan_validator._validate(self._raw(rest_days=-3), CATALOG)["rest_days"], 0)
         self.assertEqual(
-            plan_validator._validate(self._raw(rest_days="2"), CATALOG)["rest_days"], 2
+            rules.normalize_model_plan(self._raw(rest_days=-3), CATALOG)["rest_days"], 0
+        )
+        self.assertEqual(
+            rules.normalize_model_plan(self._raw(rest_days="2"), CATALOG)["rest_days"], 2
         )
 
     def test_schema_requires_rest_days(self) -> None:
@@ -716,6 +720,20 @@ class GenerateRepromptTests(unittest.TestCase):
         self.assertTrue(all(s["weight"] == 100 for s in leg_press["sets"]))
         self.assertIn("Проверка методики", rec["rationale"])
         self.assertIn("доперерывным", rec["rationale"])
+
+    def test_answer_without_valid_exercises_fails_the_generation(self) -> None:
+        from datetime import date as _date
+
+        # Кривая форма ответа — провал генерации (кэш уйдёт в failed), а не 400,
+        # как у кривого входа с клиента: recommender переводит ValueError из rules.
+        anthropic_client._call_anthropic = lambda *a, **k: (
+            {**self._fullbody_raw(), "exercises": [{"exercise_id": 999, "note": "n", "sets": []}]},
+            {"input_tokens": 1, "output_tokens": 1},
+        )
+        with self.assertRaisesRegex(recommender.RecommendationError, "ни одного валидного"):
+            recommender.generate_with_trace(
+                self._history(), [], self.CATALOG, today=_date(2026, 6, 12)
+            )
 
 
 if __name__ == "__main__":

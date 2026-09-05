@@ -14,7 +14,6 @@ from unittest import mock
 import support  # noqa: F401 — кладёт backend в sys.path
 from support import sample_workout_payload
 
-from trainer.data.anthropic_client import RecommendationError
 from trainer.domain import (
     coach_features,
     coach_signals,
@@ -228,10 +227,10 @@ class CoachStateEdgeCaseTests(unittest.TestCase):
 
 
 class PlanSanitizerEdgeCaseTests(unittest.TestCase):
-    """Санитизация ответа модели и потолок сессии."""
+    """Форма ответа модели (``rules.normalize_model_plan``) и потолок сессии."""
 
     def test_validate_skips_non_finite_and_non_integer_sets(self) -> None:
-        recommendation = plan_validator._validate(
+        recommendation = rules.normalize_model_plan(
             _plan(
                 [
                     {"reps": 10, "weight": math.nan},
@@ -245,14 +244,15 @@ class PlanSanitizerEdgeCaseTests(unittest.TestCase):
         )
 
         self.assertEqual(recommendation["exercises"][0]["name"], "Жим в тренажере")
+        self.assertEqual(recommendation["exercises"][0]["note"], "")  # None — не «None»
         self.assertEqual(
             recommendation["exercises"][0]["sets"],
             [{"reps": 9, "weight": 52.5}],
         )
 
     def test_validate_rejects_a_plan_with_only_non_finite_weights(self) -> None:
-        with self.assertRaisesRegex(RecommendationError, "ни одного валидного"):
-            plan_validator._validate(
+        with self.assertRaisesRegex(ValueError, "ни одного валидного"):
+            rules.normalize_model_plan(
                 _plan([{"reps": 10, "weight": math.nan}]),
                 CATALOG,
             )
@@ -264,11 +264,11 @@ class PlanSanitizerEdgeCaseTests(unittest.TestCase):
             _plan({"reps": 10, "weight": 50}),
         )
         for raw in malformed:
-            with self.subTest(raw=raw), self.assertRaises(RecommendationError):
-                plan_validator._validate(raw, CATALOG)
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                rules.normalize_model_plan(raw, CATALOG)
 
     def test_validate_defaults_overflowing_rest_days_without_crashing(self) -> None:
-        recommendation = plan_validator._validate(
+        recommendation = rules.normalize_model_plan(
             _plan([{"reps": 10, "weight": 50}], rest_days=math.inf),
             CATALOG,
         )
@@ -286,8 +286,8 @@ class PlanSanitizerEdgeCaseTests(unittest.TestCase):
         )
         for params in invalid:
             with self.subTest(params=params):
-                self.assertIsNone(plan_validator._session_cap(params))
-        self.assertEqual(plan_validator._session_cap({"session_sets": [8, "12"]}), 12)
+                self.assertIsNone(plan_validator.phase_session_cap(params))
+        self.assertEqual(plan_validator.phase_session_cap({"session_sets": [8, "12"]}), 12)
 
 
 class DefensiveRenderingEdgeCaseTests(unittest.TestCase):

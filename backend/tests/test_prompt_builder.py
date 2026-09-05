@@ -6,7 +6,7 @@ import unittest
 
 import support  # noqa: F401 — кладёт backend в sys.path
 
-from trainer.domain import plan_validator, prompt_builder
+from trainer.domain import prompt_builder, rules
 
 
 class CoachContextTests(unittest.TestCase):
@@ -100,6 +100,6 @@ class SerializationTests(unittest.TestCase):
                 }
             ],
         }
-        out = plan_validator._validate(raw, catalog)
+        out = rules.normalize_model_plan(raw, catalog)
         self.assertEqual(out["exercises"][0]["exercise_id"], 18)
         self.assertEqual(out["exercises"][0]["name"], "Жим в тренажере")

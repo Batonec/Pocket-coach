@@ -1,5 +1,6 @@
 """Валидатор плана: ровно три жёсткие границы (покрытие групп, возвратный потолок,
-размер сессии); всё остальное — суждение модели, и тесты держат эту свободу.
+размер сессии) таблицей ``RULES``; всё остальное — суждение модели, и тесты держат
+эту свободу. Форма ответа модели — ``rules.normalize_model_plan``.
 """
 
 from __future__ import annotations
@@ -8,7 +9,8 @@ import unittest
 
 import support  # noqa: F401 — кладёт backend в sys.path
 
-from trainer.domain import limits, plan_validator, prompt_builder
+from trainer.data import coach_prompts
+from trainer.domain import limits, plan_validator, prompt_builder, rules
 
 CATALOG = [
     {"id": 8, "name": "Жим ногами"},
@@ -103,38 +105,39 @@ class SemanticValidatorTests(unittest.TestCase):
         """Нарушения жёстких границ для ответа на данной истории."""
         from datetime import date as _date
 
-        return plan_validator._semantic_violations(
-            rec,
-            self.CATALOG,
+        bounds = plan_validator.bounds_from_history(
             workouts if workouts is not None else self._history(),
+            self.CATALOG,
             today or _date(2026, 6, 12),
         )
+        return plan_validator.violations(rec, bounds)
 
     def test_clean_plan_has_no_violations(self) -> None:
-        rec = plan_validator._validate(self._rec(weight=105, sets=14), self.CATALOG)
+        rec = rules.normalize_model_plan(self._rec(weight=105, sets=14), self.CATALOG)
         self.assertEqual(self._violations(rec), [])
 
     def test_weight_jumps_are_the_models_call(self) -> None:
         # +40% к недавнему диапазону раньше отвергалось; теперь это суждение
         # модели (дефолты прогрессии несёт промпт).
-        rec = plan_validator._validate(self._rec(weight=140, sets=14), self.CATALOG)
+        rec = rules.normalize_model_plan(self._rec(weight=140, sets=14), self.CATALOG)
         self.assertEqual(self._violations(rec), [])
-        low = plan_validator._validate(self._rec(weight=60, sets=14), self.CATALOG)
+        low = rules.normalize_model_plan(self._rec(weight=60, sets=14), self.CATALOG)
         self.assertEqual(self._violations(low), [])
 
     def test_session_size_is_capped_by_the_phase_but_never_padded(self) -> None:
         from datetime import date as _date
 
-        tiny = plan_validator._validate(self._rec(sets=5), self.CATALOG)
-        big = plan_validator._validate(self._rec(sets=24), self.CATALOG)
+        tiny = rules.normalize_model_plan(self._rec(sets=5), self.CATALOG)
+        big = rules.normalize_model_plan(self._rec(sets=24), self.CATALOG)
         # Без потолка (нет параметров фазы) размер — решение модели.
         self.assertEqual(self._violations(tiny), [])
         self.assertEqual(self._violations(big), [])
         # С потолком фазы держится только ВЕРХНЯЯ граница: короткая сессия может
         # быть решением, раздутая — нет.
-        capped = lambda rec: plan_validator._semantic_violations(  # noqa: E731
-            rec, self.CATALOG, self._history(), _date(2026, 6, 12), session_cap=20
+        bounds = plan_validator.bounds_from_history(
+            self._history(), self.CATALOG, _date(2026, 6, 12), session_cap=20
         )
+        capped = lambda rec: plan_validator.violations(rec, bounds)  # noqa: E731
         self.assertEqual(capped(tiny), [])
         violations = capped(big)
         self.assertEqual(len(violations), 1)
@@ -142,14 +145,14 @@ class SemanticValidatorTests(unittest.TestCase):
         self.assertIn("начиная с изоляции", violations[0])
 
     def test_rep_ranges_and_load_sequencing_are_the_models_call(self) -> None:
-        pump_heavy = plan_validator._validate(
+        pump_heavy = rules.normalize_model_plan(
             self._rec(sets=14, load_type="heavy", reps=14), self.CATALOG
         )
         violations = self._violations(pump_heavy, workouts=self._history(load_type="heavy"))
         self.assertEqual(violations, [])
 
     def test_rest_days_are_clamped_not_flagged(self) -> None:
-        rec = plan_validator._validate(self._rec(sets=14, rest_days=6), self.CATALOG)
+        rec = rules.normalize_model_plan(self._rec(sets=14, rest_days=6), self.CATALOG)
         self.assertEqual(rec["rest_days"], limits.MAX_REST_DAYS)
         self.assertEqual(self._violations(rec), [])
 
@@ -224,16 +227,16 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
             ex for ex in workouts[0]["data"]["exercises"] if ex["exercise_id"] != 15
         ]
         raw = self._plan([(8, 5), (9, 5), (18, 4)])
-        rec = plan_validator._validate(raw, self.CATALOG)
-        violations = plan_validator._semantic_violations(
-            rec, self.CATALOG, workouts, _date(2026, 6, 12)
+        rec = rules.normalize_model_plan(raw, self.CATALOG)
+        violations = plan_validator.violations(
+            rec, plan_validator.bounds_from_history(workouts, self.CATALOG, _date(2026, 6, 12))
         )
         self.assertTrue(any("бицепс бедра" in v for v in violations))
 
         covered = self._plan([(8, 4), (9, 4), (18, 4), (15, 2)])
-        rec = plan_validator._validate(covered, self.CATALOG)
-        violations = plan_validator._semantic_violations(
-            rec, self.CATALOG, workouts, _date(2026, 6, 12)
+        rec = rules.normalize_model_plan(covered, self.CATALOG)
+        violations = plan_validator.violations(
+            rec, plan_validator.bounds_from_history(workouts, self.CATALOG, _date(2026, 6, 12))
         )
         self.assertEqual(violations, [])
 
@@ -255,8 +258,10 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
         # …но валидатор больше не следит за объёмом и весами разгрузки: как
         # строить лёгкую неделю — решение модели.
         heavy_volume = self._plan([(8, 5), (9, 5), (18, 4), (15, 2)])  # 16 сетов
-        rec = plan_validator._validate(heavy_volume, self.CATALOG)
-        violations = plan_validator._semantic_violations(rec, self.CATALOG, workouts, today)
+        rec = rules.normalize_model_plan(heavy_volume, self.CATALOG)
+        violations = plan_validator.violations(
+            rec, plan_validator.bounds_from_history(workouts, self.CATALOG, today)
+        )
         self.assertEqual(violations, [])
 
 
@@ -388,10 +393,11 @@ class ReturnLadderIsDataOnlyTests(unittest.TestCase):
         """Нарушения после санитизации плана."""
         from datetime import date as _date
 
-        rec = plan_validator._validate(plan, self.CATALOG)
-        return plan_validator._semantic_violations(
-            rec, self.CATALOG, self._history(), _date(2026, 6, 12)
+        rec = rules.normalize_model_plan(plan, self.CATALOG)
+        bounds = plan_validator.bounds_from_history(
+            self._history(), self.CATALOG, _date(2026, 6, 12)
         )
+        return plan_validator.violations(rec, bounds)
 
     def test_ladder_rungs_above_the_pre_break_weight_are_rejected(self) -> None:
         violations = self._violations(self._plan(leg_press_weight=90))
@@ -516,8 +522,9 @@ class ReturnCeilingTests(unittest.TestCase):
 
     def _violations(self, plan, today):
         """Нарушения плана на дату ``today``."""
-        rec = plan_validator._validate(plan, self.CATALOG)
-        return plan_validator._semantic_violations(rec, self.CATALOG, self._history(), today)
+        rec = rules.normalize_model_plan(plan, self.CATALOG)
+        bounds = plan_validator.bounds_from_history(self._history(), self.CATALOG, today)
+        return plan_validator.violations(rec, bounds)
 
     def test_progression_after_a_break_is_rejected(self) -> None:
         from datetime import date as _date
@@ -537,10 +544,11 @@ class ReturnCeilingTests(unittest.TestCase):
         from datetime import date as _date
 
         # Тренировался 3 дня назад: обычные правила прогрессии, без возвратного ограничителя.
-        rec = plan_validator._validate(self._plan(leg_press=105), self.CATALOG)
-        violations = plan_validator._semantic_violations(
-            rec, self.CATALOG, self._history(last="2026-06-09"), _date(2026, 6, 12)
+        rec = rules.normalize_model_plan(self._plan(leg_press=105), self.CATALOG)
+        bounds = plan_validator.bounds_from_history(
+            self._history(last="2026-06-09"), self.CATALOG, _date(2026, 6, 12)
         )
+        violations = plan_validator.violations(rec, bounds)
         self.assertFalse(any("не место для прибавки" in v for v in violations))
 
     def test_prompt_states_facts_without_prescribing_numbers(self) -> None:
@@ -557,3 +565,81 @@ class ReturnCeilingTests(unittest.TestCase):
         self.assertIn("решай сам", text)
         self.assertNotIn("%", text)
         self.assertNotIn("связк", text)
+
+
+class RulesTableTests(unittest.TestCase):
+    """Таблица правил и её тексты: ровно три записи, у каждой — предложение для
+    системного промпта и строка нарушения, у починяемых — пометки для rationale.
+    Правило без текста и текст без правила падают здесь, а не молча в промпте.
+    """
+
+    def test_exactly_three_rules_in_the_prompt_order(self) -> None:
+        self.assertEqual(
+            [rule.name for rule in plan_validator.RULES],
+            ["coverage", "return_ceiling", "session_cap"],
+        )
+
+    def test_every_rule_has_its_sentence_and_violation_line(self) -> None:
+        texts = coach_prompts.fragments("plan_rules")
+        names = {rule.name for rule in plan_validator.RULES}
+        for name in names:
+            self.assertIn(name, texts)
+            self.assertIn(f"{name}_violation", texts)
+        # И наоборот: фрагмент правила, которого нет в RULES, — граница, которую
+        # модель прочитает, а сервер не проверит.
+        described = {
+            name
+            for name in texts
+            if name not in ("catalog_only", "reprompt") and not name.endswith("_violation")
+        }
+        self.assertEqual(described, names)
+
+    def test_fixable_rules_have_their_notes(self) -> None:
+        notes = coach_prompts.fragments("plan_notes", directory=coach_prompts.COPY_DIR)
+        for rule in plan_validator.RULES:
+            with self.subTest(rule=rule.name):
+                if rule.fix is None:
+                    self.assertNotIn(f"{rule.name}_fixed", notes)
+                else:
+                    self.assertIn(f"{rule.name}_fixed", notes)
+                    self.assertIn(f"{rule.name}_change", notes)
+
+    def test_system_prompt_lists_exactly_the_rules_the_server_checks(self) -> None:
+        texts = coach_prompts.fragments("plan_rules")
+        prompt = prompt_builder._build_system_prompt(CATALOG)
+        block = prompt.split("=== ЖЁСТКИЕ ГРАНИЦЫ (проверяет сервер) ===", 1)[1]
+        block = block.split("\n===", 1)[0]
+        self.assertIn(f"1) {texts['catalog_only']};", block)
+        for number, rule in enumerate(plan_validator.RULES, start=2):
+            self.assertIn(f"{number}) {texts[rule.name]}", block)
+        self.assertNotIn("5)", block)
+        self.assertTrue(block.rstrip().endswith("."))
+
+    def _plan(self) -> dict:
+        return rules.normalize_model_plan(
+            {
+                "focus": "f",
+                "load_type": "medium",
+                "rest_days": 1,
+                "rationale": "r",
+                "exercises": [
+                    {"exercise_id": 8, "note": "n", "sets": [{"reps": 10, "weight": 999}] * 12},
+                    {"exercise_id": 9, "note": "n", "sets": [{"reps": 12, "weight": 60}] * 12},
+                ],
+            },
+            CATALOG,
+        )
+
+    def test_empty_bounds_limit_nothing(self) -> None:
+        # Bounds() — «ограничений нет»: тяжёлый и длинный план проходит без нарушений.
+        self.assertEqual(plan_validator.violations(self._plan(), plan_validator.Bounds()), [])
+
+    def test_resolve_notes_what_it_cannot_fix(self) -> None:
+        # У покрытия нет fix: правок нет, а незакрытое нарушение честно в rationale.
+        plan = self._plan()
+        bounds = plan_validator.Bounds(dry_groups=("бицепс бедра",))
+        adjustments = plan_validator.resolve(plan, bounds)
+        self.assertEqual(adjustments, [])
+        self.assertIn("**Проверка методики:** сервер не смог согласовать", plan["rationale"])
+        self.assertIn("бицепс бедра", plan["rationale"])
+        self.assertTrue(plan["rationale"].startswith("r\n\n"))
