@@ -202,6 +202,31 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertIn("Тренировочные дни", rendered)
         self.assertIn("тело", rendered)
 
+    def test_report_slices_nutrition_and_measurements_instead_of_catalog_gap(self):
+        """Блок «Вес и талия» пишется по главам «Питание» и «Измерения», которых
+        план не читает; «Пробел каталога» — про состав сессии, отчёту не нужен."""
+        doc = (
+            "## 6. Пробел каталога и зачем в плане ноги\nпро ноги\n\n"
+            "## 7. Питание\nконтур коррекции\n\n"
+            "## 8. Измерения\nпротокол ленты\n"
+        )
+        report = prompt_builder._build_report_system_prompt(strategy=doc)
+        self.assertIn("контур коррекции", report)
+        self.assertIn("протокол ленты", report)
+        self.assertNotIn("про ноги", report)
+        plan = prompt_builder._render_program(doc)
+        self.assertIn("про ноги", plan)
+        self.assertNotIn("контур коррекции", plan)
+        # Списки — ручная синхронизация с заголовками документа: оба живут в
+        # vision/STRATEGY.md, и тест это пинит.
+        strategy = (support.ROOT_DIR / "vision" / "STRATEGY.md").read_text("utf-8")
+        for sections in (
+            prompt_builder.STRATEGY_SECTIONS,
+            prompt_builder.REPORT_STRATEGY_SECTIONS,
+        ):
+            _body, missing = coach_prompts.document_sections(strategy, sections)
+            self.assertEqual(missing, [])
+
 
 class BuiltPromptTests(unittest.TestCase):
     """Собранный системный промпт на настоящем каталоге."""
