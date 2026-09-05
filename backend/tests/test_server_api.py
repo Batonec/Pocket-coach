@@ -444,3 +444,35 @@ class WeeklyReportEndpointTest(unittest.TestCase):
             client = JsonHttpClient(app.base_url)
             response = client.request_json("GET", "/api/reports/weekly")
             self.assertEqual(response.status, 401)
+
+
+class RoutingTest(unittest.TestCase):
+    """Диспетчер по таблице маршрутов: то, что раньше держали хвосты цепочек
+    if — 404 на чужой путь, на id не-число и на лишний сегмент — обязано
+    остаться на месте."""
+
+    def test_unknown_api_path_is_not_found_for_every_method(self) -> None:
+        with running_miniapp_server(allow_debug_user=True) as app:
+            client = JsonHttpClient(app.base_url)
+
+            for method, payload in (("GET", None), ("POST", {}), ("PUT", {}), ("DELETE", None)):
+                response = client.request_json(method, "/api/nowhere", payload)
+
+                self.assertEqual(response.status, 404, method)
+                self.assertEqual(response.payload, {"ok": False, "reason": "Not found"}, method)
+
+    def test_id_routes_reject_non_numeric_and_nested_ids(self) -> None:
+        with running_miniapp_server(allow_debug_user=True) as app:
+            client = JsonHttpClient(app.base_url)
+
+            self.assertEqual(client.request_json("PUT", "/api/workouts/abc", {}).status, 404)
+            self.assertEqual(client.request_json("DELETE", "/api/workouts/1/extra").status, 404)
+            self.assertEqual(client.request_json("DELETE", "/api/events/").status, 404)
+
+    def test_id_routes_exist_only_for_the_methods_that_declare_them(self) -> None:
+        with running_miniapp_server(allow_debug_user=True) as app:
+            client = JsonHttpClient(app.base_url)
+
+            # GET has no per-id endpoints, and PUT covers workouts and events only.
+            self.assertEqual(client.request_json("GET", "/api/workouts/1").status, 404)
+            self.assertEqual(client.request_json("PUT", "/api/waists/1", {}).status, 404)

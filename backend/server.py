@@ -8,6 +8,7 @@ import mimetypes
 import os
 import threading
 import time
+from collections.abc import Callable
 from datetime import date, timedelta
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -255,6 +256,19 @@ def read_session_user_id(cookie_value: str) -> int | None:
     return user_id
 
 
+def _path_id(path: str, prefix: str) -> int | None:
+    """Целый id из пути вида «/api/<коллекция>/<id>»; None — это не тот маршрут."""
+    if not path.startswith(prefix):
+        return None
+    raw_id = path.removeprefix(prefix).strip("/")
+    if not raw_id or "/" in raw_id:
+        return None
+    try:
+        return int(raw_id)
+    except ValueError:
+        return None
+
+
 class MiniAppHandler(BaseHTTPRequestHandler):
     server_version = "TrainerMiniApp/0.1"
 
@@ -266,254 +280,174 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
-
-        if path == "/api/health":
-            self._send_json(
-                HTTPStatus.OK,
-                {
-                    "ok": True,
-                    "server_time": int(time.time()),
-                    "debug_user_enabled": debug_user_enabled(),
-                    "db_path": str(DB_PATH),
-                },
-            )
-            return
-
-        if path == "/api/dev/version":
-            self._send_json(HTTPStatus.OK, build_dev_version())
-            return
-
-        if path == "/api/workouts":
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
-
-            workouts = STORE.list_workouts(int(user["id"]))
-            self._send_json(
-                HTTPStatus.OK,
-                {"ok": True, "user": user, "workouts": workouts},
-                extra_headers=headers,
-            )
-            return
-
-        if path == "/api/body-weights":
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
-
-            entries = STORE.list_body_weights(int(user["id"]))
-            self._send_json(
-                HTTPStatus.OK,
-                {"ok": True, "user": user, "entries": entries},
-                extra_headers=headers,
-            )
-            return
-
-        if path == "/api/recommendations/next":
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
-
-            self._send_json(
-                HTTPStatus.OK,
-                self._recommendation_response(user),
-                extra_headers=headers,
-            )
-            return
-
-        if path == "/api/reports/weekly":
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
-
-            # Cache-only by design: the Monday-midnight timer (weekly_report.py)
-            # or the Coach MCP tool generate reports; this endpoint never spends
-            # tokens.
-            self._send_json(
-                HTTPStatus.OK,
-                {"ok": True, "report": STORE.get_latest_coach_report(int(user["id"]))},
-                extra_headers=headers,
-            )
-            return
-
-        if path == "/api/waists":
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
-
-            self._send_json(
-                HTTPStatus.OK,
-                {"ok": True, "user": user, "entries": STORE.list_waists(int(user["id"]))},
-                extra_headers=headers,
-            )
-            return
-
-        if path == "/api/events":
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
-
-            self._send_json(
-                HTTPStatus.OK,
-                {"ok": True, "user": user, "events": STORE.list_events(int(user["id"]))},
-                extra_headers=headers,
-            )
-            return
-
-        if path == "/api/coach/signals":
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
-
-            signals = coach_signals.compute_signals(
-                STORE,
-                int(user["id"]),
-                coach_state.load_state(COACH_STATE_PATH),
-            )
-            self._send_json(
-                HTTPStatus.OK,
-                {"ok": True, "generated_at": int(time.time()), "signals": signals},
-                extra_headers=headers,
-            )
-            return
-
-        static_path = self._resolve_static_path(path)
-        if static_path is not None:
-            self._send_file(static_path)
-            return
-
-        self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Not found"})
+        self._dispatch("GET")
 
     def do_POST(self) -> None:
+        self._dispatch("POST")
+
+    def do_PUT(self) -> None:
+        self._dispatch("PUT")
+
+    def do_DELETE(self) -> None:
+        self._dispatch("DELETE")
+
+    def _dispatch(self, method: str) -> None:
+        """Один эндпоинт — один метод класса; какой именно, решает ROUTES (точный
+        путь) или ID_ROUTES (/api/<коллекция>/<id>). GET без совпадения уходит в
+        статику, всё остальное — 404."""
         path = urlparse(self.path).path
-        if path == "/api/session/logout":
-            self._send_json(
-                HTTPStatus.OK,
-                {"ok": True},
-                extra_headers={"Set-Cookie": self._clear_session_cookie()},
-            )
+        handler = ROUTES.get((method, path))
+        if handler is not None:
+            handler(self)
+            return
+        for (route_method, prefix), id_handler in ID_ROUTES.items():
+            if route_method != method:
+                continue
+            entity_id = _path_id(path, prefix)
+            if entity_id is not None:
+                id_handler(self, entity_id)
+                return
+        if method == "GET":
+            static_path = self._resolve_static_path(path)
+            if static_path is not None:
+                self._send_file(static_path)
+                return
+        self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Not found"})
+
+    # --- GET -----------------------------------------------------------------------
+    def _get_health(self) -> None:
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "server_time": int(time.time()),
+                "debug_user_enabled": debug_user_enabled(),
+                "db_path": str(DB_PATH),
+            },
+        )
+
+    def _get_dev_version(self) -> None:
+        self._send_json(HTTPStatus.OK, build_dev_version())
+
+    def _get_workouts(self) -> None:
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        workouts = STORE.list_workouts(int(user["id"]))
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "user": user, "workouts": workouts},
+            extra_headers=headers,
+        )
+
+    def _get_body_weights(self) -> None:
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        entries = STORE.list_body_weights(int(user["id"]))
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "user": user, "entries": entries},
+            extra_headers=headers,
+        )
+
+    def _get_recommendation_next(self) -> None:
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        self._send_json(
+            HTTPStatus.OK,
+            self._recommendation_response(user),
+            extra_headers=headers,
+        )
+
+    def _get_weekly_report(self) -> None:
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        # Cache-only by design: the Monday-midnight timer (weekly_report.py)
+        # or the Coach MCP tool generate reports; this endpoint never spends
+        # tokens.
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "report": STORE.get_latest_coach_report(int(user["id"]))},
+            extra_headers=headers,
+        )
+
+    def _get_waists(self) -> None:
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "user": user, "entries": STORE.list_waists(int(user["id"]))},
+            extra_headers=headers,
+        )
+
+    def _get_events(self) -> None:
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "user": user, "events": STORE.list_events(int(user["id"]))},
+            extra_headers=headers,
+        )
+
+    def _get_coach_signals(self) -> None:
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        signals = coach_signals.compute_signals(
+            STORE,
+            int(user["id"]),
+            coach_state.load_state(COACH_STATE_PATH),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "generated_at": int(time.time()), "signals": signals},
+            extra_headers=headers,
+        )
+
+    # --- POST ----------------------------------------------------------------------
+    def _post_session_logout(self) -> None:
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True},
+            extra_headers={"Set-Cookie": self._clear_session_cookie()},
+        )
+
+    def _post_session_resolve(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
             return
 
-        if path == "/api/session/resolve":
-            payload = self._read_json_body()
-            if payload is None:
-                return
+        request_shell = str(payload.get("shell", "") or "").strip().lower()
+        prefers_debug_session = request_shell in {"", "browser"}
+        current_user, current_headers = self._resolve_current_user()
+        native_user_id = positive_int(
+            payload.get("native_user_id")
+            or payload.get("nativeUserId")
+            or payload.get("nativeUserID")
+        )
 
-            request_shell = str(payload.get("shell", "") or "").strip().lower()
-            prefers_debug_session = request_shell in {"", "browser"}
-            current_user, current_headers = self._resolve_current_user()
-            native_user_id = positive_int(
-                payload.get("native_user_id")
-                or payload.get("nativeUserId")
-                or payload.get("nativeUserID")
-            )
-
-            # Native iOS fixed user: resolve the configured user id to a session.
-            if request_shell == "ios" and native_user_id is not None:
-                if current_user is not None and int(current_user["id"]) == native_user_id:
-                    self._send_json(
-                        HTTPStatus.OK,
-                        {"ok": True, "user": current_user},
-                        extra_headers=current_headers,
-                    )
-                    return
-
-                user = STORE.get_user_by_id(native_user_id)
-                if user is None:
-                    self._send_json(
-                        HTTPStatus.UNAUTHORIZED,
-                        {
-                            "ok": False,
-                            "reason": f"Configured iOS user #{native_user_id} was not found.",
-                        },
-                    )
-                    return
-
-                headers = {"Set-Cookie": self._build_session_cookie(int(user["id"]))}
-                self._send_json(
-                    HTTPStatus.OK,
-                    {"ok": True, "user": user, "auth_mode": "ios_fixed_user"},
-                    extra_headers=headers,
-                )
-                return
-
-            # Browser/debug session (for local development).
-            if debug_user_enabled():
-                if current_user is not None and not (
-                    prefers_debug_session and current_user.get("auth_source") != "debug"
-                ):
-                    self._send_json(
-                        HTTPStatus.OK,
-                        {"ok": True, "user": current_user},
-                        extra_headers=current_headers,
-                    )
-                    return
-
-                user = STORE.ensure_debug_user(
-                    DEFAULT_DEBUG_USER_ALIAS,
-                    DEFAULT_DEBUG_USER_FIRST_NAME,
-                    DEFAULT_DEBUG_USER_LAST_NAME,
-                )
-                headers = {"Set-Cookie": self._build_session_cookie(int(user["id"]))}
-                self._send_json(
-                    HTTPStatus.OK,
-                    {"ok": True, "user": user, "auth_mode": "debug"},
-                    extra_headers=headers,
-                )
-                return
-
-            # Debug disabled: honour an existing signed cookie, otherwise reject.
-            if current_user is not None:
+        # Native iOS fixed user: resolve the configured user id to a session.
+        if request_shell == "ios" and native_user_id is not None:
+            if current_user is not None and int(current_user["id"]) == native_user_id:
                 self._send_json(
                     HTTPStatus.OK,
                     {"ok": True, "user": current_user},
@@ -521,349 +455,331 @@ class MiniAppHandler(BaseHTTPRequestHandler):
                 )
                 return
 
-            self._send_json(
-                HTTPStatus.UNAUTHORIZED,
-                {"ok": False, "reason": "No active session. Send shell=ios with native_user_id."},
-            )
-            return
-
-        if path == "/api/workouts":
-            payload = self._read_json_body()
-            if payload is None:
-                return
-
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
+            user = STORE.get_user_by_id(native_user_id)
             if user is None:
                 self._send_json(
                     HTTPStatus.UNAUTHORIZED,
                     {
                         "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
+                        "reason": f"Configured iOS user #{native_user_id} was not found.",
                     },
                 )
                 return
 
-            try:
-                workout, created = STORE.save_workout(int(user["id"]), payload)
-            except ValueError as exc:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
-                return
-
-            # Новая сегодняшняя тренировка закрывает открытое событие вчерашним
-            # днём: перерыв кончился в тот день, когда атлет снова пришёл в зал.
-            # Правка тренировки и запись задним числом состояние не переключают —
-            # история меняется, «сейчас не тренируюсь» остаётся как было.
-            today = date.today()
-            if created and workout["workout_date"] == today.isoformat():
-                STORE.close_open_event(int(user["id"]), (today - timedelta(days=1)).isoformat())
-
-            self._send_json(
-                HTTPStatus.CREATED if created else HTTPStatus.OK,
-                {"ok": True, "created": created, "user": user, "workout": workout},
-                extra_headers=headers,
-            )
-            if created:
-                trigger_recommendation_async(int(user["id"]))
-            return
-
-        if path == "/api/body-weights":
-            payload = self._read_json_body()
-            if payload is None:
-                return
-
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
-
-            try:
-                entry, created = STORE.save_body_weight(int(user["id"]), payload)
-            except ValueError as exc:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
-                return
-
-            trigger_recommendation_async(int(user["id"]))
-            self._send_json(
-                HTTPStatus.CREATED if created else HTTPStatus.OK,
-                {"ok": True, "created": created, "user": user, "entry": entry},
-                extra_headers=headers,
-            )
-            return
-
-        if path == "/api/waists":
-            payload = self._read_json_body()
-            if payload is None:
-                return
-
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
-
-            try:
-                entry, created = STORE.save_waist(int(user["id"]), payload)
-            except ValueError as exc:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
-                return
-
-            trigger_recommendation_async(int(user["id"]))
-            self._send_json(
-                HTTPStatus.CREATED if created else HTTPStatus.OK,
-                {"ok": True, "created": created, "user": user, "entry": entry},
-                extra_headers=headers,
-            )
-            return
-
-        if path == "/api/events":
-            payload = self._read_json_body()
-            if payload is None:
-                return
-
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
-
-            try:
-                event = STORE.save_event(int(user["id"]), payload)
-            except ValueError as exc:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
-                return
-
-            # Событие уезжает в промпт тренера текстом, поэтому любая его правка
-            # обесценивает готовый совет ровно так же, как новый замер.
-            trigger_recommendation_async(int(user["id"]))
-            # Всегда 201: ключа дедупа у события нет, save_event только вставляет.
-            self._send_json(
-                HTTPStatus.CREATED,
-                {"ok": True, "user": user, "event": event},
-                extra_headers=headers,
-            )
-            return
-
-        if path == "/api/coach/signals/dismiss":
-            payload = self._read_json_body()
-            if payload is None:
-                return
-
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
-
-            instance_key = str(payload.get("instance_key") or "").strip()
-            if not instance_key:
-                self._send_json(
-                    HTTPStatus.BAD_REQUEST, {"ok": False, "reason": "instance_key is required"}
-                )
-                return
-
-            user_id = int(user["id"])
-            now_ts = int(time.time())
-            active = coach_signals.compute_signals(
-                STORE, user_id, coach_state.load_state(COACH_STATE_PATH), now_ts=now_ts
-            )
-            matched = next(
-                (signal for signal in active if signal["instance_key"] == instance_key),
-                None,
-            )
-            if matched is not None and matched["severity"] == "critical":
-                self._send_json(
-                    HTTPStatus.CONFLICT,
-                    {
-                        "ok": False,
-                        "reason": "Критический сигнал не откладывается — он гаснет только действием",
-                    },
-                    extra_headers=headers,
-                )
-                return
-
-            snooze_hours = payload.get("snooze_hours")
-            if snooze_hours is not None:
-                try:
-                    snooze_until: int | None = now_ts + int(snooze_hours) * 3600
-                except (TypeError, ValueError):
-                    self._send_json(
-                        HTTPStatus.BAD_REQUEST,
-                        {"ok": False, "reason": "snooze_hours must be an integer"},
-                    )
-                    return
-            else:
-                severity = matched["severity"] if matched else "info"
-                snooze_until = coach_signals.default_snooze_until(severity, now_ts)
-
-            STORE.save_signal_snooze(user_id, instance_key, snooze_until)
+            headers = {"Set-Cookie": self._build_session_cookie(int(user["id"]))}
             self._send_json(
                 HTTPStatus.OK,
-                {"ok": True, "instance_key": instance_key, "snooze_until": snooze_until},
+                {"ok": True, "user": user, "auth_mode": "ios_fixed_user"},
                 extra_headers=headers,
             )
             return
 
-        if path == "/api/reports/weekly/read":
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
+        # Browser/debug session (for local development).
+        if debug_user_enabled():
+            if current_user is not None and not (
+                prefers_debug_session and current_user.get("auth_source") != "debug"
+            ):
                 self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
+                    HTTPStatus.OK,
+                    {"ok": True, "user": current_user},
+                    extra_headers=current_headers,
                 )
                 return
 
-            marked = STORE.mark_coach_report_read(int(user["id"]))
-            self._send_json(HTTPStatus.OK, {"ok": True, "read": marked}, extra_headers=headers)
-            return
-
-        if path == "/api/recommendations/refresh":
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
-
-            if EXERCISE_CATALOG is None:
-                self._send_json(
-                    HTTPStatus.SERVICE_UNAVAILABLE,
-                    {
-                        "ok": False,
-                        "reason": "Рекомендации недоступны: каталог упражнений не загружен",
-                    },
-                )
-                return
-
-            user_id = int(user["id"])
-            lock = _user_recommendation_lock(user_id)
-            if not lock.acquire(blocking=False):
-                # Already generating (e.g. triggered by a recent workout save).
-                payload = self._recommendation_response(user)
-                payload["status"] = "pending"
-                self._send_json(HTTPStatus.ACCEPTED, payload, extra_headers=headers)
-                return
-
-            try:
-                now = time.monotonic()
-                if now - _last_refresh_started.get(user_id, 0.0) < REFRESH_MIN_INTERVAL:
-                    payload = self._recommendation_response(user)
-                    payload["reason"] = "Слишком частый запрос, отдаю текущую рекомендацию"
-                    self._send_json(HTTPStatus.OK, payload, extra_headers=headers)
-                    return
-                _last_refresh_started[user_id] = now
-                STORE.set_recommendation_pending(user_id)
-                result = _generate_and_store_recommendation(user_id)
-            finally:
-                lock.release()
-
-            if result is None:
-                # A failed generation must be immediately retryable from the
-                # error card; the anti-hammer cooldown only protects successful
-                # or still-current refreshes.
-                _last_refresh_started.pop(user_id, None)
-                rec = STORE.get_recommendation(user_id)
-                reason = (rec or {}).get("error") or "Не удалось сгенерировать рекомендацию"
-                payload = {"ok": False, "user": user, "reason": reason}
-                if rec is not None:
-                    payload.update(rec)
-                self._send_json(HTTPStatus.BAD_GATEWAY, payload, extra_headers=headers)
-                return
-
-            latest = STORE.get_latest_workout_id(user_id)
-            stale = bool(result.get("based_on_workout_id") != latest)
+            user = STORE.ensure_debug_user(
+                DEFAULT_DEBUG_USER_ALIAS,
+                DEFAULT_DEBUG_USER_FIRST_NAME,
+                DEFAULT_DEBUG_USER_LAST_NAME,
+            )
+            headers = {"Set-Cookie": self._build_session_cookie(int(user["id"]))}
             self._send_json(
                 HTTPStatus.OK,
-                {"ok": True, "user": user, "stale": stale, **result},
+                {"ok": True, "user": user, "auth_mode": "debug"},
                 extra_headers=headers,
             )
             return
 
-        self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Not found"})
-
-    def do_PUT(self) -> None:
-        path = urlparse(self.path).path
-        event_id = self._parse_event_id(path)
-        if event_id is not None:
-            payload = self._read_json_body()
-            if payload is None:
-                return
-
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
-
-            try:
-                event = STORE.update_event(int(user["id"]), event_id, payload)
-            except ValueError as exc:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
-                return
-
-            if event is None:
-                self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Event not found"})
-                return
-
-            trigger_recommendation_async(int(user["id"]))
+        # Debug disabled: honour an existing signed cookie, otherwise reject.
+        if current_user is not None:
             self._send_json(
                 HTTPStatus.OK,
-                {"ok": True, "user": user, "event": event},
-                extra_headers=headers,
+                {"ok": True, "user": current_user},
+                extra_headers=current_headers,
             )
             return
 
-        workout_id = self._parse_workout_id(path)
-        if workout_id is None:
-            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Not found"})
-            return
+        self._send_json(
+            HTTPStatus.UNAUTHORIZED,
+            {"ok": False, "reason": "No active session. Send shell=ios with native_user_id."},
+        )
 
+    def _post_workout(self) -> None:
         payload = self._read_json_body()
         if payload is None:
             return
 
-        user, headers = self._resolve_current_user(allow_debug_fallback=True)
-        if user is None:
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        try:
+            workout, created = STORE.save_workout(int(user["id"]), payload)
+        except ValueError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
+            return
+
+        # Новая сегодняшняя тренировка закрывает открытое событие вчерашним
+        # днём: перерыв кончился в тот день, когда атлет снова пришёл в зал.
+        # Правка тренировки и запись задним числом состояние не переключают —
+        # история меняется, «сейчас не тренируюсь» остаётся как было.
+        today = date.today()
+        if created and workout["workout_date"] == today.isoformat():
+            STORE.close_open_event(int(user["id"]), (today - timedelta(days=1)).isoformat())
+
+        self._send_json(
+            HTTPStatus.CREATED if created else HTTPStatus.OK,
+            {"ok": True, "created": created, "user": user, "workout": workout},
+            extra_headers=headers,
+        )
+        if created:
+            trigger_recommendation_async(int(user["id"]))
+
+    def _post_body_weight(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        try:
+            entry, created = STORE.save_body_weight(int(user["id"]), payload)
+        except ValueError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
+            return
+
+        trigger_recommendation_async(int(user["id"]))
+        self._send_json(
+            HTTPStatus.CREATED if created else HTTPStatus.OK,
+            {"ok": True, "created": created, "user": user, "entry": entry},
+            extra_headers=headers,
+        )
+
+    def _post_waist(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        try:
+            entry, created = STORE.save_waist(int(user["id"]), payload)
+        except ValueError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
+            return
+
+        trigger_recommendation_async(int(user["id"]))
+        self._send_json(
+            HTTPStatus.CREATED if created else HTTPStatus.OK,
+            {"ok": True, "created": created, "user": user, "entry": entry},
+            extra_headers=headers,
+        )
+
+    def _post_event(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        try:
+            event = STORE.save_event(int(user["id"]), payload)
+        except ValueError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
+            return
+
+        # Событие уезжает в промпт тренера текстом, поэтому любая его правка
+        # обесценивает готовый совет ровно так же, как новый замер.
+        trigger_recommendation_async(int(user["id"]))
+        # Всегда 201: ключа дедупа у события нет, save_event только вставляет.
+        self._send_json(
+            HTTPStatus.CREATED,
+            {"ok": True, "user": user, "event": event},
+            extra_headers=headers,
+        )
+
+    def _post_signal_dismiss(self) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        instance_key = str(payload.get("instance_key") or "").strip()
+        if not instance_key:
             self._send_json(
-                HTTPStatus.UNAUTHORIZED,
+                HTTPStatus.BAD_REQUEST, {"ok": False, "reason": "instance_key is required"}
+            )
+            return
+
+        user_id = int(user["id"])
+        now_ts = int(time.time())
+        active = coach_signals.compute_signals(
+            STORE, user_id, coach_state.load_state(COACH_STATE_PATH), now_ts=now_ts
+        )
+        matched = next(
+            (signal for signal in active if signal["instance_key"] == instance_key),
+            None,
+        )
+        if matched is not None and matched["severity"] == "critical":
+            self._send_json(
+                HTTPStatus.CONFLICT,
                 {
                     "ok": False,
-                    "reason": "No active session. iOS client must resolve a session first.",
+                    "reason": "Критический сигнал не откладывается — он гаснет только действием",
+                },
+                extra_headers=headers,
+            )
+            return
+
+        snooze_hours = payload.get("snooze_hours")
+        if snooze_hours is not None:
+            try:
+                snooze_until: int | None = now_ts + int(snooze_hours) * 3600
+            except (TypeError, ValueError):
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "reason": "snooze_hours must be an integer"},
+                )
+                return
+        else:
+            severity = matched["severity"] if matched else "info"
+            snooze_until = coach_signals.default_snooze_until(severity, now_ts)
+
+        STORE.save_signal_snooze(user_id, instance_key, snooze_until)
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "instance_key": instance_key, "snooze_until": snooze_until},
+            extra_headers=headers,
+        )
+
+    def _post_weekly_report_read(self) -> None:
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        marked = STORE.mark_coach_report_read(int(user["id"]))
+        self._send_json(HTTPStatus.OK, {"ok": True, "read": marked}, extra_headers=headers)
+
+    def _post_recommendation_refresh(self) -> None:
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        if EXERCISE_CATALOG is None:
+            self._send_json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    "ok": False,
+                    "reason": "Рекомендации недоступны: каталог упражнений не загружен",
                 },
             )
             return
+
+        user_id = int(user["id"])
+        lock = _user_recommendation_lock(user_id)
+        if not lock.acquire(blocking=False):
+            # Already generating (e.g. triggered by a recent workout save).
+            payload = self._recommendation_response(user)
+            payload["status"] = "pending"
+            self._send_json(HTTPStatus.ACCEPTED, payload, extra_headers=headers)
+            return
+
+        try:
+            now = time.monotonic()
+            if now - _last_refresh_started.get(user_id, 0.0) < REFRESH_MIN_INTERVAL:
+                payload = self._recommendation_response(user)
+                payload["reason"] = "Слишком частый запрос, отдаю текущую рекомендацию"
+                self._send_json(HTTPStatus.OK, payload, extra_headers=headers)
+                return
+            _last_refresh_started[user_id] = now
+            STORE.set_recommendation_pending(user_id)
+            result = _generate_and_store_recommendation(user_id)
+        finally:
+            lock.release()
+
+        if result is None:
+            # A failed generation must be immediately retryable from the
+            # error card; the anti-hammer cooldown only protects successful
+            # or still-current refreshes.
+            _last_refresh_started.pop(user_id, None)
+            rec = STORE.get_recommendation(user_id)
+            reason = (rec or {}).get("error") or "Не удалось сгенерировать рекомендацию"
+            payload = {"ok": False, "user": user, "reason": reason}
+            if rec is not None:
+                payload.update(rec)
+            self._send_json(HTTPStatus.BAD_GATEWAY, payload, extra_headers=headers)
+            return
+
+        latest = STORE.get_latest_workout_id(user_id)
+        stale = bool(result.get("based_on_workout_id") != latest)
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "user": user, "stale": stale, **result},
+            extra_headers=headers,
+        )
+
+    # --- PUT -----------------------------------------------------------------------
+    def _put_event(self, event_id: int) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        try:
+            event = STORE.update_event(int(user["id"]), event_id, payload)
+        except ValueError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
+            return
+
+        if event is None:
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Event not found"})
+            return
+
+        trigger_recommendation_async(int(user["id"]))
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "user": user, "event": event},
+            extra_headers=headers,
+        )
+
+    def _put_workout(self, workout_id: int) -> None:
+        payload = self._read_json_body()
+        if payload is None:
+            return
+
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
 
         try:
             workout = STORE.update_workout(int(user["id"]), workout_id, payload)
@@ -882,105 +798,68 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
         trigger_recommendation_async(int(user["id"]))
 
-    def do_DELETE(self) -> None:
-        path = urlparse(self.path).path
-        waist_id = self._parse_waist_id(path)
-        if waist_id is not None:
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
+    # --- DELETE --------------------------------------------------------------------
+    def _delete_waist(self, waist_id: int) -> None:
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
 
-            entry = STORE.delete_waist(int(user["id"]), waist_id)
-            if entry is None:
-                self._send_json(
-                    HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Waist entry not found"}
-                )
-                return
+        entry = STORE.delete_waist(int(user["id"]), waist_id)
+        if entry is None:
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Waist entry not found"})
+            return
 
-            trigger_recommendation_async(int(user["id"]))
+        trigger_recommendation_async(int(user["id"]))
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "user": user, "entry": entry, "deleted": True},
+            extra_headers=headers,
+        )
+
+    def _delete_body_weight(self, body_weight_id: int) -> None:
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        entry = STORE.delete_body_weight(int(user["id"]), body_weight_id)
+        if entry is None:
             self._send_json(
-                HTTPStatus.OK,
-                {"ok": True, "user": user, "entry": entry, "deleted": True},
-                extra_headers=headers,
+                HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Body weight entry not found"}
             )
             return
 
-        body_weight_id = self._parse_body_weight_id(path)
-        if body_weight_id is not None:
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
+        trigger_recommendation_async(int(user["id"]))
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "user": user, "entry": entry, "deleted": True},
+            extra_headers=headers,
+        )
 
-            entry = STORE.delete_body_weight(int(user["id"]), body_weight_id)
-            if entry is None:
-                self._send_json(
-                    HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Body weight entry not found"}
-                )
-                return
+    def _delete_event(self, event_id: int) -> None:
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
 
-            trigger_recommendation_async(int(user["id"]))
-            self._send_json(
-                HTTPStatus.OK,
-                {"ok": True, "user": user, "entry": entry, "deleted": True},
-                extra_headers=headers,
-            )
+        event = STORE.delete_event(int(user["id"]), event_id)
+        if event is None:
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Event not found"})
             return
 
-        event_id = self._parse_event_id(path)
-        if event_id is not None:
-            user, headers = self._resolve_current_user(allow_debug_fallback=True)
-            if user is None:
-                self._send_json(
-                    HTTPStatus.UNAUTHORIZED,
-                    {
-                        "ok": False,
-                        "reason": "No active session. iOS client must resolve a session first.",
-                    },
-                )
-                return
+        trigger_recommendation_async(int(user["id"]))
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "user": user, "event": event, "deleted": True},
+            extra_headers=headers,
+        )
 
-            event = STORE.delete_event(int(user["id"]), event_id)
-            if event is None:
-                self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Event not found"})
-                return
-
-            trigger_recommendation_async(int(user["id"]))
-            self._send_json(
-                HTTPStatus.OK,
-                {"ok": True, "user": user, "event": event, "deleted": True},
-                extra_headers=headers,
-            )
+    def _delete_workout(self, workout_id: int) -> None:
+        session = self._require_user()
+        if session is None:
             return
-
-        workout_id = self._parse_workout_id(path)
-        if workout_id is None:
-            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Not found"})
-            return
-
-        user, headers = self._resolve_current_user(allow_debug_fallback=True)
-        if user is None:
-            self._send_json(
-                HTTPStatus.UNAUTHORIZED,
-                {
-                    "ok": False,
-                    "reason": "No active session. iOS client must resolve a session first.",
-                },
-            )
-            return
+        user, headers = session
 
         workout = STORE.delete_workout(int(user["id"]), workout_id)
         if workout is None:
@@ -1071,62 +950,6 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
         return None
 
-    def _parse_workout_id(self, path: str) -> int | None:
-        prefix = "/api/workouts/"
-        if not path.startswith(prefix):
-            return None
-
-        raw_id = path.removeprefix(prefix).strip("/")
-        if not raw_id or "/" in raw_id:
-            return None
-
-        try:
-            return int(raw_id)
-        except ValueError:
-            return None
-
-    def _parse_waist_id(self, path: str) -> int | None:
-        prefix = "/api/waists/"
-        if not path.startswith(prefix):
-            return None
-
-        raw_id = path.removeprefix(prefix).strip("/")
-        if not raw_id or "/" in raw_id:
-            return None
-
-        try:
-            return int(raw_id)
-        except ValueError:
-            return None
-
-    def _parse_body_weight_id(self, path: str) -> int | None:
-        prefix = "/api/body-weights/"
-        if not path.startswith(prefix):
-            return None
-
-        raw_id = path.removeprefix(prefix).strip("/")
-        if not raw_id or "/" in raw_id:
-            return None
-
-        try:
-            return int(raw_id)
-        except ValueError:
-            return None
-
-    def _parse_event_id(self, path: str) -> int | None:
-        prefix = "/api/events/"
-        if not path.startswith(prefix):
-            return None
-
-        raw_id = path.removeprefix(prefix).strip("/")
-        if not raw_id or "/" in raw_id:
-            return None
-
-        try:
-            return int(raw_id)
-        except ValueError:
-            return None
-
     def _build_session_cookie(self, user_id: int) -> str:
         parts = [
             f"{SESSION_COOKIE_NAME}={make_session_value(user_id)}",
@@ -1150,6 +973,22 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         if COOKIE_SECURE:
             parts.append("Secure")
         return "; ".join(parts)
+
+    def _require_user(self) -> tuple[dict[str, Any], dict[str, str]] | None:
+        """Сессия эндпоинта: пользователь по cookie либо debug-пользователь, если
+        он разрешён. Без сессии метод сам отвечает 401 и возвращает None —
+        обработчику остаётся просто выйти."""
+        user, headers = self._resolve_current_user(allow_debug_fallback=True)
+        if user is None:
+            self._send_json(
+                HTTPStatus.UNAUTHORIZED,
+                {
+                    "ok": False,
+                    "reason": "No active session. iOS client must resolve a session first.",
+                },
+            )
+            return None
+        return user, headers
 
     def _resolve_current_user(
         self,
@@ -1176,6 +1015,40 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             return user, {"Set-Cookie": self._build_session_cookie(int(user["id"]))}
 
         return None, {}
+
+
+# Маршруты с точным путём: (метод, путь) → обработчик. Порядок не важен, пути
+# не пересекаются; новый эндпоинт — это метод класса плюс строка здесь.
+ROUTES: dict[tuple[str, str], Callable[[MiniAppHandler], None]] = {
+    ("GET", "/api/health"): MiniAppHandler._get_health,
+    ("GET", "/api/dev/version"): MiniAppHandler._get_dev_version,
+    ("GET", "/api/workouts"): MiniAppHandler._get_workouts,
+    ("GET", "/api/body-weights"): MiniAppHandler._get_body_weights,
+    ("GET", "/api/recommendations/next"): MiniAppHandler._get_recommendation_next,
+    ("GET", "/api/reports/weekly"): MiniAppHandler._get_weekly_report,
+    ("GET", "/api/waists"): MiniAppHandler._get_waists,
+    ("GET", "/api/events"): MiniAppHandler._get_events,
+    ("GET", "/api/coach/signals"): MiniAppHandler._get_coach_signals,
+    ("POST", "/api/session/logout"): MiniAppHandler._post_session_logout,
+    ("POST", "/api/session/resolve"): MiniAppHandler._post_session_resolve,
+    ("POST", "/api/workouts"): MiniAppHandler._post_workout,
+    ("POST", "/api/body-weights"): MiniAppHandler._post_body_weight,
+    ("POST", "/api/waists"): MiniAppHandler._post_waist,
+    ("POST", "/api/events"): MiniAppHandler._post_event,
+    ("POST", "/api/coach/signals/dismiss"): MiniAppHandler._post_signal_dismiss,
+    ("POST", "/api/reports/weekly/read"): MiniAppHandler._post_weekly_report_read,
+    ("POST", "/api/recommendations/refresh"): MiniAppHandler._post_recommendation_refresh,
+}
+
+# Маршруты вида /api/<коллекция>/<id>: обработчик получает разобранный id.
+ID_ROUTES: dict[tuple[str, str], Callable[[MiniAppHandler, int], None]] = {
+    ("PUT", "/api/events/"): MiniAppHandler._put_event,
+    ("PUT", "/api/workouts/"): MiniAppHandler._put_workout,
+    ("DELETE", "/api/waists/"): MiniAppHandler._delete_waist,
+    ("DELETE", "/api/body-weights/"): MiniAppHandler._delete_body_weight,
+    ("DELETE", "/api/events/"): MiniAppHandler._delete_event,
+    ("DELETE", "/api/workouts/"): MiniAppHandler._delete_workout,
+}
 
 
 def main() -> None:
