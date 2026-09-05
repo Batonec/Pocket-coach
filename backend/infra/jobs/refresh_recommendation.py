@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Keep the coach recommendation fresh: regenerate it when it's older than
-REFRESH_MAX_AGE_HOURS (default 24).
+"""Держать совет тренера свежим: пересобрать его, если он старше
+REFRESH_MAX_AGE_HOURS (по умолчанию 24).
 
-Run by a systemd timer every morning (infra/deploy/trainer-recommend-refresh.timer),
-so the "когда идти" advice in the card is dated today, even if the athlete
-hasn't trained for a while. Standalone on purpose — no HTTP, no server import:
-reads the same env (EnvironmentFile=/etc/trainer-miniapp/backend.env), talks to
-SQLite and the Claude API directly via backend_store + recommender.
+Запускает systemd-таймер каждое утро (infra/deploy/trainer-recommend-refresh.timer),
+чтобы «когда идти» в карточке было датировано сегодняшним днём, даже если атлет
+давно не тренировался. Намеренно автономный: без HTTP и импорта server.py —
+читает то же окружение (EnvironmentFile=/etc/trainer-miniapp/backend.env), ходит
+в SQLite и Claude API напрямую через backend_store и recommender.
 
-Usage:
-    python3 refresh_recommendation.py            # regenerate only if stale
-    python3 refresh_recommendation.py --force    # regenerate unconditionally
+    python3 refresh_recommendation.py            # пересобрать только устаревший
+    python3 refresh_recommendation.py --force    # пересобрать безусловно
 """
 
 from __future__ import annotations
@@ -41,7 +40,12 @@ MAX_AGE_HOURS = float(os.getenv("REFRESH_MAX_AGE_HOURS", "24"))
 
 
 def run(store: backend_store.MiniAppStore, user_id: int, force: bool = False) -> bool:
-    """Returns True if a regeneration was performed (successfully or not)."""
+    """Проверить возраст совета (``recommender.should_refresh``) и при необходимости
+    пересобрать: та же цепочка, что в server.py, — история и замеры из базы,
+    профиль, стратегия и состояние с диска → ``generate`` → кэш; ошибка модели
+    пишется в строку ``failed``. Возвращает ``True``, если генерация была запущена
+    (удачно или нет). Тесты зовут с фейковым стором.
+    """
     rec = store.get_recommendation(user_id)
     refresh, reason = (
         (True, "форсировано (--force)")
@@ -98,6 +102,7 @@ def run(store: backend_store.MiniAppStore, user_id: int, force: bool = False) ->
 
 
 def main() -> None:
+    """CLI: ``--force`` пересобирает безусловно; пользователь — единственный атлет ``USER_ID``."""
     parser = argparse.ArgumentParser(description="Refresh the coach recommendation if stale")
     parser.add_argument("--force", action="store_true", help="regenerate unconditionally")
     args = parser.parse_args()

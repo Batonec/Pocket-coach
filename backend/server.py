@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+"""HTTP API тренера: процесс, который крутит systemd.
+
+``BaseHTTPRequestHandler`` без фреймворка: ``do_*`` отдают запрос в ``_dispatch``,
+тот ищет обработчик в таблицах ``ROUTES`` (метод + точный путь) и ``ID_ROUTES``
+(``/api/<коллекция>/<id>``). Один эндпоинт — один метод ``_get_*`` / ``_post_*`` /
+``_put_*`` / ``_delete_*``; новый эндпоинт — это метод плюс строка в таблице.
+Нормализация входа живёт в ``trainer.domain.rules``, SQL — в ``backend_store``:
+здесь только коды ответов, cookie сессии и фоновая генерация совета.
+
+Клиент один — iOS (``shell=ios`` плюс фиксированный id пользователя); debug-сессия
+по cookie осталась для локальной разработки (``MINIAPP_ALLOW_DEBUG_USER``).
+Настройки — переменные окружения ``MINIAPP_*`` и ``COACH_*``, см. backend/README.md.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -35,16 +49,16 @@ DEFAULT_DEBUG_USER_ALIAS = os.getenv("MINIAPP_DEFAULT_DEBUG_USER_ALIAS", "browse
 DEFAULT_DEBUG_USER_FIRST_NAME = os.getenv("MINIAPP_DEFAULT_DEBUG_USER_FIRST_NAME", "Browser")
 DEFAULT_DEBUG_USER_LAST_NAME = os.getenv("MINIAPP_DEFAULT_DEBUG_USER_LAST_NAME", "Debug")
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(DATA_DIR / "trainer.db")))
-# Athlete profile for the coach prompt: personal/medical context, lives next to
-# the DB on the server only (never in the public repo).
+# Профиль атлета для промпта тренера: личный и медицинский контекст, живёт только
+# на сервере рядом с базой (в публичном репозитории его нет).
 COACH_PROFILE_PATH = Path(
     os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json"))
 )
 COACH_STRATEGY_PATH = Path(
     os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md"))
 )
-# Mutable coaching state (preparation phase, waist limits) —
-# same location policy as the profile; switched via the Coach MCP tools.
+# Изменяемое состояние подготовки (фаза, лимиты талии) — та же политика
+# расположения, что у профиля; переключается инструментами Coach MCP.
 COACH_STATE_PATH = files.default_state_path(DB_PATH)
 SESSION_COOKIE_NAME = "trainer_session"
 SESSION_SECRET = os.getenv("MINIAPP_SESSION_SECRET") or "trainer-dev-session-secret"
@@ -59,8 +73,8 @@ except Exception as exc:  # noqa: BLE001
     EXERCISE_CATALOG = None
     print(f"[miniapp] WARNING: exercise catalog not loaded, recommendations disabled: {exc}")
 
-# Minimum seconds between two manual /refresh starts for one user (debounce the
-# open ios_fixed_user auth path so the paid endpoint can't be hammered).
+# Минимум секунд между двумя ручными стартами /refresh для одного пользователя:
+# путь авторизации ios_fixed_user открытый, и платный эндпоинт нельзя долбить.
 REFRESH_MIN_INTERVAL = float(os.getenv("RECOMMENDATION_REFRESH_MIN_INTERVAL", "10"))
 
 _recommendation_locks: dict[int, threading.Lock] = {}
@@ -71,6 +85,10 @@ _last_refresh_started: dict[int, float] = {}
 
 
 def _user_recommendation_lock(user_id: int) -> threading.Lock:
+    """Замок генерации на пользователя: один объект и для фонового воркера, и для
+    ручного ``/refresh``, чтобы модель никогда не звалась дважды параллельно для
+    одного атлета.
+    """
     with _recommendation_locks_guard:
         lock = _recommendation_locks.get(user_id)
         if lock is None:
@@ -80,8 +98,12 @@ def _user_recommendation_lock(user_id: int) -> threading.Lock:
 
 
 def _generate_and_store_recommendation(user_id: int) -> dict[str, Any] | None:
-    """Run one generation and persist it. Returns the stored 'ready' row, or
-    None on failure (a 'failed' row carrying the error message is persisted)."""
+    """Одна генерация совета и её запись: история и замеры из базы, профиль,
+    стратегия и состояние с диска → ``recommender.generate`` → строка кэша.
+    Возвращает записанную строку ``ready`` или ``None`` при ошибке (строка
+    ``failed`` с текстом ошибки записана). Зовут фоновый воркер и
+    ``_post_recommendation_refresh``.
+    """
     if EXERCISE_CATALOG is None:
         STORE.fail_recommendation(user_id, "Каталог упражнений недоступен")
         return None
@@ -120,25 +142,26 @@ def _generate_and_store_recommendation(user_id: int) -> dict[str, Any] | None:
 
 
 def trigger_recommendation_async(user_id: int) -> None:
-    """Regenerate the recommendation in the background (fire-and-forget).
-    Concurrent triggers collapse into one follow-up run using the newest data.
+    """Пересобрать совет в фоне (fire-and-forget) после правки данных; зовёт
+    ``_advice_changed``.
 
-    Workout and measurement edits often arrive while another generation is in
-    flight. We never run Claude in parallel for one user, but we also never drop
-    the latest mutation while an older generation is active.
+    Одновременные триггеры схлопываются в один добавочный прогон по самым свежим
+    данным: правки тренировок и замеров часто приходят, пока прошлая генерация ещё
+    идёт. Модель для одного пользователя никогда не зовётся параллельно, но и
+    последняя правка никогда не теряется, пока работает старая генерация.
     """
-    # No history means there is no valid next-workout recommendation. Still run
-    # the coalescing worker below: an older generation may currently be saving a
-    # payload based on the workout that has just been deleted, and the follow-up
-    # pass must clear that stale row again.
+    # Без истории валидного совета на следующую тренировку нет. Воркер ниже всё
+    # равно запускаем: старая генерация может прямо сейчас сохранять payload по
+    # только что удалённой тренировке, и добавочный прогон обязан снести эту
+    # протухшую строку ещё раз.
     has_workouts = STORE.get_latest_workout_id(user_id) is not None
     if not has_workouts:
         STORE.clear_recommendation(user_id)
     if EXERCISE_CATALOG is None:
         return
     if has_workouts:
-        # Pending is visible synchronously to a client polling immediately after
-        # a mutation response. Keep the previous payload as a display fallback.
+        # Pending виден синхронно клиенту, который опрашивает сразу после ответа
+        # на правку. Прошлый payload остаётся как фолбэк для показа.
         STORE.set_recommendation_pending(user_id)
 
     with _recommendation_locks_guard:
@@ -148,8 +171,10 @@ def trigger_recommendation_async(user_id: int) -> None:
         _recommendation_workers.add(user_id)
 
     def _run() -> None:
+        """Воркер: держит замок пользователя и гоняет генерацию, пока приходят
+        новые запросы прогона; выходя, снимает с себя флаг воркера."""
         lock = _user_recommendation_lock(user_id)
-        lock.acquire()  # a manual refresh may currently own the same lock
+        lock.acquire()  # тот же замок прямо сейчас может держать ручной /refresh
         try:
             while True:
                 with _recommendation_locks_guard:
@@ -160,8 +185,8 @@ def trigger_recommendation_async(user_id: int) -> None:
                     STORE.set_recommendation_pending(user_id)
                     _generate_and_store_recommendation(user_id)
 
-                # A mutation that landed during generation requests exactly one
-                # more pass. Several rapid edits still collapse into that pass.
+                # Правка, пришедшая во время генерации, просит ровно один
+                # добавочный прогон. Несколько быстрых правок схлопываются в него.
                 with _recommendation_locks_guard:
                     if user_id in _recommendation_rerun_requested:
                         continue
@@ -179,6 +204,7 @@ def trigger_recommendation_async(user_id: int) -> None:
 
 
 def iter_watched_files() -> list[Path]:
+    """Файлы, по которым считается dev-версия: код, проза и JSON под backend/, без ``__pycache__``."""
     return [
         path
         for path in sorted(BASE_DIR.rglob("*"))
@@ -190,6 +216,10 @@ def build_dev_version() -> dict[str, object]:
     # sha1 здесь — не подпись, а дешёвый отпечаток «путь + mtime» для
     # cache-busting в деве. usedforsecurity=False говорит это и линтеру,
     # и FIPS-сборкам OpenSSL, где иначе sha1 недоступен вовсе.
+    """Отпечаток исходников для ``/api/dev/version``: хеш «путь + mtime» всех
+    наблюдаемых файлов, самый свежий mtime и их число. Клиент в дев-режиме
+    сравнивает версию и перезагружается.
+    """
     hasher = hashlib.sha1(usedforsecurity=False)
     latest_mtime_ns = 0
     watched_files = 0
@@ -213,6 +243,7 @@ def build_dev_version() -> dict[str, object]:
 
 
 def positive_int(value: object) -> int | None:
+    """Значение как положительный ``int`` или ``None`` (мусор, ноль, отрицательное)."""
     try:
         parsed = int(value) if value is not None else None
     except (TypeError, ValueError):
@@ -223,10 +254,12 @@ def positive_int(value: object) -> int | None:
 
 
 def debug_user_enabled() -> bool:
+    """Разрешён ли debug-пользователь: дев-режим или явный ``MINIAPP_ALLOW_DEBUG_USER``."""
     return DEV_MODE or ALLOW_DEBUG_USER
 
 
 def make_session_value(user_id: int) -> str:
+    """Значение cookie сессии: ``<user_id>.<HMAC-SHA256 от id на секрете сессии>``."""
     payload = str(user_id)
     signature = hmac.new(
         SESSION_SECRET.encode("utf-8"),
@@ -237,6 +270,9 @@ def make_session_value(user_id: int) -> str:
 
 
 def read_session_user_id(cookie_value: str) -> int | None:
+    """Id пользователя из значения cookie, если подпись сходится; иначе ``None``.
+    Сравнение подписи постоянное по времени.
+    """
     if not cookie_value or "." not in cookie_value:
         return None
 
@@ -272,9 +308,15 @@ def _path_id(path: str, prefix: str) -> int | None:
 
 
 class MiniAppHandler(BaseHTTPRequestHandler):
+    """Обработчик одного HTTP-запроса: экземпляр на запрос, поток на соединение
+    (``ThreadingHTTPServer``). Состояние процесса — модульные ``STORE`` и замки
+    генерации.
+    """
+
     server_version = "TrainerMiniApp/0.1"
 
     def do_OPTIONS(self) -> None:
+        """CORS preflight: разрешить всё. Наследие браузерной версии, iOS его не шлёт."""
         self.send_response(HTTPStatus.NO_CONTENT)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
@@ -282,15 +324,19 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
+        """Все методы идут в ``_dispatch``; обработчики перечислены в ``ROUTES`` и ``ID_ROUTES``."""
         self._dispatch("GET")
 
     def do_POST(self) -> None:
+        """См. ``do_GET``."""
         self._dispatch("POST")
 
     def do_PUT(self) -> None:
+        """См. ``do_GET``."""
         self._dispatch("PUT")
 
     def do_DELETE(self) -> None:
+        """См. ``do_GET``."""
         self._dispatch("DELETE")
 
     def _dispatch(self, method: str) -> None:
@@ -312,6 +358,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
     # --- GET -----------------------------------------------------------------------
     def _get_health(self) -> None:
+        """``GET /api/health``: время сервера, включён ли debug-пользователь, путь к базе. Без сессии."""
         self._send_json(
             HTTPStatus.OK,
             {
@@ -323,13 +370,16 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _get_dev_version(self) -> None:
+        """``GET /api/dev/version``: отпечаток исходников (``build_dev_version``). Без сессии."""
         self._send_json(HTTPStatus.OK, build_dev_version())
 
     def _get_exercise_catalog(self) -> None:
         # URL остался от веб-версии и зашит в iOS-клиент: файл переехал, адрес нет.
+        """``GET /data/exercises.json``: каталог упражнений файлом из resources/. Без сессии."""
         self._send_file(CATALOG_PATH)
 
     def _get_workouts(self) -> None:
+        """``GET /api/workouts``: все тренировки пользователя от новых к старым, с payload целиком."""
         session = self._require_user()
         if session is None:
             return
@@ -343,6 +393,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _get_body_weights(self) -> None:
+        """``GET /api/body-weights``: все взвешивания от старых к новым."""
         session = self._require_user()
         if session is None:
             return
@@ -356,6 +407,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _get_recommendation_next(self) -> None:
+        """``GET /api/recommendations/next``: текущий совет со статусом и флагом
+        ``stale`` (собран не по последней тренировке). Никогда не генерирует.
+        """
         session = self._require_user()
         if session is None:
             return
@@ -368,14 +422,15 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _get_weekly_report(self) -> None:
+        """``GET /api/reports/weekly``: последний кэшированный недельный отчёт или ``None``."""
         session = self._require_user()
         if session is None:
             return
         user, headers = session
 
-        # Cache-only by design: the Monday-midnight timer (weekly_report.py)
-        # or the Coach MCP tool generate reports; this endpoint never spends
-        # tokens.
+        # Только кэш, намеренно: отчёты генерируют таймер в ночь на понедельник
+        # (weekly_report.py) или инструмент Coach MCP; этот эндпоинт токенов не
+        # тратит.
         self._send_json(
             HTTPStatus.OK,
             {"ok": True, "report": STORE.get_latest_coach_report(int(user["id"]))},
@@ -383,6 +438,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _get_waists(self) -> None:
+        """``GET /api/waists``: все замеры талии от старых к новым."""
         session = self._require_user()
         if session is None:
             return
@@ -395,6 +451,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _get_events(self) -> None:
+        """``GET /api/events``: все события (перерывы с причиной) пользователя."""
         session = self._require_user()
         if session is None:
             return
@@ -407,6 +464,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _get_coach_signals(self) -> None:
+        """``GET /api/coach/signals``: баннеры без LLM, посчитанные
+        ``coach_signals.compute_signals`` по базе и состоянию подготовки прямо сейчас.
+        """
         session = self._require_user()
         if session is None:
             return
@@ -425,6 +485,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
     # --- POST ----------------------------------------------------------------------
     def _post_session_logout(self) -> None:
+        """``POST /api/session/logout``: погасить cookie сессии."""
         self._send_json(
             HTTPStatus.OK,
             {"ok": True},
@@ -432,6 +493,13 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _post_session_resolve(self) -> None:
+        """``POST /api/session/resolve``: превратить клиента в сессию.
+
+        Три ветки: iOS (``shell=ios`` плюс ``native_user_id`` настроенного пользователя →
+        подписанная cookie; 401, если такого пользователя нет); debug-сессия, когда она
+        разрешена (браузер локальной разработки получает debug-пользователя); иначе
+        только уже существующая валидная cookie, без неё 401.
+        """
         payload = self._read_json_body()
         if payload is None:
             return
@@ -445,7 +513,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             or payload.get("nativeUserID")
         )
 
-        # Native iOS fixed user: resolve the configured user id to a session.
+        # Нативный iOS с фиксированным пользователем: настроенный id → сессия.
         if request_shell == "ios" and native_user_id is not None:
             if current_user is not None and int(current_user["id"]) == native_user_id:
                 self._send_json(
@@ -474,7 +542,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             )
             return
 
-        # Browser/debug session (for local development).
+        # Браузерная debug-сессия (локальная разработка).
         if debug_user_enabled():
             if current_user is not None and not (
                 prefers_debug_session and current_user.get("auth_source") != "debug"
@@ -499,7 +567,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             )
             return
 
-        # Debug disabled: honour an existing signed cookie, otherwise reject.
+        # Debug выключен: принимаем существующую подписанную cookie, иначе отказ.
         if current_user is not None:
             self._send_json(
                 HTTPStatus.OK,
@@ -514,6 +582,11 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _post_workout(self) -> None:
+        """``POST /api/workouts``: записать тренировку. Повтор с тем же ``client_id``
+        не создаёт дубль (200 вместо 201). Новая сегодняшняя тренировка закрывает
+        открытое событие (``rules.open_event_end_after_workout``); совет
+        пересобирается в фоне.
+        """
         payload = self._read_json_body()
         if payload is None:
             return
@@ -543,6 +616,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         self._advice_changed(int(user["id"]), "workout", created=created)
 
     def _post_body_weight(self) -> None:
+        """``POST /api/body-weights``: взвешивание за дату (повтор за тот же день
+        обновляет запись); совет пересобирается в фоне.
+        """
         payload = self._read_json_body()
         if payload is None:
             return
@@ -566,6 +642,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _post_waist(self) -> None:
+        """``POST /api/waists``: замер талии за дату, один на день; совет пересобирается в фоне."""
         payload = self._read_json_body()
         if payload is None:
             return
@@ -589,6 +666,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _post_event(self) -> None:
+        """``POST /api/events``: новое событие (перерыв с причиной); валидация в
+        ``rules``, второе открытое событие — 400.
+        """
         payload = self._read_json_body()
         if payload is None:
             return
@@ -615,6 +695,12 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _post_signal_dismiss(self) -> None:
+        """``POST /api/coach/signals/dismiss``: отложить баннер по ``instance_key``.
+
+        Срок отсрочки считает ``coach_signals.snooze_until_for`` по живому сигналу:
+        критичный баннер отложить нельзя (409), кривые часы — 400. Отсрочка пишется в
+        базу и действует на всех клиентах.
+        """
         payload = self._read_json_body()
         if payload is None:
             return
@@ -661,6 +747,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _post_weekly_report_read(self) -> None:
+        """``POST /api/reports/weekly/read``: отметить последний отчёт прочитанным;
+        гасит баннер weekly_report_ready у всех клиентов.
+        """
         session = self._require_user()
         if session is None:
             return
@@ -670,6 +759,14 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.OK, {"ok": True, "read": marked}, extra_headers=headers)
 
     def _post_recommendation_refresh(self) -> None:
+        """``POST /api/recommendations/refresh``: ручная генерация совета, синхронно
+        (клиент ждёт до 90 с).
+
+        Уже идёт генерация — 202 с текущим payload и статусом pending; повтор раньше
+        ``REFRESH_MIN_INTERVAL`` — 200 с текущим советом и причиной; ошибка модели —
+        502 с текстом из строки ``failed``, и кулдаун сбрасывается, чтобы карточка
+        ошибки могла повторить сразу. 503, если каталог упражнений не загрузился.
+        """
         session = self._require_user()
         if session is None:
             return
@@ -688,7 +785,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         user_id = int(user["id"])
         lock = _user_recommendation_lock(user_id)
         if not lock.acquire(blocking=False):
-            # Already generating (e.g. triggered by a recent workout save).
+            # Генерация уже идёт (например, её запустило сохранение тренировки).
             payload = self._recommendation_response(user)
             payload["status"] = "pending"
             self._send_json(HTTPStatus.ACCEPTED, payload, extra_headers=headers)
@@ -708,9 +805,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             lock.release()
 
         if result is None:
-            # A failed generation must be immediately retryable from the
-            # error card; the anti-hammer cooldown only protects successful
-            # or still-current refreshes.
+            # Упавшую генерацию карточка ошибки должна уметь повторить сразу;
+            # кулдаун от долбёжки защищает только успешные или ещё актуальные
+            # обновления.
             _last_refresh_started.pop(user_id, None)
             rec = STORE.get_recommendation(user_id)
             reason = (rec or {}).get("error") or "Не удалось сгенерировать рекомендацию"
@@ -729,6 +826,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
     # --- PUT -----------------------------------------------------------------------
     def _put_event(self, event_id: int) -> None:
+        """``PUT /api/events/<id>``: перезаписать событие; 404, если его нет, 400 на
+        второе открытое; совет пересобирается.
+        """
         payload = self._read_json_body()
         if payload is None:
             return
@@ -756,6 +856,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _put_workout(self, workout_id: int) -> None:
+        """``PUT /api/workouts/<id>``: перезаписать тренировку (правка сетов и заметок в
+        iOS); 404, если её нет; совет пересобирается.
+        """
         payload = self._read_json_body()
         if payload is None:
             return
@@ -784,6 +887,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
     # --- DELETE --------------------------------------------------------------------
     def _delete_waist(self, waist_id: int) -> None:
+        """``DELETE /api/waists/<id>``: удалить замер талии; 404, если его нет; совет пересобирается."""
         session = self._require_user()
         if session is None:
             return
@@ -802,6 +906,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _delete_body_weight(self, body_weight_id: int) -> None:
+        """``DELETE /api/body-weights/<id>``: удалить взвешивание; 404, если его нет; совет пересобирается."""
         session = self._require_user()
         if session is None:
             return
@@ -822,6 +927,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _delete_event(self, event_id: int) -> None:
+        """``DELETE /api/events/<id>``: удалить событие; 404, если его нет; совет пересобирается."""
         session = self._require_user()
         if session is None:
             return
@@ -840,6 +946,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         )
 
     def _delete_workout(self, workout_id: int) -> None:
+        """``DELETE /api/workouts/<id>``: удалить тренировку; 404, если её нет.
+        Удаление последней тренировки сносит и кэш совета (``trigger_recommendation_async``).
+        """
         session = self._require_user()
         if session is None:
             return
@@ -858,9 +967,13 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         self._advice_changed(int(user["id"]), "workout")
 
     def log_message(self, format: str, *args: object) -> None:
+        """Лог запроса в stdout с префиксом ``[miniapp]`` (systemd собирает его в journal)."""
         print(f"[miniapp] {self.address_string()} - {format % args}")
 
     def _read_json_body(self) -> dict[str, Any] | None:
+        """Тело запроса как JSON-словарь; пустое тело — ``{}``. Битый JSON, кривой
+        Content-Length или не-объект — сам отвечает 400 и возвращает ``None``,
+        обработчику остаётся выйти."""
         try:
             content_length = int(self.headers.get("Content-Length", "0"))
             if content_length < 0:
@@ -879,6 +992,10 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         return payload
 
     def _recommendation_response(self, user: dict[str, Any]) -> dict[str, Any]:
+        """Payload текущего совета для клиента: статус ``none`` без записи, иначе
+        строка кэша с флагом ``stale`` (``recommender.is_stale``). Зовут GET next и
+        обе ветки refresh.
+        """
         user_id = int(user["id"])
         rec = STORE.get_recommendation(user_id)
         if rec is None:
@@ -898,6 +1015,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         payload: dict[str, object],
         extra_headers: dict[str, str] | None = None,
     ) -> None:
+        """Ответ JSON с кодом, ``Cache-Control: no-store`` и открытым CORS;
+        ``extra_headers`` — обычно ``Set-Cookie`` из ``_require_user``.
+        """
         encoded = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -911,6 +1031,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
     def _send_file(self, file_path: Path) -> None:
+        """Отдать файл с диска с MIME по расширению (и charset для текста); нет файла —
+        404. Единственный потребитель — каталог упражнений.
+        """
         if not file_path.exists():
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Missing asset"})
             return
@@ -929,6 +1052,9 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _build_session_cookie(self, user_id: int) -> str:
+        """``Set-Cookie`` сессии: подписанное значение, HttpOnly, месяц жизни
+        (``MINIAPP_SESSION_MAX_AGE``), ``Secure`` по ``MINIAPP_COOKIE_SECURE``.
+        """
         parts = [
             f"{SESSION_COOKIE_NAME}={make_session_value(user_id)}",
             "HttpOnly",
@@ -941,6 +1067,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         return "; ".join(parts)
 
     def _clear_session_cookie(self) -> str:
+        """``Set-Cookie``, гасящий сессию (пустое значение, ``Max-Age=0``)."""
         parts = [
             f"{SESSION_COOKIE_NAME}=",
             "HttpOnly",
@@ -978,6 +1105,11 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         self,
         allow_debug_fallback: bool = False,
     ) -> tuple[dict[str, Any] | None, dict[str, str]]:
+        """Пользователь по подписанной cookie, если она есть и валидна; с
+        ``allow_debug_fallback`` и разрешённым debug-пользователем — он, вместе с
+        ``Set-Cookie`` для него. Иначе ``(None, {})``. Зовут ``_require_user`` и
+        ``_post_session_resolve``.
+        """
         cookie_header = self.headers.get("Cookie", "")
         if cookie_header:
             cookies = SimpleCookie()
@@ -1037,6 +1169,7 @@ ID_ROUTES: dict[tuple[str, str], Callable[[MiniAppHandler, int], None]] = {
 
 
 def main() -> None:
+    """Точка входа процесса: ``ThreadingHTTPServer`` на ``MINIAPP_HOST:MINIAPP_PORT``, поток на соединение."""
     server = ThreadingHTTPServer((HOST, PORT), MiniAppHandler)
     print(f"Trainer backend listening on http://{HOST}:{PORT}")
     print(f"SQLite database: {DB_PATH}")

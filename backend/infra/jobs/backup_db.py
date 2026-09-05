@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Consistent, dependency-free backup of trainer.db with rotation.
+"""Консистентный бэкап trainer.db без зависимостей, с ротацией.
 
-Uses the SQLite online-backup API (``Connection.backup``) so the dump is
-transactionally consistent even while the backend is writing — no need for the
-sqlite3 CLI or a service stop. The result is gzip-compressed, and the athlete
-profile, coaching strategy, and state (which live next to the DB and are NOT in
-git) are copied alongside so a single backup directory restores everything.
+Использует online-backup API SQLite (``Connection.backup``): дамп транзакционно
+целостный, даже пока backend пишет, — не нужны ни sqlite3 CLI, ни остановка
+сервиса. Результат сжат gzip; профиль атлета, стратегия и состояние подготовки
+(лежат рядом с базой и в git не попадают) копируются рядом, чтобы один каталог
+бэкапа восстанавливал всё.
 
-Run by infra/deploy/trainer-db-backup.timer (daily). Keeps the newest
-BACKUP_KEEP backups and deletes older ones.
+Запускает infra/deploy/trainer-db-backup.timer (ежедневно). Хранит новейшие
+BACKUP_KEEP бэкапов, старые удаляет.
 
-    python3 backup_db.py                  # backup + rotate
+    python3 backup_db.py                  # бэкап + ротация
     BACKUP_DIR=/mnt/x python3 backup_db.py
 """
 
@@ -37,14 +37,14 @@ DB_SUFFIX = ".db.gz"
 
 
 def make_backup(db_path: Path, dest_dir: Path, stamp: str) -> Path:
-    """Online-backup db_path into dest_dir/trainer-<stamp>.db.gz. Returns the path."""
+    """Online-бэкап ``db_path`` в ``dest_dir/trainer-<stamp>.db.gz``; возвращает путь к архиву."""
     dest_dir.mkdir(parents=True, exist_ok=True)
     snapshot = dest_dir / f"{DB_PREFIX}{stamp}.db"
     src = sqlite3.connect(db_path)
     try:
         dst = sqlite3.connect(snapshot)
         try:
-            src.backup(dst)  # consistent even under concurrent writes
+            src.backup(dst)  # целостно даже при параллельной записи
         finally:
             dst.close()
     finally:
@@ -58,7 +58,7 @@ def make_backup(db_path: Path, dest_dir: Path, stamp: str) -> Path:
 
 
 def rotate(dest_dir: Path, keep: int) -> list[Path]:
-    """Delete all but the newest `keep` db backups. Returns the removed paths."""
+    """Удалить все бэкапы базы, кроме ``keep`` новейших; возвращает удалённые пути."""
     backups = sorted(
         dest_dir.glob(f"{DB_PREFIX}*{DB_SUFFIX}"),
         key=lambda p: p.name,
@@ -71,6 +71,9 @@ def rotate(dest_dir: Path, keep: int) -> list[Path]:
 
 
 def main() -> None:
+    """Бэкап базы, копии профиля, стратегии и состояния с тем же штампом, ротация;
+    без базы — код выхода 1.
+    """
     if not DB_PATH.exists():
         print(f"[backup] база не найдена: {DB_PATH}", file=sys.stderr)
         sys.exit(1)
@@ -82,8 +85,8 @@ def main() -> None:
     size_kb = gz_path.stat().st_size / 1024
     print(f"[backup] создан {gz_path.name} ({size_kb:.0f} КБ)")
 
-    # The profile, coaching strategy, and state are small and not in git —
-    # snapshot them next to the DB backup so one directory restores everything.
+    # Профиль, стратегия и состояние маленькие и не в git — снимаем их рядом с
+    # бэкапом базы, чтобы один каталог восстанавливал всё.
     for source, prefix, label in (
         (PROFILE_PATH, "coach_profile", "профиль"),
         (STRATEGY_PATH, "coach_strategy", "стратегия"),
@@ -95,7 +98,7 @@ def main() -> None:
             print(f"[backup] {label} сохранён {copy.name}")
 
     removed = rotate(BACKUP_DIR, KEEP)
-    # Keep companion copies in lockstep with the db backups we removed.
+    # Копии-спутники удаляем вслед за удалёнными бэкапами базы.
     for path in removed:
         stamp_part = path.name[len(DB_PREFIX) : -len(DB_SUFFIX)]
         for prefix in ("coach_profile", "coach_strategy", "coach_state"):

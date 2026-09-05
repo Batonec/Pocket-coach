@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
-"""Computed history features for the coach prompt.
+"""Вычисляемые фичи истории для промпта тренера.
 
-The model used to receive 20 raw workouts and re-derive records, stalls and
-volumes on every call — anchoring on whatever the recent sessions happened to
-be. This module pre-computes those facts on the server so the prompt feeds the
-model *data*, not homework:
+Раньше модель получала 20 сырых тренировок и на каждом вызове заново выводила
+рекорды, застой и объёмы, цепляясь за то, какими случайно оказались последние
+сессии. Этот модуль считает те же факты на сервере, чтобы промпт кормил модель
+*данными*, а не домашним заданием:
 
-- per-exercise all-time summaries (top set, Epley e1RM, last PR, recent sessions
-  with the movement's position in each session);
-- a stall detector with explicit "resource exhausted" preconditions, measured
-  over the ACTIVE window of the current block (never across a vacation);
-- attendance by calendar week (the programme's gate and split switch);
-- return-from-break ramp steps (current → PRE-BREAK working weight, not peak);
-- weekly volume per muscle group in direct AND effective sets (secondary load);
-- body-weight / waist trends and the nutrition decision matrix keyed on the
-  phase's weight-rate corridor.
+- сводки по упражнениям за всё время (лучший подход, e1RM по Эпли, последний
+  ПР, последние сессии с позицией движения в каждой);
+- детектор застоя с явными предусловиями «ресурс исчерпан», измеренными по
+  АКТИВНОМУ окну текущего блока (никогда через отпуск);
+- явка по календарным неделям (гейт программы и переключатель сплита);
+- ступени возврата после перерыва (от текущего к ДОПЕРЕРЫВНОМУ рабочему, не к пику);
+- недельный объём по группам мышц в прямых И эффективных сетах (косвенная нагрузка);
+- тренды веса и талии и матрица решений по питанию, привязанная к коридору
+  темпа веса фазы.
 
-Stdlib-only, like the rest of the backend.
+Здесь только числа и структуры; строки для модели из них делает
+``prompt_builder`` (``render_*``). Зовут ``prompt_builder``, ``plan_validator``,
+``coach_signals``, ``rules`` и Coach MCP. Только stdlib, как весь backend.
 """
 
 from __future__ import annotations
@@ -30,23 +32,23 @@ from typing import Any
 from trainer.domain import coach_state
 from trainer.domain.coach_state import BREAK_DAYS
 
-# Catalog id 1 («Жим гор.») and id 18 («Жим в тренажере») are the same machine;
-# old history rows still carry id 1, so every consumer maps through this alias.
+# Id 1 («Жим гор.») и id 18 («Жим в тренажере») в каталоге — один тренажёр; старые
+# строки истории всё ещё несут id 1, поэтому все потребители идут через алиас.
 EXERCISE_ALIASES: dict[int, int] = {1: 18}
 
-# Assisted pull-ups: the weight field is the COUNTERWEIGHT (assistance), so
-# progress is the weight going DOWN — every comparison below is inverted.
-# The machine left the catalog in Aug 2026 (the athlete's gym has none, and the
-# history never used it), but the inverted-progress support stays: it is the
-# only place that knows how to read a "lower is better" weight column, and any
-# future assisted machine plugs straight into it.
+# Подтягивания с помощью: поле веса — это ПРОТИВОВЕС (помощь), так что прогресс
+# это вес ВНИЗ, и каждое сравнение ниже инвертировано. Тренажёр вышел из каталога
+# в августе 2026 (в зале атлета его нет, история им не пользовалась), но
+# поддержка инвертированного прогресса остаётся: это единственное место, умеющее
+# читать колонку веса «меньше значит лучше», и любая будущая машина с противовесом
+# включается в него без переписывания.
 GRAVITRON_ID = 4
 
-# Base movements that get an explicit comeback ramp after a break; isolation
-# just follows the working-weight rule.
+# Базовые движения, которым после перерыва строится явная лестница возврата;
+# изоляция просто следует правилу рабочего веса.
 MAIN_MOVEMENT_IDS = (18, 9, 10, 8, GRAVITRON_ID)
 
-# Primary muscle group per (canonical) exercise id.
+# Основная группа мышц по (каноническому) id упражнения.
 MUSCLE_GROUPS: dict[str, tuple[int, ...]] = {
     "грудь": (18, 17),
     "спина": (9, GRAVITRON_ID, 10),
@@ -58,14 +60,14 @@ MUSCLE_GROUPS: dict[str, tuple[int, ...]] = {
     "бицепс бедра": (15,),
 }
 
-# Effective weekly sets: direct work counts 1.0 for the primary group, and the
-# compounds feed secondary muscles a fraction of a set (presses → triceps ~half;
-# every pull → biceps ~half). The press credits «дельты» only 0.25: a horizontal
-# press loads the FRONT delt, while the group's only direct machine measures the
-# mid delt — a half-set credit would overstate coverage of the visible head.
-# The leg press's extra glute share is folded into the combined quad/glute
-# group, so it stays 1.0 there. The horizontal row credits «задняя дельта» 0.25:
-# rowing does load the posterior head, but not enough to replace direct work.
+# Эффективные сеты в неделю: прямая работа считается за 1.0 для основной группы,
+# а базовые движения дают вторичным мышцам долю сета (жимы → трицепс ~половина;
+# любая тяга → бицепс ~половина). Жим засчитывает «дельтам» только 0.25:
+# горизонтальный жим грузит ПЕРЕДНЮЮ дельту, а единственный прямой тренажёр
+# группы меряет среднюю — полсета завысили бы покрытие видимой головки. Доля
+# ягодичных у жима ногами сложена в общую группу квадрицепс/ягодичные, там он
+# остаётся 1.0. Горизонтальная тяга даёт «задней дельте» 0.25: тяга грузит заднюю
+# головку, но не настолько, чтобы заменить прямую работу.
 EFFECTIVE_SETS: dict[int, dict[str, float]] = {
     18: {"грудь": 1.0, "трицепс": 0.5, "дельты": 0.25},
     17: {"грудь": 1.0},
@@ -83,8 +85,8 @@ EFFECTIVE_SETS: dict[int, dict[str, float]] = {
 
 BIG_GROUPS = ("грудь", "спина", "квадрицепс/ягодичные")
 
-# Weekly direct-set landmarks for the small groups (the coaching policy from
-# the system prompt); big groups follow the block-week ramp instead.
+# Недельные ориентиры прямых сетов для малых групп (политика из системного
+# промпта); крупные группы вместо этого идут по ramp недели блока.
 SMALL_GROUP_TARGETS: dict[str, tuple[int, int]] = {
     "дельты": (6, 12),
     "задняя дельта": (4, 8),
@@ -99,18 +101,18 @@ def group_volume_targets(
     maintenance_sets: tuple[int, int] | None = None,
     group_targets: dict[str, Any] | None = None,
 ) -> dict[str, tuple[int, int]]:
-    """Per-group weekly set targets for the client's volume screen.
+    """Целевые сеты в неделю по группам для экрана объёма в клиенте.
 
-    Without an override: big groups follow the current block-week corridor
-    (ramp/deload), small groups keep their policy ranges, maintenance flattens
-    everything to 2–3. A single corridor for every big group is the default
-    precisely because the default methodology has no per-group priorities.
+    Без переопределений: крупные группы идут по коридору текущей недели блока
+    (ramp или разгрузка), малые держат свои ориентиры из политики, поддержание
+    сплющивает всё в 2–3. Один коридор на все крупные группы по умолчанию именно
+    потому, что у дефолтной методики нет приоритетов между ними.
 
-    ``group_targets`` from the athlete's phase parameters overrides that for the
-    named groups: a programme where back gets 16 sets and quads 9 cannot be
-    expressed by one corridor. The override states the MATURE block; the ramp of
-    the current week comes from the block week and from the programme text, so
-    no scaling rule is invented here.
+    ``group_targets`` из параметров фазы атлета переопределяет это для названных
+    групп: программу, где спине 16 сетов, а квадрицепсу 9, одним коридором не
+    выразить. Переопределение описывает ЗРЕЛЫЙ блок; разгон текущей недели идёт из
+    недели блока и текста программы, правило масштабирования здесь не выдумывается.
+    Зовут ``prompt_builder`` и ``recommender._coach_context``.
     """
     override = {
         group: tuple(bounds)
@@ -130,37 +132,38 @@ def group_volume_targets(
     return targets
 
 
-# Plausible adult body-weight bounds: entries outside are logging noise (e.g.
-# an exercise weight saved into the body-weight table) and must never reach
-# the calorie-advice logic.
+# Правдоподобные границы веса взрослого: записи вне их — шум логирования
+# (например, вес с тренажёра, сохранённый в таблицу веса тела) и до логики
+# советов по калориям доходить не должны.
 MIN_PLAUSIBLE_BODY_WEIGHT = 40.0
 MAX_PLAUSIBLE_BODY_WEIGHT = 150.0
 MIN_PLAUSIBLE_WAIST_CM = 50.0
 MAX_PLAUSIBLE_WAIST_CM = 160.0
 
-# Freshness rule shared by weight and waist: stale data → no calorie advice.
+# Общее правило свежести для веса и талии: устаревшие данные → без советов по калориям.
 STALE_MEASUREMENT_DAYS = 14
 
-# Stall-detector calibration ("resource exhausted" preconditions, section 4.2).
-# Everything is measured over the ACTIVE window: at most 6 weeks back, but never
-# across the start of the current block (phase start / return after a ≥14-day
-# break). A window that includes a vacation reports a frequency the athlete
-# never had and a volume he never trained — the model then builds fullbody
-# sessions «по дефициту» that does not exist.
-STALL_WINDOW_DAYS = 42  # 6 weeks
-STALL_MIN_WEEKLY_FREQUENCY = 2.5  # sessions per week over the active window
-STALL_MIN_WEEKLY_SETS = 10.0  # per BIG group when the phase names no group target
-STALL_MIN_WINDOW_DAYS = 21  # under three weeks there is nothing to judge yet
-STALL_NO_PR_DAYS = 28  # ≥4 weeks without an improvement INSIDE the window
-STALL_MIN_EXERCISE_SESSIONS = 3  # can't stall a lift you barely visit
-# Weight-rate tolerance around the phase corridor (kg/week) shared by the
-# preconditions and the nutrition matrix.
+# Калибровка детектора застоя (предусловия «ресурс исчерпан», раздел 4.2).
+# Всё меряется по АКТИВНОМУ окну: не больше 6 недель назад, но никогда через
+# старт текущего блока (начало фазы или возврат после перерыва ≥14 дней). Окно
+# с отпуском внутри показывает частоту, которой у атлета не было, и объём,
+# который он не тренировал, — и модель строит fullbody-сессии «по дефициту»,
+# которого нет.
+STALL_WINDOW_DAYS = 42  # 6 недель
+STALL_MIN_WEEKLY_FREQUENCY = 2.5  # сессий в неделю по активному окну
+STALL_MIN_WEEKLY_SETS = 10.0  # на КРУПНУЮ группу, если фаза не задала цель по группам
+STALL_MIN_WINDOW_DAYS = 21  # меньше трёх недель — судить ещё не о чем
+STALL_NO_PR_DAYS = 28  # ≥4 недели без улучшения ВНУТРИ окна
+STALL_MIN_EXERCISE_SESSIONS = 3  # не застоится движение, которое почти не делают
+# Допуск темпа веса вокруг коридора фазы (кг/нед), общий для предусловий и
+# матрицы питания.
 RATE_TOLERANCE = 0.15
 
 _EFFORT_MARK = {"easy": "-", "ok": "", "hard": "+"}
 
 
 def canonical_exercise_id(exercise_id: Any) -> int | None:
+    """Id упражнения как ``int`` с переводом дубля (1 → 18); мусор — ``None``."""
     if isinstance(exercise_id, bool):
         return None
     if isinstance(exercise_id, float) and (
@@ -175,10 +178,12 @@ def canonical_exercise_id(exercise_id: Any) -> int | None:
 
 
 def epley_e1rm(weight: float, reps: int) -> float:
+    """Оценка одноповторного максимума по Эпли: вес × (1 + повторы / 30)."""
     return weight * (1 + reps / 30)
 
 
 def _workout_date(workout: dict[str, Any]) -> date | None:
+    """Дата тренировки из строки ISO или ``None``, если её не разобрать."""
     try:
         return date.fromisoformat(str(workout.get("workout_date", "")))
     except ValueError:
@@ -188,7 +193,9 @@ def _workout_date(workout: dict[str, Any]) -> date | None:
 def _iter_exercise_sessions(
     workouts: list[dict[str, Any]],
 ) -> dict[int, list[tuple[date, list[dict[str, Any]]]]]:
-    """{canonical exercise id: [(date, sets), ...] oldest-first}."""
+    """``{канонический id: [(дата, подходы), ...]}`` от старых к новым; подходы с
+    повторами < 1 или битыми числами пропущены.
+    """
     sessions: dict[int, list[tuple[date, list[dict[str, Any]]]]] = {}
     for workout in workouts:
         when = _workout_date(workout)
@@ -230,17 +237,19 @@ def _iter_exercise_sessions(
 
 
 def _session_top(sets: list[dict[str, Any]], *, inverted: bool) -> dict[str, Any]:
-    """The set that defines the session: best e1RM, or for the gravitron the
-    lowest counterweight (more reps breaks the tie)."""
+    """Подход, определяющий сессию: лучший e1RM, а для гравитрона — наименьший
+    противовес (при равенстве больше повторов).
+    """
     if inverted:
         return min(sets, key=lambda s: (s["weight"], -s["reps"]))
     return max(sets, key=lambda s: epley_e1rm(s["weight"], s["reps"]))
 
 
 def _beats(top: dict[str, Any], best: dict[str, Any], *, inverted: bool) -> bool:
-    """Is `top` a better set than `best`: higher e1RM, or for the gravitron a
-    lower counterweight (more reps break the tie)? One comparison for the
-    summary, the peak and the in-window stall clock — they must not drift."""
+    """Лучше ли ``top``, чем ``best``: выше e1RM, а для гравитрона ниже противовес
+    (при равенстве больше повторов)? Одно сравнение для сводки, пика и часов застоя
+    внутри окна — они не должны разъезжаться.
+    """
     if inverted:
         return top["weight"] < best["weight"] or (
             top["weight"] == best["weight"] and top["reps"] > best["reps"]
@@ -251,10 +260,11 @@ def _beats(top: dict[str, Any], best: dict[str, Any], *, inverted: bool) -> bool
 def _best_set(
     sessions: list[tuple[date, list[dict[str, Any]]]], *, inverted: bool
 ) -> tuple[dict[str, Any], date]:
-    """The single source of truth for an exercise's peak: the same REAL set
-    (weight+reps together) the per-exercise summary reports — best e1RM, or
-    the lowest counterweight for the gravitron. Never mix the max weight of
-    one set with the reps of another."""
+    """Единственный источник правды о пике упражнения: тот же РЕАЛЬНЫЙ подход
+    (вес и повторы вместе), который показывает сводка, — лучший e1RM или наименьший
+    противовес для гравитрона. Никогда не смешивать максимальный вес одного подхода
+    с повторами другого.
+    """
     best: dict[str, Any] | None = None
     best_when: date | None = None
     for when, sets in sessions:
@@ -265,11 +275,12 @@ def _best_set(
 
 
 def _exercise_positions(workouts: list[dict[str, Any]]) -> dict[tuple[date, int], tuple[int, int]]:
-    """{(date, canonical exercise id): (position, exercises in that session)}.
+    """``{(дата, канонический id): (позиция, упражнений в сессии)}``.
 
-    The working weight depends on WHERE the movement stood: a row done first
-    on fresh legs and the same row sixth after a leg press are two different
-    numbers, and the model must not read the second as lost strength."""
+    Рабочий вес зависит от того, ГДЕ стояло движение: тяга первой на свежих ногах
+    и та же тяга шестой после жима ногами — два разных числа, и модель не должна
+    читать второе как потерю силы.
+    """
     positions: dict[tuple[date, int], tuple[int, int]] = {}
     for workout in workouts:
         when = _workout_date(workout)
@@ -284,27 +295,29 @@ def _exercise_positions(workouts: list[dict[str, Any]]) -> dict[tuple[date, int]
     return positions
 
 
-# Anomalous-set filter thresholds for the current-working-weight metric: a
-# weight that appears once and sits this far from the recent median is logging
-# noise; a <6-rep set only counts if the same weight shows up again nearby.
+# Пороги фильтра аномальных подходов для текущего рабочего веса: вес, который
+# встретился один раз и стоит так далеко от недавней медианы, — шум логирования;
+# подход на <6 повторов считается, только если тот же вес повторился рядом.
 _OUTLIER_MEDIAN_RATIO = 0.25
 _MIN_WORKING_REPS = 6
-# «Последние 2–3 сессии» must actually be adjacent in time: a session further
-# than this from the newest one belongs to a previous era (pre-break) and says
-# nothing about the athlete's CURRENT weights.
+# «Последние 2–3 сессии» обязаны быть соседями по времени: сессия дальше этого
+# от самой свежей принадлежит прошлой эпохе (до перерыва) и ничего не говорит
+# о ТЕКУЩИХ весах атлета.
 _WORKING_WINDOW_DAYS = 14
 
 
 def current_working_weight(
     sessions: list[tuple[date, list[dict[str, Any]]]], *, inverted: bool
 ) -> float | None:
-    """The athlete's ACTUAL current working weight: the max (min counterweight
-    for the gravitron) working-set weight over the last 2–3 sessions that sit
-    within two weeks of the newest one, with the same anomaly filter the
-    progression rules use — a single set that falls out of the stable series
-    (a one-off «20×3» among 10×12s, a light technique day) must not define
-    «сейчас» or seed the comeback ramp, while a light day next to a real
-    session must not read as a regression."""
+    """НАСТОЯЩИЙ текущий рабочий вес атлета: максимум (минимум противовеса для
+    гравитрона) рабочих подходов за последние 2–3 сессии, лежащие в двух неделях от
+    самой свежей, с тем же фильтром аномалий, что у правил прогрессии.
+
+    Одиночный подход, выпадающий из стабильной серии (случайный «20×3» среди
+    10×12, лёгкий технический день), не должен ни определять «сейчас», ни задавать
+    старт ступеней возврата, а лёгкий день рядом с нормальной сессией не должен
+    читаться как откат. Зовут сводки, ступени возврата и доперерывные веса.
+    """
     if not sessions:
         return None
     last_when = sessions[-1][0]
@@ -320,11 +333,12 @@ def current_working_weight(
         return None
 
     def occurrences(pool: list[dict[str, Any]], weight: float) -> int:
+        """Сколько подходов в ``pool`` сделано с этим весом (допуск 0.01 кг)."""
         return sum(1 for s in pool if abs(s["weight"] - weight) < 0.01)
 
-    # Filter order matters: drop the low-rep garbage FIRST, so a one-off
-    # «20×3» in a two-set session cannot drag the median onto itself and get
-    # the real working ten thrown out as an "outlier".
+    # Порядок фильтров важен: СНАЧАЛА выбрасываем малоповторный мусор, чтобы
+    # случайный «20×3» в сессии из двух подходов не перетянул медиану на себя
+    # и не выкинул настоящую рабочую десятку как «выброс».
     plausible = [
         s
         for s in all_sets
@@ -351,6 +365,7 @@ def current_working_weight(
 
 
 def _format_set(workout_set: dict[str, Any]) -> str:
+    """«80×10+@2»: вес×повторы, метка тяжести (-/+) и RIR, если есть."""
     mark = _EFFORT_MARK.get(workout_set.get("effort") or "", "")
     rir = workout_set.get("rir")
     rir_repr = f"@{int(rir)}" if isinstance(rir, (int, float)) and not isinstance(rir, bool) else ""
@@ -358,7 +373,7 @@ def _format_set(workout_set: dict[str, Any]) -> str:
 
 
 def _position_tag(position: tuple[int, int] | None) -> str:
-    """«[#3/7] » — the movement was third of seven in that session."""
+    """«[#3/7] »: движение было третьим из семи в той сессии."""
     if position is None:
         return ""
     index, total = position
@@ -366,13 +381,21 @@ def _position_tag(position: tuple[int, int] | None) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Per-exercise summaries (4.1)
+# Сводки по упражнениям (4.1)
 # --------------------------------------------------------------------------- #
 def exercise_summaries(
     workouts: list[dict[str, Any]],
     catalog: list[dict[str, Any]],
     today: date,
 ) -> list[dict[str, Any]]:
+    """Сводка по каждому упражнению, у которого есть хотя бы две сессии.
+
+    В словаре: лучший подход с датой и e1RM, дата последнего ПР и дней с него,
+    даты всех улучшений, текущий рабочий вес с датой и процентом от пика, три
+    последние сессии с позицией в тренировке. Порядок: базовые движения первыми,
+    дальше по числу сессий. Зовут ``prompt_builder`` (план, отчёт) и
+    ``phase_summary``.
+    """
     names = {item["id"]: item["name"] for item in catalog}
     sessions_by_exercise = _iter_exercise_sessions(workouts)
     positions = _exercise_positions(workouts)
@@ -386,7 +409,7 @@ def exercise_summaries(
         best: dict[str, Any] | None = None
         best_when: date | None = None
         last_pr: date | None = None
-        pr_dates: list[str] = []  # improvement events only (baseline excluded)
+        pr_dates: list[str] = []  # только улучшения, без базовой сессии
         for when, sets in sessions:
             top = _session_top(sets, inverted=inverted)
             if best is None:
@@ -397,8 +420,8 @@ def exercise_summaries(
                 pr_dates.append(when.isoformat())
 
         current_when, _current_sets = sessions[-1]
-        # «Сейчас» = the anomaly-filtered working weight of the last 2–3
-        # sessions — a one-off light/garbage set must not read as a regression.
+        # «Сейчас» — рабочий вес последних 2–3 сессий после фильтра аномалий:
+        # случайный лёгкий или мусорный подход не должен читаться как откат.
         current_weight = current_working_weight(sessions, inverted=inverted)
         peak_weight = best["weight"]
         if current_weight is None:
@@ -441,11 +464,15 @@ def exercise_summaries(
 
 
 # --------------------------------------------------------------------------- #
-# Weekly volume in direct and effective sets (4.4)
+# Недельный объём в прямых и эффективных сетах (4.4)
 # --------------------------------------------------------------------------- #
 def weekly_volume(
     workouts: list[dict[str, Any]], today: date, days: int = 7
 ) -> dict[str, dict[str, float]]:
+    """Объём за последние ``days`` дней по группам: ``{группа: {"direct": прямые
+    сеты, "effective": эффективные с долями косвенной нагрузки}}``. Зовут
+    ``prompt_builder``, ``stall_report`` и ``plan_validator`` (покрытие групп).
+    """
     volume = {group: {"direct": 0, "effective": 0.0} for group in MUSCLE_GROUPS}
     group_of: dict[int, str] = {}
     for group, ids in MUSCLE_GROUPS.items():
@@ -472,12 +499,13 @@ def weekly_volume(
 
 
 # --------------------------------------------------------------------------- #
-# Stall detector (4.2)
+# Детектор застоя (4.2)
 # --------------------------------------------------------------------------- #
 def _rate_bounds(rate_range: Any, phase: str) -> tuple[float, float]:
-    """The phase's weekly weight corridor as floats. A caller without an
-    explicit range gets the defaults of that phase — every phase has one, so
-    no branch below has to key on the phase NAME."""
+    """Недельный коридор веса фазы парой чисел. Вызывающий без явного диапазона
+    получает дефолты этой фазы — коридор есть у каждой, поэтому ни одна ветка ниже
+    не привязана к ИМЕНИ фазы.
+    """
     if isinstance(rate_range, (list, tuple)) and len(rate_range) == 2:
         return float(rate_range[0]), float(rate_range[1])
     fallback = coach_state.PHASE_DEFAULTS.get(phase, {}).get("rate_kg_per_week") or (0.0, 0.0)
@@ -491,15 +519,15 @@ def _in_window_progress(
     *,
     inverted: bool,
 ) -> tuple[int, int] | None:
-    """(sessions inside the window, days since the last improvement there).
+    """``(сессий внутри окна, дней с последнего улучшения в нём)``.
 
-    The all-time PR date is the wrong stall clock after a break: the athlete
-    sits legitimately below a peak set months ago while climbing back session
-    by session, and «ПР 110 дн. назад» would flag every lift the day the
-    preconditions turn green. Progress is therefore measured INSIDE the
-    active window — the first session there is the baseline, each later
-    session that beats the best-so-far is an improvement, and the clock runs
-    from the last one."""
+    Дата ПР за всё время — неверные часы застоя после перерыва: атлет законно
+    сидит ниже пика, поставленного месяцы назад, и возвращается сессия за сессией,
+    а «ПР 110 дн. назад» помечало бы каждое движение в день, когда предусловия
+    позеленели. Поэтому прогресс измеряется ВНУТРИ активного окна: первая сессия
+    там — база, каждая следующая, побившая лучшее на тот момент, — улучшение, и
+    часы идут от последнего.
+    """
     inside = [(when, sets) for when, sets in sessions if window_start <= when <= today]
     if not inside:
         return None
@@ -525,16 +553,17 @@ def stall_report(
     since: date | None = None,
     group_targets: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Preconditions first: a plateau only counts as «ресурс исчерпан» when the
-    athlete actually trained enough, ate enough and slept the volume in. If the
-    preconditions are red, the flag is withheld ON PURPOSE — the model must
-    explain the plateau through attendance/food, not through a «потолок».
+    """Сначала предусловия: плато считается «ресурс исчерпан», только если атлет
+    реально достаточно тренировался, ел и спал объём. При красных предусловиях
+    флаг НАМЕРЕННО не ставится: модель обязана объяснять плато явкой и питанием, а
+    не «потолком».
 
-    `since` is the start of the current block (phase start, or the first
-    session after a ≥14-day break): the window never reaches across it, so a
-    vacation cannot dilute the frequency. Volume thresholds are the lower
-    bounds of the phase's own per-group targets when it names them — a quad
-    target of 8–10 must not be judged against a flat 10."""
+    ``since`` — старт текущего блока (начало фазы или первая сессия после перерыва
+    ≥14 дней): окно через него не переходит, и отпуск не разбавляет частоту. Пороги
+    объёма — нижние границы целей по группам самой фазы, если она их называет: цель
+    квадрицепса 8–10 нельзя судить по плоским 10. Возвращает факты окна, причины и
+    список застоявшихся упражнений. Зовёт ``prompt_builder._render_stall``.
+    """
     window_start = today - timedelta(days=STALL_WINDOW_DAYS - 1)
     if since is not None and window_start < since <= today:
         window_start = since
@@ -574,11 +603,11 @@ def stall_report(
         low, high = _rate_bounds(rate_range, phase)
         corridor = f"{low:+.2f}…{high:+.2f}"
         if low > 0.0:
-            # Gaining: only a FALLING weight says the surplus is not there.
+            # Набор: только ПАДАЮЩИЙ вес говорит, что профицита нет.
             if trend < low - RATE_TOLERANCE:
                 reasons.append(f"вес падает ({trend:+.2f} кг/нед при коридоре {corridor})")
         elif not (low - RATE_TOLERANCE <= trend <= high + RATE_TOLERANCE):
-            # Cutting or holding: the weight has to stay inside its corridor.
+            # Срез или удержание: вес обязан оставаться в своём коридоре.
             reasons.append(
                 f"вес вне целевого темпа фазы ({trend:+.2f} кг/нед при коридоре {corridor})"
             )
@@ -619,15 +648,16 @@ def stall_report(
 
 
 # --------------------------------------------------------------------------- #
-# Attendance by calendar week (the gate's «явка» and the split switch)
+# Явка по календарным неделям (гейт программы и переключатель сплита)
 # --------------------------------------------------------------------------- #
 def weekly_attendance(
     workouts: list[dict[str, Any]], today: date, weeks: int = 4
 ) -> list[dict[str, Any]]:
-    """Training days per calendar week (Mon–Sun): the last `weeks` closed
-    weeks plus the current one, oldest first. Pure calendar facts — events
-    that explain an empty week stay in the chronicle, no number here reads
-    them."""
+    """Тренировочные дни по календарным неделям (пн–вс): последние ``weeks``
+    закрытых недель плюс текущая, от старых к новым. Чистые календарные факты:
+    события, объясняющие пустую неделю, остаются в хронике, ни одно число здесь их
+    не читает. Зовёт ``prompt_builder._render_attendance``.
+    """
     training_days = {when for when in (_workout_date(w) for w in workouts) if when is not None}
     monday = today - timedelta(days=today.weekday())
     rows: list[dict[str, Any]] = []
@@ -646,9 +676,10 @@ def weekly_attendance(
 
 
 def attendance_streak(rows: list[dict[str, Any]], minimum: int) -> int:
-    """Consecutive CLOSED weeks, counted back from the latest closed one, with
-    at least `minimum` sessions each. The running week is not counted: a
-    Wednesday cannot fail a week that still has four days."""
+    """Подряд идущие ЗАКРЫТЫЕ недели, считая назад от последней закрытой, с не менее
+    чем ``minimum`` сессиями в каждой. Текущая неделя не считается: среда не может
+    провалить неделю, у которой ещё четыре дня впереди.
+    """
     streak = 0
     for row in reversed(rows):
         if not row["closed"]:
@@ -660,45 +691,48 @@ def attendance_streak(rows: list[dict[str, Any]], minimum: int) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# Return-from-break ramp steps (4.3)
+# Ступени возврата после перерыва (4.3)
 # --------------------------------------------------------------------------- #
 def _top_weight_diffs(sessions: list[tuple[date, list[dict[str, Any]]]]) -> list[float]:
+    """Ненулевые изменения веса лучшего подхода между соседними сессиями."""
     tops = [_session_top(sets, inverted=False)["weight"] for _, sets in sessions]
     return [round(abs(b - a), 2) for a, b in pairwise(tops) if abs(b - a) > 0.01]
 
 
 def _weight_granularity(sessions: list[tuple[date, list[dict[str, Any]]]]) -> float:
-    """The machine's plate granularity: the smallest weight change ever made on
-    it. Ramp rungs must be multiples of it — a 7.5-kg rung on a 5-kg-plate
-    machine cannot be loaded."""
+    """Шаг стека тренажёра: наименьшее изменение веса, которое на нём когда-либо
+    делали. Ступени обязаны быть ему кратны: ступень 7.5 кг на тренажёре с блинами
+    по 5 кг не собрать.
+    """
     diffs = _top_weight_diffs(sessions)
     if not diffs:
         return 2.5
     return max(0.5, min(diffs))
 
 
-# Ramp-ladder rules. Rungs are the machine's own plate step, even where that
-# step is coarser than the programme's «≤10%» (a 10-kg plate on an 80-kg leg
-# press is a real rung — growing by reps between rungs is the model's call).
-# The one rebuild: a LONE rung above this jump is not a ladder but a history
-# artefact (the athlete once skipped plates), and equal thirds serve better.
-# More rungs than the cap are compressed into equal steps: the ladder is a
-# hint for the next few weeks, not a session-by-session script.
+# Правила лестницы. Ступень — шаг стека самого тренажёра, даже там, где он
+# грубее программных «≤10%» (блин 10 кг на жиме ногами в 80 кг — настоящая
+# ступень; расти повторами между ступенями — решение модели). Единственная
+# пересборка: ОДИНОЧНАЯ ступень выше этого прыжка — не лестница, а артефакт
+# истории (атлет однажды перескочил блины), и равные трети служат лучше. Ступеней
+# больше потолка сжимаются в равные шаги: лестница — подсказка на ближайшие
+# недели, а не сценарий по сессиям.
 _RAMP_LONE_JUMP = 0.20
 _RAMP_MAX_RUNGS = 6
-# The return ladder is a fact about the current block: once the comeback is
-# older than this, an unregained weight is ordinary history, not a ramp.
+# Лестница возврата — факт текущего блока: когда возврат старше этого, не
+# возвращённый вес — обычная история, а не ступени.
 RETURN_LADDER_DAYS = 56
 
 
 def _round_half(value: float) -> float:
+    """Округление до 0.5."""
     return round(value * 2) / 2
 
 
 def _equal_steps(current: float, peak: float, count: int, granularity: float = 2.5) -> list[float]:
-    """Fallback ladder: equal fractions from current to peak (works in both
-    directions), rounded to loadable plates, strictly monotonic, ending at the
-    peak."""
+    """Запасная лестница: равные доли от текущего к пику (в обе стороны), округлённые
+    до собираемых блинов, строго монотонные, с пиком в конце.
+    """
     quantum = min(max(granularity, 0.5), 2.5)
     steps: list[float] = []
     for index in range(1, count + 1):
@@ -715,7 +749,7 @@ def _equal_steps(current: float, peak: float, count: int, granularity: float = 2
 
 
 def _lone_jump(current: float, steps: list[float], inverted: bool) -> bool:
-    """A single rung that jumps more than _RAMP_LONE_JUMP of the current weight."""
+    """Единственная ступень, прыгающая больше ``_RAMP_LONE_JUMP`` от текущего веса."""
     if len(steps) != 1 or current <= 0:
         return False
     jump = (current - steps[0]) / current if inverted else (steps[0] - current) / current
@@ -725,10 +759,11 @@ def _lone_jump(current: float, steps: list[float], inverted: bool) -> bool:
 def last_break(
     workouts: list[dict[str, Any]], min_days: int = BREAK_DAYS
 ) -> tuple[date, date] | None:
-    """(last session before, first session after) the most recent gap of at
-    least `min_days` between two LOGGED sessions — the break the athlete has
-    already come back from. A break still running (no session after it yet)
-    is `coach_state.is_return_from_break` territory, not reported here."""
+    """``(последняя сессия до, первая после)`` самого свежего разрыва не меньше
+    ``min_days`` между двумя ЗАПИСАННЫМИ сессиями — перерыв, из которого атлет уже
+    вернулся. Перерыв, который ещё идёт (сессии после нет), — территория
+    ``coach_state.is_return_from_break``, здесь не сообщается.
+    """
     dates = sorted({when for when in (_workout_date(w) for w in workouts) if when is not None})
     found: tuple[date, date] | None = None
     for previous, current in pairwise(dates):
@@ -742,17 +777,17 @@ def comeback_ramp_steps(
     catalog: list[dict[str, Any]],
     today: date,
 ) -> list[dict[str, Any]]:
-    """For each main movement still below its PRE-BREAK working weight: return
-    steps current → pre-break working, one machine step at a time.
+    """Для каждого базового движения, которое всё ещё ниже ДОПЕРЕРЫВНОГО рабочего:
+    ступени от текущего к доперерывному, по одному шагу стека.
 
-    The target is what the athlete actually lifted before the pause, not the
-    all-time peak: a peak set months earlier at another frequency says nothing
-    about today's reserve, and the programme brings peaks back by ordinary
-    progression later. The ladder exists only while there is something to
-    regain — a movement back at its pre-break weight prints nothing — and only
-    for a young comeback (RETURN_LADDER_DAYS). On the comeback day itself the
-    block stays empty: the pre-break weights are printed as the reference and
-    the model chooses the entry."""
+    Цель — то, что атлет реально поднимал перед паузой, а не пик за всё время: пик
+    месяцы назад при другой частоте ничего не говорит о сегодняшнем запасе, а к
+    пикам программа возвращает обычной прогрессией позже. Лестница существует,
+    только пока есть что возвращать (движение на доперерывном весе ничего не
+    печатает) и только для молодого возврата (``RETURN_LADDER_DAYS``). В сам день
+    возврата блок пуст: доперерывные веса печатаются как ориентир, вход выбирает
+    модель. Зовёт ``prompt_builder._build_user_prompt``.
+    """
     names = {item["id"]: item["name"] for item in catalog}
     gap = last_break(workouts)
     if gap is None:
@@ -779,7 +814,7 @@ def comeback_ramp_steps(
         if remaining <= 0.01:
             continue
 
-        # Rung = the machine's own plate granularity (the stack step).
+        # Ступень — шаг стека самого тренажёра.
         granularity = _weight_granularity(sessions)
         direction = -1 if inverted else 1
         steps: list[float] = []
@@ -816,14 +851,16 @@ def pre_break_working_weights(
     *,
     until: date | None = None,
 ) -> list[dict[str, Any]]:
-    """Each exercise's working weight as of the last session before the break.
+    """Рабочий вес каждого упражнения на последней сессии перед перерывом.
 
-    Pure data, no coaching opinion: HOW far below these the comeback session
-    should sit is the model's call (it sees the lay-off length, the athlete's
-    profile and the recovery context). The server only states what the athlete
-    was actually lifting, and — via the validator — that a comeback session is
-    not the place for a new PR. `until` looks at the history as it stood on
-    that day (the last pre-break session) for a comeback already under way."""
+    Чистые данные без тренерского мнения: НАСКОЛЬКО ниже них стартовать возвратную
+    сессию, решает модель (она видит длину паузы, профиль и контекст
+    восстановления). Сервер лишь называет, что атлет реально поднимал, и через
+    валидатор держит, что возвратная сессия не место для нового ПР. ``until``
+    смотрит на историю по состоянию на тот день (последняя доперерывная сессия)
+    для уже идущего возврата. Зовут ``prompt_builder`` и
+    ``plan_validator._comeback_ceilings``.
+    """
     names = {item["id"]: item["name"] for item in catalog}
     items: list[dict[str, Any]] = []
     for exercise_id, all_sessions in _iter_exercise_sessions(workouts).items():
@@ -852,13 +889,16 @@ def pre_break_working_weights(
 
 
 # --------------------------------------------------------------------------- #
-# Body-weight / waist trends + nutrition decision matrix (P3)
+# Тренды веса и талии и матрица решений по питанию (P3)
 # --------------------------------------------------------------------------- #
 def _measurement_points(
     entries: list[dict[str, Any]], value_key: str, low: float, high: float
 ) -> list[tuple[date, float]]:
+    """``[(дата, значение)]`` из записей замеров от старых к новым; битые даты и
+    значения вне правдоподобных границ пропущены.
+    """
     points: list[tuple[date, float]] = []
-    for entry in entries:  # oldest-first
+    for entry in entries:  # от старых к новым
         try:
             when = date.fromisoformat(str(entry.get("entry_date", "")))
             value = float(entry.get(value_key, 0))
@@ -870,28 +910,31 @@ def _measurement_points(
 
 
 def weight_points(body_weights: list[dict[str, Any]]) -> list[tuple[date, float]]:
+    """Правдоподобные взвешивания как точки ``(дата, кг)``. Зовут промпт, сигналы и rules."""
     return _measurement_points(
         body_weights, "weight", MIN_PLAUSIBLE_BODY_WEIGHT, MAX_PLAUSIBLE_BODY_WEIGHT
     )
 
 
 def waist_points(waists: list[dict[str, Any]]) -> list[tuple[date, float]]:
+    """Правдоподобные замеры талии как точки ``(дата, см)``. Зовут промпт, сигналы и rules."""
     return _measurement_points(waists, "waist", MIN_PLAUSIBLE_WAIST_CM, MAX_PLAUSIBLE_WAIST_CM)
 
 
 def moving_average(
     points: list[tuple[date, float]], on_day: date, window_days: int = 7
 ) -> float | None:
+    """Среднее значений за ``window_days`` дней до ``on_day`` включительно или ``None``."""
     window = [value for when, value in points if 0 <= (on_day - when).days < window_days]
     if not window:
         return None
     return sum(window) / len(window)
 
 
-# Trend validity: a weekly rate extrapolated across a measurement hole (a
-# vacation) is garbage — the matrix would cut calories off holiday water on
-# day one of a phase. A valid trend needs points inside a ~3-week window, no
-# adjacent gap above two weeks, and only measurements of the CURRENT phase.
+# Валидность тренда: недельный темп, экстраполированный через дыру в замерах
+# (отпуск), — мусор: матрица срезала бы калории по отпускной воде в первый же
+# день фазы. Валидному тренду нужны точки внутри окна ~3 недели, без соседнего
+# разрыва больше двух недель, и только замеры ТЕКУЩЕЙ фазы.
 TREND_WINDOW_DAYS = 21
 TREND_MAX_GAP_DAYS = 14
 TREND_MIN_SPAN_DAYS = 5
@@ -902,9 +945,11 @@ def weight_trend_per_week(
     today: date,
     since: date | None = None,
 ) -> float | None:
-    """Weekly rate over the recent window, or None when the data cannot
-    honestly support one (too few points, a hole between measurements, or the
-    points straddle a phase boundary — pass `since` = phase start)."""
+    """Недельный темп по недавнему окну или ``None``, когда данные честно его не
+    поддерживают: мало точек, дыра между замерами или точки по разные стороны
+    границы фазы (передай ``since`` = старт фазы). Зовут ``nutrition_matrix`` и
+    ``coach_signals``.
+    """
     window = [
         p
         for p in points
@@ -918,9 +963,9 @@ def weight_trend_per_week(
     span_days = (window[-1][0] - window[0][0]).days
     if span_days < TREND_MIN_SPAN_DAYS:
         return None
-    # Least-squares slope over EVERY point in the window, not the two end
-    # points: with sparse weigh-ins one heavy morning at either end would
-    # otherwise define the whole week. With two points this is the same line.
+    # МНК-наклон по ВСЕМ точкам окна, а не по двум крайним: при редких
+    # взвешиваниях одно тяжёлое утро с любого края иначе задавало бы всю
+    # неделю. С двумя точками это та же прямая.
     xs = [(when - window[0][0]).days for when, _ in window]
     ys = [value for _, value in window]
     mean_x = sum(xs) / len(xs)
@@ -932,16 +977,18 @@ def weight_trend_per_week(
     return slope * 7
 
 
-# The athlete's protocol decides by the 7-day mean; fewer points than this in
-# a week make that mean a coin toss, and the prompt says so out loud.
+# Протокол атлета решает по 7-дневной средней; точек в неделю меньше этого
+# делают среднюю подбрасыванием монеты, и промпт говорит об этом вслух.
 WEEKLY_MEAN_MIN_POINTS = 4
 
 
 def weigh_ins_in_window(points: list[tuple[date, float]], today: date, days: int = 7) -> int:
+    """Сколько взвешиваний за последние ``days`` дней до ``today`` включительно."""
     return sum(1 for when, _ in points if 0 <= (today - when).days < days)
 
 
 def _is_fresh(points: list[tuple[date, float]], today: date) -> bool:
+    """Есть ли замер не старше ``STALE_MEASUREMENT_DAYS``."""
     return bool(points) and (today - points[-1][0]).days <= STALE_MEASUREMENT_DAYS
 
 
@@ -952,11 +999,15 @@ def nutrition_matrix(
     waists: list[dict[str, Any]],
     today: date,
 ) -> dict[str, Any]:
-    """Server-side branch of the (weight trend × waist trend) matrix. The model
-    receives the chosen branch as data and words the advice; it never has to
-    re-derive the trends. Calorie branches fire ONLY on a valid in-phase trend
-    (see weight_trend_per_week) — an invalid one yields an explicit «недостаточно
-    данных» branch instead of a number extrapolated across a vacation hole."""
+    """Серверная ветка матрицы «тренд веса × тренд талии». Модель получает
+    выбранную ветку как данные и формулирует совет; тренды ей заново выводить не
+    надо. Калорийные ветки срабатывают ТОЛЬКО по валидному тренду внутри фазы (см.
+    ``weight_trend_per_week``): невалидный даёт явную ветку «недостаточно данных»,
+    а не число, экстраполированное через дыру отпуска.
+
+    Возвращает ``{"lines": строки для промпта, "goal": цель фазы, если достигнута,
+    "trend_per_week": тренд}``. Зовёт ``prompt_builder`` (план и отчёт).
+    """
     phase = params.get("phase", "cut_recomp")
     phase_start: date | None = None
     started_raw = state.get("phase_started")
@@ -966,8 +1017,8 @@ def nutrition_matrix(
         except ValueError:
             phase_start = None
 
-    # Only measurements of the CURRENT phase feed the matrix — a phase switch
-    # resets the base (a measurement on the start day counts).
+    # В матрицу идут только замеры ТЕКУЩЕЙ фазы: смена фазы сбрасывает базу
+    # (замер в день старта считается).
     weights = [p for p in weight_points(body_weights) if phase_start is None or p[0] >= phase_start]
     waist = [p for p in waist_points(waists) if phase_start is None or p[0] >= phase_start]
 
@@ -988,7 +1039,7 @@ def nutrition_matrix(
 
     trend = weight_trend_per_week(weights, today, since=phase_start)
 
-    # Weight: current 7-day MA vs the MA two weeks ago → «стоит/движется».
+    # Вес: текущая 7-дневная средняя против средней две недели назад → «стоит / движется».
     ma_now = moving_average(weights, today)
     ma_before = moving_average(weights, today - timedelta(days=14))
     stalled_2w = (
@@ -998,8 +1049,8 @@ def nutrition_matrix(
         and abs(ma_now - ma_before) < 0.25
     )
 
-    # Waist: the last two IN-PHASE measurements decide the direction (noise
-    # gate 0.3 см) — and only when they sit close enough to compare.
+    # Талия: направление решают два последних замера ВНУТРИ ФАЗЫ (порог шума
+    # 0.3 см) — и только если они достаточно близко, чтобы их сравнивать.
     waist_pair_valid = len(waist) >= 2 and (waist[-1][0] - waist[-2][0]).days <= TREND_MAX_GAP_DAYS
     waist_delta = waist[-1][1] - waist[-2][1] if waist_pair_valid else None
     waist_down = waist_delta is not None and waist_delta <= -0.3
@@ -1007,9 +1058,9 @@ def nutrition_matrix(
     waist_limit = state.get("waist_limit_cm")
     last_waist = waist[-1][1] if waist else None
 
-    # The branches key on the phase's weekly weight CORRIDOR, never on its
-    # name: «Ф0 · возврат» is a cut_recomp that asks to HOLD weight, and a
-    # matrix reading the name would cut calories for the correct behaviour.
+    # Ветки привязаны к недельному КОРИДОРУ веса фазы, никогда к её имени:
+    # «Ф0 · возврат» — это cut_recomp, который просит ДЕРЖАТЬ вес, и матрица,
+    # читающая имя, срезала бы калории за правильное поведение.
     rate_low, rate_high = _rate_bounds(params.get("rate_kg_per_week"), phase)
     holding = rate_low <= 0.0 <= rate_high
     cutting = rate_high < 0.0
@@ -1022,7 +1073,7 @@ def nutrition_matrix(
             "из прошлой фазы) — попроси сделать ещё 1–2 замера в ближайшие дни, "
             "калории пока не корректируй"
         )
-        # Phase goals: reached → the model SUGGESTS the switch, the athlete decides.
+        # Цели фазы: достигнута → модель ПРЕДЛАГАЕТ смену, решает атлет.
         target = params.get("target_weight_kg")
         if cutting and target and ma_now is not None and ma_now <= float(target):
             goal = (
@@ -1036,8 +1087,8 @@ def nutrition_matrix(
                 "предложи мини-кат/смену фазы; фазу переключает атлет"
             )
 
-        # On a gain the waist speaks first: a hard limit or a creeping waist
-        # decides the calories regardless of what the scale says.
+        # На наборе первой говорит талия: жёсткий лимит или ползущая талия
+        # решают калории независимо от того, что показывают весы.
         weight_line_due = True
         if gaining and fresh_waist:
             if waist_limit and last_waist is not None and last_waist >= float(waist_limit):
@@ -1099,13 +1150,14 @@ def _rate_line(
     cutting: bool,
     gaining: bool,
 ) -> str:
-    """The weight-trend branch against the phase corridor.
+    """Ветка тренда веса относительно коридора фазы.
 
-    A calorie change needs the deviation confirmed by two independent
-    readings — the 3-week slope AND the difference of the 7-day means two
-    weeks apart — which is what «две недели подряд» means without the server
-    keeping a history of its own verdicts. Unconfirmed, the line names the
-    deviation and asks for daily weigh-ins instead of a number."""
+    Смена калорий требует отклонения, подтверждённого двумя независимыми
+    показаниями — наклоном за 3 недели И разницей 7-дневных средних с интервалом в
+    две недели, — это и значит «две недели подряд» без хранения сервером истории
+    своих вердиктов. Без подтверждения строка называет отклонение и просит
+    взвешиваться ежедневно вместо числа.
+    """
     if rate_low - RATE_TOLERANCE <= trend <= rate_high + RATE_TOLERANCE:
         return f"тренд веса {trend:+.2f} кг/нед — в коридоре фазы ({corridor}), калории не трогай"
     above = trend > rate_high + RATE_TOLERANCE
@@ -1130,7 +1182,7 @@ def _rate_line(
 
 
 # --------------------------------------------------------------------------- #
-# Phase summary (what a preparation phase actually delivered)
+# Итоги фазы (что фаза подготовки реально дала)
 # --------------------------------------------------------------------------- #
 def phase_summary(
     workouts: list[dict[str, Any]],
@@ -1142,8 +1194,11 @@ def phase_summary(
     started: date,
     ended: date,
 ) -> dict[str, Any]:
-    """Everything is derived from history by date range, so past phases can be
-    summarized at any time — the phase journal only stores the boundaries."""
+    """Итоги фазы за ``[started, ended]``: тренировки и частота, вес и талия от
+    начала к концу, ПР за фазу, дисциплина. Всё выводится из истории по датам,
+    поэтому прошлые фазы можно подвести в любой момент — журнал фаз хранит только
+    границы. Зовёт Coach MCP (``coach_phase_summary``).
+    """
     days = max(1, (ended - started).days + 1)
     weeks = days / 7
 
@@ -1208,23 +1263,27 @@ def phase_summary(
 
 
 # --------------------------------------------------------------------------- #
-# Plan-adherence history (30-day discipline aggregate)
+# Дисциплина «факт против плана» (сводка за 30 дней)
 # --------------------------------------------------------------------------- #
 def adherence_stats(
     workouts: list[dict[str, Any]], today: date, days: int = 30
 ) -> dict[str, Any] | None:
-    """Aggregate fact-vs-plan over the trailing window: % of planned sets done
-    (done sets are capped by the plan so extras never inflate past 100%), how
-    many sessions followed a plan, and which exercises get skipped outright.
-    The coach uses it to make plans realistic, not to lecture."""
+    """Сводка «факт против плана» за скользящее окно: процент выполненных плановых
+    подходов (выполненные ограничены планом, лишние не поднимают выше 100%), сколько
+    сессий шли по плану и какие упражнения пропускаются целиком. Коуч использует
+    это, чтобы делать планы реалистичными, а не читать нотации. Зовут
+    ``prompt_builder`` и ``phase_summary``.
+    """
     return adherence_between(workouts, today - timedelta(days=days - 1), today)
 
 
 def adherence_between(
     workouts: list[dict[str, Any]], start: date, end: date
 ) -> dict[str, Any] | None:
-    """Fact-vs-plan aggregate over an explicit [start, end] date range (used by
-    the 30-day discipline window, phase summaries and the week_done signal)."""
+    """Сводка «факт против плана» за явный отрезок ``[start, end]``: её зовут
+    30-дневное окно дисциплины, итоги фазы и сигнал week_done. ``None``, если ни
+    одна тренировка отрезка не шла по плану.
+    """
     days = max(1, (end - start).days + 1)
     planned_total = 0
     done_total = 0
@@ -1276,7 +1335,7 @@ def adherence_between(
 
 
 # --------------------------------------------------------------------------- #
-# Semantic-validator support (P5)
+# Для семантического валидатора (P5)
 # --------------------------------------------------------------------------- #
 def recent_weight_range(
     workouts: list[dict[str, Any]],
@@ -1284,7 +1343,7 @@ def recent_weight_range(
     today: date,
     days: int = 56,
 ) -> tuple[float, float] | None:
-    """Working-weight range of the exercise over the trailing 8 weeks."""
+    """Диапазон рабочих весов упражнения за последние 8 недель или ``None``."""
     canonical = canonical_exercise_id(exercise_id)
     weights: list[float] = []
     for workout in workouts:

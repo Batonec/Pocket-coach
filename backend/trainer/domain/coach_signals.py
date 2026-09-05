@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Coach signals for the История banner (see docs/COACH_SIGNALS.md).
+"""Сигналы коуча для баннера «История» (см. docs/COACH_SIGNALS.md).
 
-The server computes the full, already-collapsed, snooze-filtered, sorted list
-on the fly from SQLite + coach_state and the cached recommendation status. It
-never invokes the LLM. The client renders the first one or two items and never
-invents texts or compares dates itself.
+Сервер считает полный список — уже схлопнутый, отфильтрованный по отсрочкам и
+отсортированный — на лету из SQLite, coach_state и статуса кэшированного совета.
+Модель здесь не вызывается никогда. Клиент рисует первые один-два пункта и сам
+не выдумывает текстов и не сравнивает дат.
 
-Taxonomy: the «замеры» family (weight+waist freshness collapsed, the
-building-phase dead-trend nudge, plus the hard waist limit), the
-«тренировки» family (return_soon → return_mode escalation),
-deload_week, weekly_report_ready and the positive week_done. Every signal dies
-on its own (state change, escalation, TTL); dismissal keys are per-episode
-instance keys, so «скрыть навсегда» does not exist.
+Семейства: «замеры» (свежесть веса и талии схлопнута в один баннер, подсказка
+про мёртвый тренд в строительной фазе, жёсткий лимит талии), «тренировки»
+(эскалация return_soon → return_mode), плановая разгрузка, готовый недельный
+отчёт и позитивный week_done. Каждый сигнал гаснет сам (смена состояния,
+эскалация, TTL); ключи дисмисса — ключи эпизода, поэтому «скрыть навсегда» не
+существует. Зовёт server.py: ``GET /api/coach/signals`` и дисмисс.
 """
 
 from __future__ import annotations
@@ -23,20 +23,20 @@ from typing import Any
 from trainer.data import coach_prompts
 from trainer.domain import coach_features, coach_state
 
-# Stage thresholds for the measurements family. Due starts on day 10, not 7:
-# with a weekly cadence a day-7 start would light the banner every single week
-# even for a disciplined athlete — guaranteed banner blindness.
+# Пороги семейства «замеры». «Пора» начинается с 10-го дня, а не с 7-го: при
+# недельном ритме старт на 7-м дне зажигал бы баннер каждую неделю даже
+# дисциплинированному атлету — гарантированная слепота к баннерам.
 MEASUREMENT_DUE_DAYS = 10
-MEASUREMENT_OVERDUE_DAYS = coach_features.STALE_MEASUREMENT_DAYS  # 14: matrix cut-off
+MEASUREMENT_OVERDUE_DAYS = coach_features.STALE_MEASUREMENT_DAYS  # 14: порог матрицы питания
 
-# Building phases steer calories by the in-phase weight trend, and a dead trend
-# is a cost TODAY even while the 14-day freshness gate is still green. Nudge
-# from day 5: an earlier weigh-in cannot revive the trend anyway (the window
-# needs a ≥5-day span between points), so day 5 is the first day a new point
-# actually helps. From day 10 the due/overdue ladder takes over.
+# Строительные фазы ведут калории по тренду веса внутри фазы, и мёртвый тренд
+# стоит денег УЖЕ СЕГОДНЯ, даже пока 14-дневная свежесть ещё зелёная. Подсказка
+# с 5-го дня: более ранний замер тренд всё равно не оживит (окну нужен разброс
+# точек ≥5 дней), так что 5-й день — первый, когда новая точка реально помогает.
+# С 10-го дня перехватывает лестница «пора / просрочено».
 TREND_NUDGE_FROM_DAYS = 5
 
-RETURN_SOON_FROM_DAYS = 11  # 1–3 days before the return-protocol threshold
+RETURN_SOON_FROM_DAYS = 11  # за 1–3 дня до порога протокола возврата
 RETURN_BREAK_DAYS = coach_state.BREAK_DAYS  # 14
 
 REPORT_FRESH_HOURS = 48
@@ -46,13 +46,13 @@ WEEK_DONE_MIN_PCT = 90
 # фазе. Реальный порог берётся из sessions_per_week текущей фазы — поздравлять
 # с закрытой неделей на половине плана значит обесценить сам баннер.
 WEEK_DONE_MIN_SESSIONS = 2
-WEEK_DONE_SHOW_DAYS = 2  # Monday–Tuesday after the closed week
+WEEK_DONE_SHOW_DAYS = 2  # понедельник и вторник после закрытой недели
 
 SEVERITY_RANK = {"critical": 0, "warn": 1, "accent": 2, "info": 3, "positive": 4}
 FAMILY_RANK = {"measurements": 0, "trainings": 1, "deload": 2, "report": 3, "milestone": 4}
 
-# Default snooze per severity when the dismiss request names no hours.
-# None = episodic: hidden until the instance_key changes (state moved on).
+# Отсрочка по умолчанию для severity, когда дисмисс не назвал часов.
+# None = эпизодическая: скрыт, пока не сменится instance_key (состояние ушло).
 SNOOZE_DEFAULT_HOURS: dict[str, int | None] = {
     "info": 72,
     "warn": 48,
@@ -69,6 +69,7 @@ _COPY = coach_prompts.fragments("signals", directory=coach_prompts.COPY_DIR)
 
 
 def _text(name: str, **values: str) -> str:
+    """Текст баннера из ``resources/signals.md`` с подставленными слотами."""
     return coach_prompts.render(_COPY[name], **values)
 
 
@@ -86,6 +87,10 @@ def _signal(
     note: str | None = None,
     glyph: str | None = None,
 ) -> dict[str, Any]:
+    """Собрать сигнал в форме, которую отдаёт API: id, семейство, ключ эпизода
+    (id плюс факт, из которого он состоит), severity, заголовок и тело, действие,
+    глиф и можно ли отложить.
+    """
     action = None
     if action_type:
         action = {"type": action_type, "label": action_label or ""}
@@ -98,10 +103,10 @@ def _signal(
         "severity": severity,
         "title": title,
         "body": body,
-        # Optional third line (italic, muted in the mockups) — e.g. the trend hint.
+        # Необязательная третья строка (в макетах курсив, приглушённая): подсказка о тренде.
         "note": note,
-        # Glyph name: scale | nutrition | tape | back | wave | doc | check.
-        # The client maps unknown names to a neutral glyph.
+        # Имя глифа: scale | nutrition | tape | back | wave | doc | check.
+        # Незнакомое имя клиент рисует нейтральным глифом.
         "glyph": glyph,
         "action": action,
         "snoozable": severity != "critical",
@@ -125,27 +130,29 @@ _RU_MONTHS_GEN = (
 
 
 def _ru_date(day: date) -> str:
+    """«5 сентября»: число и месяц в родительном падеже для текстов баннеров."""
     return f"{day.day} {_RU_MONTHS_GEN[day.month - 1]}"
 
 
 def _plural_days(days: int) -> str:
+    """«N дн.» для тела баннера."""
     return f"{days} дн."
 
 
 # --------------------------------------------------------------------------- #
-# Families
+# Семейства сигналов
 # --------------------------------------------------------------------------- #
 def _waist_limit_signal(
     waists: list[dict[str, Any]],
     state: dict[str, Any],
     today: date,
 ) -> dict[str, Any] | None:
-    """Critical hard-limit episode: two fresh in-phase readings at/above it.
+    """Критический эпизод жёсткого лимита талии: два свежих замера текущей фазы
+    на лимите или выше.
 
-    A single noisy tape reading must not change the athlete's phase. Restricting
-    the pair to the current phase and requiring the latest point to be fresh
-    also guarantees a deterministic auto-exit after a phase change, a lower
-    reading, or measurement staleness.
+    Один шумный замер лентой не должен менять атлету фазу. Пара только из текущей
+    фазы и свежесть последней точки заодно гарантируют детерминированный выход:
+    после смены фазы, замера ниже лимита или устаревания замеров сигнал гаснет сам.
     """
     if state.get("phase") != "lean_bulk":
         return None
@@ -199,10 +206,18 @@ def _measurements_signal(
     state: dict[str, Any],
     today: date,
 ) -> dict[str, Any] | None:
+    """Семейство «замеры»: один баннер о свежести веса и талии.
+
+    Лестница: просрочено (warn) → пора (info, с числом дней до просрочки) →
+    в строительных фазах подсказка про мёртвый тренд веса (info), когда свежесть
+    ещё в норме, но тренд, по которому матрица питания ведёт калории, посчитать
+    нельзя, и сегодня первый день, когда новый замер его оживит.
+    """
     weight_points = coach_features.weight_points(body_weights)
     waist_points = coach_features.waist_points(waists)
 
     def age(points: list[tuple[date, float]]) -> int | None:
+        """Дней от последнего замера до ``today``; без замеров — ``None``."""
         return (today - points[-1][0]).days if points else None
 
     weight_age, waist_age = age(weight_points), age(waist_points)
@@ -229,7 +244,7 @@ def _measurements_signal(
         except ValueError:
             phase_start = None
 
-    # Mockup titles name exactly what is stale — «Обнови талию — вес свежий».
+    # Заголовки из макетов называют ровно то, что устарело: «Обнови талию — вес свежий».
     if set(stale) == {"вес", "талия"}:
         due_title = _text("measurements_due_title_both")
     elif stale == ["талия"]:
@@ -259,8 +274,8 @@ def _measurements_signal(
         worst = max(d for d in (weight_age, waist_age) if d is not None)
         days_left = max(1, MEASUREMENT_OVERDUE_DAYS + 1 - worst)
         body = _text("measurements_due_body", days=_plural_days(days_left))
-        # When fresh-ish data exists but the in-phase trend is still starving,
-        # say why one more point matters instead of a separate nagging banner.
+        # Данные почти свежие, а тренд внутри фазы всё ещё голодает: объясняем,
+        # зачем ещё одна точка, вместо отдельного зудящего баннера.
         note = None
         if coach_features.weight_trend_per_week(weight_points, today, since=phase_start) is None:
             note = _text("measurements_due_note")
@@ -278,9 +293,9 @@ def _measurements_signal(
             glyph="scale",
         )
 
-    # Building phases only: the freshness gate is still green, but the in-phase
-    # weight trend — the signal the calorie matrix actually steers by — is not
-    # computable, and today is the first day a new weigh-in can revive it.
+    # Только строительные фазы: свежесть ещё зелёная, но тренд веса внутри фазы —
+    # то, по чему матрица калорий реально рулит, — посчитать нельзя, и сегодня
+    # первый день, когда новое взвешивание его оживит.
     phase = state.get("phase")
     if (
         phase in ("cut_recomp", "lean_bulk")
@@ -305,7 +320,9 @@ def _measurements_signal(
 
 
 def _return_plan_state(recommendation: dict[str, Any] | None) -> str:
-    """Map the cached recommendation row to the return banner's UI state."""
+    """Состояние кэшированного совета глазами баннера возврата: нет, генерируется,
+    упал, готов и построен для возврата, или готов, но устарел.
+    """
     if not recommendation:
         return "none"
     status = recommendation.get("status")
@@ -325,6 +342,11 @@ def _trainings_signal(
     today: date,
     recommendation: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    """Семейство «тренировки»: за 1–3 дня до порога возврата — предупреждение с
+    дедлайном (return_soon), с 14-го дня — режим возврата (return_mode) с действием
+    по состоянию плана: открыть, обновить, создать или повторить. Пока план
+    генерируется, баннер молчит: «Сегодня» уже показывает это.
+    """
     dates = sorted(
         {
             when
@@ -352,8 +374,8 @@ def _trainings_signal(
         )
     if days >= RETURN_BREAK_DAYS:
         plan_state = _return_plan_state(recommendation)
-        # Today already shows the generation state. A second banner on History
-        # would only duplicate it and imply that an actionable plan exists.
+        # «Сегодня» уже показывает состояние генерации. Второй баннер в «Истории»
+        # только дублировал бы его и намекал, что план уже есть.
         if plan_state == "pending":
             return None
 
@@ -396,6 +418,9 @@ def _trainings_signal(
 def _deload_signal(
     state: dict[str, Any], workouts: list[dict[str, Any]], today: date
 ) -> dict[str, Any] | None:
+    """Плановая разгрузка: неделя блока разгрузочная (см. ``coach_state.cycle_position``)
+    и на этой неделе ещё не тренировались. Первая сессия разгрузки закрывает баннер.
+    """
     position = coach_state.cycle_position(state, workouts, today)
     if not position["deload_week"]:
         return None
@@ -409,7 +434,7 @@ def _deload_signal(
         if when is not None
     )
     if trained_this_week:
-        # The first deload session closes the banner; the plan card carries on.
+        # Первая сессия разгрузки закрывает баннер; карточка плана продолжает.
         return None
     return _signal(
         "deload_week",
@@ -431,13 +456,16 @@ def _report_signal(
     workouts: list[dict[str, Any]],
     now_ts: int,
 ) -> dict[str, Any] | None:
+    """Готовый недельный отчёт: свежий (моложе ``REPORT_FRESH_HOURS``) и ещё не
+    прочитанный. В теле период отчёта и, если была плановая работа, процент плана.
+    """
     report = store.get_latest_coach_report(user_id)
     if not report or report.get("read_at"):
         return None
     if now_ts - int(report.get("created_at") or 0) > REPORT_FRESH_HOURS * 3600:
         return None
-    # Mockup body: «4–10 августа · 92% плана» — the covered period plus the
-    # week's adherence when there was any planned work.
+    # Тело из макета: «4–10 августа · 92% плана» — период отчёта плюс
+    # выполнение плана за неделю, если плановая работа вообще была.
     try:
         period_end = date.fromisoformat(str(report.get("period_end")))
     except (TypeError, ValueError):
@@ -469,7 +497,10 @@ def _report_signal(
 def _week_done_signal(
     workouts: list[dict[str, Any]], state: dict[str, Any], today: date
 ) -> dict[str, Any] | None:
-    # The last CLOSED calendar week (Mon–Sun); shown Monday–Tuesday after it.
+    # Последняя ЗАКРЫТАЯ календарная неделя (пн–вс); показывается в пн и вт после неё.
+    """Позитивный итог закрытой недели: показывается в понедельник и вторник, если
+    сессий не меньше плана фазы (и не меньше двух) и выполнено ≥90% плана.
+    """
     week_start = today - timedelta(days=today.weekday() + 7)
     week_end = week_start + timedelta(days=6)
     if (today - week_end).days > WEEK_DONE_SHOW_DAYS:
@@ -495,7 +526,7 @@ def _week_done_signal(
 
 
 # --------------------------------------------------------------------------- #
-# Assembly
+# Сборка списка
 # --------------------------------------------------------------------------- #
 _MISSING = object()
 
@@ -508,16 +539,21 @@ def compute_signals(
     today: date | None = None,
     now_ts: int | None = None,
 ) -> list[dict[str, Any]]:
-    """The full sorted signal list after collapsing, snooze filtering and the
-    positive-suppression rule. The client shows the first 1–2."""
+    """Полный отсортированный список сигналов после схлопывания, фильтра отсрочек и
+    правила «без похвалы рядом с предупреждением». Клиент показывает первые 1–2.
+
+    Пока совет генерируется, список пуст: контекст плана меняется, и старые баннеры
+    не должны смешиваться с ним. Зовёт server.py на ``GET /api/coach/signals`` и
+    при дисмиссе, чтобы найти сигнал по ключу.
+    """
     today = today or date.today()
     now_ts = now_ts or int(time.time())
 
     recommendation = store.get_recommendation(user_id)
-    # A recommendation refresh changes the plan context that several banners
-    # lead into. Do not mix the old banner snapshot with an in-flight plan:
-    # History stays quiet until generation reaches a terminal state, then the
-    # next request recomputes every family from fresh facts.
+    # Пересборка совета меняет контекст плана, к которому ведут несколько
+    # баннеров. Старый снимок баннеров с планом в полёте не смешиваем: «История»
+    # молчит, пока генерация не дойдёт до конца, а следующий запрос пересчитает
+    # все семейства по свежим фактам.
     if recommendation and recommendation.get("status") == "pending":
         return []
 
@@ -525,8 +561,8 @@ def compute_signals(
     body_weights = store.list_body_weights(user_id)
     waists = store.list_waists(user_id)
 
-    # One family, one message: the critical waist-limit episode supersedes a
-    # routine freshness reminder instead of stacking two measurement banners.
+    # Одно семейство — одно сообщение: критический эпизод лимита талии
+    # вытесняет рутинное напоминание о свежести, а не стоит рядом с ним.
     measurements = _waist_limit_signal(waists, state, today) or _measurements_signal(
         body_weights, waists, state, today
     )
@@ -543,13 +579,13 @@ def compute_signals(
     active: list[dict[str, Any]] = []
     for signal in signals:
         snooze = snoozes.get(signal["instance_key"], _MISSING)
-        # A row with NULL until = episodic dismiss (hidden while the episode
-        # lasts); a timestamp hides until it passes.
+        # Строка с NULL в until — эпизодический дисмисс (скрыт, пока длится
+        # эпизод); метка времени прячет, пока не пройдёт.
         if snooze is not _MISSING and (snooze is None or int(snooze) > now_ts):
             continue
         active.append(signal)
 
-    # A celebration next to a warning celebrates nothing.
+    # Похвала рядом с предупреждением ничего не празднует.
     if any(signal["severity"] in ("warn", "critical") for signal in active):
         active = [signal for signal in active if signal["severity"] != "positive"]
 
@@ -560,12 +596,12 @@ def compute_signals(
         )
     )
 
-    # The info-grade trend nudge is easily masked: the client renders only the
-    # first banner (the second slot opens under critical only), and e.g. during
-    # a return period the accent return_mode legitimately outranks it. Instead
-    # of silently losing the nudge, ride it as the muted third line of whatever
-    # banner sits on top. Under a critical first the second slot is open, so
-    # the nudge keeps its own card.
+    # Подсказку о тренде уровня info легко заслонить: клиент рисует только
+    # первый баннер (второй слот открывается лишь под критическим), и, например,
+    # в период возврата accent return_mode законно стоит выше. Чтобы не терять
+    # подсказку молча, сажаем её приглушённой третьей строкой на тот баннер,
+    # что оказался сверху. Под критическим второй слот открыт, и подсказка
+    # остаётся своей карточкой.
     trend = next((signal for signal in active if signal["id"] == "weight_trend_stale"), None)
     if trend is not None and active[0] is not trend and active[0]["severity"] != "critical":
         if not active[0].get("note"):
@@ -575,6 +611,9 @@ def compute_signals(
 
 
 def default_snooze_until(severity: str, now_ts: int) -> int | None:
+    """Отсрочка по умолчанию для severity: ``None`` — эпизодическая (скрыт, пока не
+    сменится ключ эпизода), иначе метка времени, до которой сигнал спрятан.
+    """
     hours = SNOOZE_DEFAULT_HOURS.get(severity)
     return None if hours is None else now_ts + hours * 3600
 
@@ -587,8 +626,10 @@ def snooze_until_for(
     matched: dict[str, Any] | None, snooze_hours: object, now_ts: int
 ) -> int | None:
     """Решение по дисмиссу баннера. Критический не откладывается; явный срок в
-    часах — как попросили; иначе дефолт по severity (SNOOZE_DEFAULT_HOURS), а
-    сигнал, которого уже нет в списке, откладывается как info."""
+    часах — как попросили; иначе дефолт по severity (``SNOOZE_DEFAULT_HOURS``), а
+    сигнал, которого уже нет в списке, откладывается как info. Зовёт
+    ``server._post_signal_dismiss``, который переводит исключения в 409 и 400.
+    """
     if matched is not None and matched["severity"] == "critical":
         raise CriticalSignalDismissed(
             "Критический сигнал не откладывается — он гаснет только действием"

@@ -22,7 +22,10 @@ from trainer.domain import coach_state
 
 
 def default_state_path(db_path: Path | str) -> Path:
-    """coach_state.json lives next to the DB, like coach_profile.json."""
+    """Где лежит ``coach_state.json``: рядом с базой, как и ``coach_profile.json``;
+    переменная ``COACH_STATE_PATH`` переопределяет. Зовут server.py, скрипты таймеров
+    и Coach MCP при старте.
+    """
     return Path(os.getenv("COACH_STATE_PATH") or str(Path(db_path).parent / "coach_state.json"))
 
 
@@ -39,6 +42,7 @@ def load_state(path: Path | str | None) -> dict[str, Any]:
 
 
 def save_state(path: Path | str, state: dict[str, Any]) -> None:
+    """Записать состояние подготовки в файл как есть, JSON с отступами."""
     Path(path).write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", "utf-8")
 
 
@@ -57,11 +61,15 @@ def set_phase(
 
 
 # --------------------------------------------------------------------------- #
-# Catalog
+# Каталог упражнений
 # --------------------------------------------------------------------------- #
 def load_catalog(path: Path | str) -> list[dict[str, Any]]:
-    """Load the exercise catalog (resources/exercises.json — the same file the iOS
-    app downloads from /data/exercises.json and keeps a fallback copy of)."""
+    """Каталог упражнений из ``resources/exercises.json``: список ``{id, name}``.
+
+    Тот же файл iOS скачивает по ``/data/exercises.json`` и держит копию в бандле.
+    Строки без id или имени пропускаются; пустой каталог — ``RecommendationError``.
+    Зовут server.py при старте, скрипты таймеров и Coach MCP.
+    """
     raw = json.loads(Path(path).read_text("utf-8"))
     exercises = raw.get("exercises", [])
     catalog: list[dict[str, Any]] = []
@@ -76,15 +84,16 @@ def load_catalog(path: Path | str) -> list[dict[str, Any]]:
 
 
 # --------------------------------------------------------------------------- #
-# Athlete profile
+# Профиль атлета и стратегия
 # --------------------------------------------------------------------------- #
 def load_profile(path: Path | str | None) -> dict[str, Any] | None:
-    """Load the athlete profile JSON (personal context for the coach prompt).
+    """Профиль атлета: JSON с текстовыми блоками для системного промпта.
 
-    The real profile lives ONLY on the server next to the database — it holds
-    personal/medical context and must never be committed to the public repo
-    (the shape is documented in backend/README.md). Missing/broken file → None: generation
-    still works, just without the personal context.
+    Настоящий профиль живёт ТОЛЬКО на сервере рядом с базой: в нём личный и
+    медицинский контекст, в публичный репозиторий он не попадает (форма описана в
+    backend/README.md). Нет файла, битый или без блоков — ``None``: генерация
+    работает, просто без личного контекста. Зовут server.py, скрипты таймеров и
+    Coach MCP перед каждой генерацией.
     """
     if not path:
         return None
@@ -101,11 +110,15 @@ def load_profile(path: Path | str | None) -> dict[str, Any] | None:
 
 
 def update_profile_block(path: Path | str | None, block: str, text: str | None) -> dict[str, Any]:
-    """Replace one prose block of coach_profile.json (or delete it when `text`
-    is empty). This is the write path for the Coach MCP tool — the profile is
-    personal data living only next to the DB, so remote edits go through here
-    instead of SSH. The previous file version is kept as a timestamped .bak
-    next to the original. Returns the updated profile dict."""
+    """Заменить один текстовый блок ``coach_profile.json`` или удалить его, если
+    ``text`` пустой.
+
+    Это путь записи для инструмента Coach MCP ``coach_update_profile``: профиль —
+    личные данные рядом с базой, и удалённая правка идёт через него, а не через
+    SSH. Предыдущая версия файла остаётся рядом как ``.bak-таймстамп``. Возвращает
+    обновлённый профиль; нет пути, файла, блоков или блока для удаления —
+    ``RecommendationError`` с понятным текстом.
+    """
     if not path:
         raise RecommendationError("Путь к профилю атлета не настроен")
     path = Path(path)

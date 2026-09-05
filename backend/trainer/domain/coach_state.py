@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Coach preparation-phase state machine.
+"""Машина фаз подготовки.
 
-The mutable coaching state (current phase, its start date, per-phase parameter
-overrides, waist limits) lives in a small JSON file next to the database —
-``coach_state.json`` — the same pattern as ``coach_profile.json``. The profile
-stays prose (who the athlete is); this file is structured state (what the
-program is doing right now) and is switched via the Coach MCP tools, never
-automatically.
+Изменяемое состояние коуча — текущая фаза, дата её старта, переопределения
+параметров по фазам, лимиты талии — живёт в маленьком JSON рядом с базой,
+``coach_state.json``, по тому же образцу, что и ``coach_profile.json``. Профиль
+остаётся прозой (кто такой атлет), а этот файл — структурное состояние (что
+программа делает прямо сейчас), и переключается он инструментами Coach MCP,
+никогда автоматически.
 
-Здесь только правила: дефолты, что из прочитанного файла считать валидным,
-как переключается фаза. Сам файл читает и пишет ``data/files``.
+Здесь только правила: дефолты, что из прочитанного файла считать валидным, как
+переключается фаза, какая сейчас неделя блока, когда плановая разгрузка и
+считается ли атлет вернувшимся после перерыва. Сам файл читает и пишет
+``data/files``. Зовут ``prompt_builder``, ``recommender``, ``coach_signals``,
+``coach_features``, ``plan_validator`` и Coach MCP.
 """
 
 from __future__ import annotations
@@ -22,13 +25,13 @@ from typing import Any
 
 PHASES = ("cut_recomp", "lean_bulk", "maintenance")
 
-# Break length that both triggers the return-from-break protocol and resets
-# the volume ramp to the start of a new block.
+# Длина перерыва, которая и включает протокол возврата, и сбрасывает ramp
+# объёма на старт нового блока.
 BREAK_DAYS = 14
 
-# Per-phase methodology defaults. Overridable per phase via state["phase_params"]
-# (e.g. a custom target weight); everything the prompts say about the phase is
-# generated from this table, so a change here changes the coach's behaviour.
+# Дефолты методики по фазам. Переопределяются пофазно через state["phase_params"]
+# (например, своя цель веса); всё, что промпты говорят о фазе, генерируется из
+# этой таблицы, так что правка здесь меняет поведение коуча.
 PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
     "cut_recomp": {
         "title": "лёгкий дефицит-рекомп",
@@ -41,17 +44,17 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
         "ramp_start": (6, 8),
         "ramp_cap": (10, 14),
         "protein_g": (155, 165),
-        # Planned deload cadence: N accumulation weeks, then one light week.
+        # Ритм плановой разгрузки: N недель накопления, затем одна лёгкая.
         "deload_every_weeks": 6,
-        # Reaching this (by the 7-day moving average) suggests moving to lean_bulk.
+        # Достижение (по 7-дневной средней) — повод предложить переход в lean_bulk.
         "target_weight_kg": 75.5,
     },
     "lean_bulk": {
         "title": "lean bulk",
         "calories": (2400, 2500),
         "rate_text": "+0.5–0.8 кг/мес",
-        # ≈ +0.1…+0.2 кг/нед: the nutrition matrix and the stall preconditions
-        # steer by this corridor, not by the phase name.
+        # ≈ +0.1…+0.2 кг/нед: матрица питания и предусловия застоя ориентируются
+        # на этот коридор, а не на имя фазы.
         "rate_kg_per_week": (0.1, 0.2),
         "frequency_text": "3 тренировки в неделю (2–4 допустимо)",
         "sessions_per_week": 3,
@@ -60,20 +63,20 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
         "ramp_cap": (10, 16),
         "protein_g": (155, 165),
         "deload_every_weeks": 6,
-        # Reaching either ceiling suggests a mini-cut / phase change.
+        # Достижение потолка — повод предложить мини-сушку или смену фазы.
         "ceiling_weight_kg": 84.0,
     },
     "maintenance": {
         "title": "поддержание",
         "calories": (2300, 2400),
         "rate_text": "±0 кг (вес держим)",
-        # Zero-width corridor: the matrix adds its own ±0.15 tolerance.
+        # Коридор нулевой ширины: матрица сама добавляет допуск ±0.15.
         "rate_kg_per_week": (0.0, 0.0),
         "frequency_text": "1 тренировка в неделю, fullbody heavy",
         "sessions_per_week": 1,
         "session_sets": (8, 12),
-        # No volume ramp: a fixed 2–3 sets per group per week keeps strength;
-        # weights are NOT reduced — intensity is the retention signal.
+        # Без ramp объёма: фиксированные 2–3 подхода на группу в неделю держат
+        # силу; веса НЕ снижаются — интенсивность и есть сигнал удержания.
         "ramp_start": None,
         "ramp_cap": None,
         "sets_per_group": (2, 3),
@@ -81,12 +84,13 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
     },
 }
 
-# MEDICAL BOUNDARY (do not remove): the coach layer never grows dosage logic,
-# HRT-scheme advice or lab interpretation — that is the treating physician's
-# territory, and the prompts repeat the same boundary. The athlete's hormonal
-# context lives in the prose profile only; planning does not schedule around
-# the injection cycle (supraphysiological background all week — day-to-day
-# timing is speculative and recovery/history always dominate anyway).
+# МЕДИЦИНСКАЯ ГРАНИЦА (не удалять): слой коуча никогда не обрастает логикой
+# дозировок, советами по схеме ГЗТ или трактовкой анализов — это территория
+# лечащего врача, и промпты повторяют ту же границу. Гормональный контекст
+# атлета живёт только в прозе профиля; планирование не подстраивается под
+# цикл инъекций (супрафизиологический фон держится всю неделю, тайминг по дням
+# умозрителен, а восстановление и история всегда важнее).
+
 # Разумные границы лимита и базы талии, см: одни и те же при чтении файла и при
 # правке через MCP.
 WAIST_CM_RANGE = (40.0, 200.0)
@@ -94,15 +98,16 @@ WAIST_CM_RANGE = (40.0, 200.0)
 DEFAULT_STATE: dict[str, Any] = {
     "schema": 1,
     "phase": "cut_recomp",
-    "phase_started": None,  # ISO date; None → block week counts as 1
-    "phase_params": {},  # per-phase overrides: {phase: {key: value}}
-    "phase_history": [],  # closed phases: [{phase, started, ended}]
-    "waist_limit_cm": None,  # hard aesthetic limit; set by the athlete
-    "waist_base_cm": None,  # first measurement of the current phase
+    "phase_started": None,  # ISO-дата; None → неделя блока считается первой
+    "phase_params": {},  # переопределения по фазам: {фаза: {ключ: значение}}
+    "phase_history": [],  # закрытые фазы: [{phase, started, ended}]
+    "waist_limit_cm": None,  # жёсткий эстетический лимит; задаёт атлет
+    "waist_base_cm": None,  # первый замер текущей фазы
 }
 
 
 def _valid_iso_date(value: Any) -> str | None:
+    """ISO-дата как строка, если она разбирается, иначе ``None``."""
     if not isinstance(value, str):
         return None
     try:
@@ -148,8 +153,8 @@ def normalize_state(raw: object) -> dict[str, Any]:
             and WAIST_CM_RANGE[0] <= value <= WAIST_CM_RANGE[1]
         ):
             state[key] = float(value)
-    # Legacy files may still carry injection_day — ignored: planning no longer
-    # schedules around the injection cycle.
+    # Старые файлы могут нести injection_day — игнорируется: планирование больше
+    # не подстраивается под цикл инъекций.
     return state
 
 
@@ -179,6 +184,7 @@ _GROUP_TARGET_KEY = "group_targets"
 
 
 def _is_finite_number(value: Any) -> bool:
+    """Настоящее конечное число: ``int`` или ``float`` без ``bool``, ``nan`` и ``inf``."""
     return (
         isinstance(value, (int, float))
         and not isinstance(value, bool)
@@ -187,6 +193,12 @@ def _is_finite_number(value: Any) -> bool:
 
 
 def _normalize_group_targets(value: Any) -> dict[str, tuple[float, float]]:
+    """Цели по группам из переопределений фазы: ``{группа: (min, max)}``.
+
+    Имя группы обязано быть из ``coach_features.MUSCLE_GROUPS``, пара — двумя
+    числами; иначе ``ValueError`` с подсказкой. Импорт внутри функции: модули
+    зависят друг от друга по кругу.
+    """
     from trainer.domain import coach_features
 
     if not isinstance(value, dict):
@@ -209,6 +221,9 @@ def _normalize_group_targets(value: Any) -> dict[str, tuple[float, float]]:
 
 
 def _normalize_param_value(value: Any) -> Any:
+    """Значение переопределения фазы: число, строка или пара чисел ``[min, max]``;
+    всё остальное — ``ValueError``.
+    """
     if isinstance(value, (list, tuple)):
         if len(value) == 2 and all(_is_finite_number(item) for item in value):
             return (value[0], value[1])
@@ -255,9 +270,9 @@ def switch_phase(
             )
 
     today = today or date.today()
-    # Close the outgoing phase into the history journal — the phase-summary
-    # tool derives all its numbers from workouts/measurements by date range,
-    # so the journal only needs the boundaries.
+    # Уходящую фазу закрываем в журнал: инструмент итогов фазы считает все
+    # числа по тренировкам и замерам за даты, так что журналу нужны только
+    # границы.
     if state.get("phase_started"):
         history = list(state.get("phase_history") or [])
         history.append(
@@ -299,7 +314,11 @@ def update_waist_limits(
 
 
 def phase_params(state: dict[str, Any]) -> dict[str, Any]:
-    """Defaults for the current phase merged with the athlete's overrides."""
+    """Параметры текущей фазы: дефолты ``PHASE_DEFAULTS`` поверх переопределений
+    атлета из ``state["phase_params"]``; в результат добавлен ключ ``phase``.
+    Единственный способ узнать параметры фазы: зовут ``prompt_builder``,
+    ``recommender``, ``coach_signals`` и Coach MCP.
+    """
     phase = state.get("phase") if state.get("phase") in PHASES else "cut_recomp"
     merged = dict(PHASE_DEFAULTS[phase])
     overrides = (state.get("phase_params") or {}).get(phase) or {}
@@ -315,27 +334,30 @@ def phase_params(state: dict[str, Any]) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# The reporting week
+# Неделя отчёта
 # --------------------------------------------------------------------------- #
 def last_closed_week_end(today: date) -> date:
     """Воскресенье последней ЗАКРЫТОЙ календарной недели (пн–вс).
 
     Единственный источник правды о том, какую неделю описывает недельный отчёт:
-    его зовут и генератор (`weekly_report.py`), и чтение кэша в Coach MCP.
-    Разъедутся — таймер запишет отчёт под одну дату, а инструмент будет искать
-    под другую, промахнётся мимо кэша и молча сожжёт токены на перегенерацию.
+    его зовут и генератор (``recommender.weekly_report_period`` для скрипта
+    таймера), и чтение кэша в Coach MCP. Разъедутся — таймер запишет отчёт под
+    одну дату, а инструмент будет искать под другую, промахнётся мимо кэша и
+    молча сожжёт токены на перегенерацию.
 
     Неделя считается закрытой только когда она прошла целиком: в воскресенье
     отчёт всё ещё про предыдущую неделю, а про текущую появляется в ночь на
     понедельник. Отчёт по недожитой неделе — то, ради чего это и заведено:
-    вечерняя тренировка воскресенья в него не попадала."""
+    вечерняя тренировка воскресенья в него не попадала.
+    """
     return today - timedelta(days=today.weekday() + 1)
 
 
 # --------------------------------------------------------------------------- #
-# Block weeks and the volume ramp
+# Недели блока и ramp объёма
 # --------------------------------------------------------------------------- #
 def _workout_dates(workouts: list[dict[str, Any]]) -> list[date]:
+    """Даты тренировок без дублей, по возрастанию; битые даты пропускаются."""
     dates: set[date] = set()
     for workout in workouts:
         try:
@@ -346,7 +368,10 @@ def _workout_dates(workouts: list[dict[str, Any]]) -> list[date]:
 
 
 def is_return_from_break(workouts: list[dict[str, Any]], today: date) -> bool:
-    """Computed, never stored: the athlete is coming back after >=14 days off."""
+    """Вычисляется, никогда не хранится: атлет возвращается после ≥14 дней без
+    тренировок (``BREAK_DAYS``). Зовут ``prompt_builder``, ``plan_validator``,
+    ``recommender``, ``coach_features`` и Coach MCP.
+    """
     dates = _workout_dates(workouts)
     if not dates:
         return False
@@ -356,9 +381,10 @@ def is_return_from_break(workouts: list[dict[str, Any]], today: date) -> bool:
 def _block_anchor(
     state: dict[str, Any], workouts: list[dict[str, Any]], today: date
 ) -> date | None:
-    """The block anchor is the later of the phase start and the first workout
-    after the most recent >=14-day gap (a long break resets the ramp,
-    consistent with the return-from-break rule)."""
+    """Якорь блока: более поздняя из даты старта фазы и первой тренировки после
+    последнего перерыва ≥14 дней (долгий перерыв сбрасывает ramp, как и правило
+    возврата). ``None``, если якоря нет или он в будущем.
+    """
     anchor: date | None = None
     started = state.get("phase_started")
     if isinstance(started, str):
@@ -380,8 +406,9 @@ def _block_anchor(
 
 
 def block_week(state: dict[str, Any], workouts: list[dict[str, Any]], today: date) -> int:
-    """1-based training-block week. While currently ON a break, the coming
-    session opens a new block → week 1."""
+    """Неделя тренировочного блока, с единицы. Пока атлет НА перерыве, ближайшая
+    сессия открывает новый блок — неделя 1.
+    """
     if is_return_from_break(workouts, today):
         return 1
     anchor = _block_anchor(state, workouts, today)
@@ -390,21 +417,24 @@ def block_week(state: dict[str, Any], workouts: list[dict[str, Any]], today: dat
     return (today - anchor).days // 7 + 1
 
 
-# Fatigue actually has to be accumulated for a planned deload to make sense:
-# on average >=2 sessions per accumulation week, else the light weeks already
-# happened by themselves and the flag is withheld.
+# Чтобы плановая разгрузка имела смысл, усталость должна реально накопиться:
+# в среднем ≥2 сессии на неделю накопления, иначе лёгкие недели уже случились
+# сами собой, и флаг не ставится.
 DELOAD_MIN_SESSIONS_PER_WEEK = 2
 
 
 def cycle_position(
     state: dict[str, Any], workouts: list[dict[str, Any]], today: date
 ) -> dict[str, Any]:
-    """Where the current block week sits inside the accumulate→deload cycle.
+    """Где неделя блока стоит внутри цикла «накопление → разгрузка».
 
-    Building phases run `deload_every_weeks` accumulation weeks and then one
-    planned light week (−30–40% volume); after it the ramp restarts, so the
-    cycle length is N+1 and `cycle_week` is the block week modulo that. The
-    deload flag fires only when the athlete actually trained the block in."""
+    Строительные фазы идут ``deload_every_weeks`` недель накопления и одну
+    плановую лёгкую неделю (−30–40% объёма); после неё ramp начинается заново,
+    так что длина цикла N+1, а ``cycle_week`` — неделя блока по модулю. Флаг
+    разгрузки ставится, только если атлет реально натренировал блок
+    (``DELOAD_MIN_SESSIONS_PER_WEEK`` в среднем). Зовут ``prompt_builder``,
+    ``recommender``, ``coach_signals`` и Coach MCP.
+    """
     week = block_week(state, workouts, today)
     params = phase_params(state)
     every = params.get("deload_every_weeks")
@@ -439,11 +469,12 @@ def cycle_position(
 
 
 def weekly_volume_target(state: dict[str, Any], week: int) -> tuple[int, int] | None:
-    """Target work-sets-per-big-group corridor for the given block week.
+    """Целевой коридор рабочих подходов на крупную группу для недели блока.
 
-    Building phases ramp from ``ramp_start`` by +1 (lower bound) / +2 (upper
-    bound) sets per week up to the phase cap. Maintenance has no ramp (fixed
-    2–3 sets/group) → None."""
+    Строительные фазы разгоняются от ``ramp_start`` на +1 (низ) / +2 (верх) подхода
+    в неделю до потолка фазы. У поддержания ramp нет (фиксированные 2–3 подхода на
+    группу) — ``None``.
+    """
     params = phase_params(state)
     start, cap = params.get("ramp_start"), params.get("ramp_cap")
     if not start or not cap:
