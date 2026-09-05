@@ -214,21 +214,23 @@ class ReportPromptTests(unittest.TestCase):
     PREVIOUS = (
         "**Итоги недели** — три тренировки.\n"
         "**Прогресс** — без ПР.\n"
+        "**Курс к цели** — ПО ПЛАНУ.\n"
+        "**Гейт этапа** — явка НЕ ВЫПОЛНЕН.\n"
         "**Фокус следующей недели**\n"
         "- **Объём:** 60 подходов.\n"
         "- Сгибания ног в каждую сессию.\n"
-        "**Гейт этапа** — явка НЕ ВЫПОЛНЕН.\n"
     )
 
     def test_previous_focus_is_cut_by_block_headings(self) -> None:
         """Жирный подпункт внутри фокуса — не заголовок блока: режем только по
-        именам блоков из report.md, в любом оформлении."""
+        именам блоков из weekly_report.md, в любом оформлении."""
         focus = prompt_builder.previous_focus(self.PREVIOUS)
         assert focus is not None
         self.assertTrue(focus.startswith("**Фокус следующей недели**"))
         self.assertIn("**Объём:** 60 подходов.", focus)
         self.assertIn("Сгибания ног", focus)
         self.assertNotIn("Гейт этапа", focus)
+        self.assertNotIn("ПО ПЛАНУ", focus)
         self.assertNotIn("три тренировки", focus)
         # Заголовок с решёткой и текстом после тире — тоже заголовок.
         loose = "### Фокус следующей недели — добрать спину\n### Гейт этапа\nнет"

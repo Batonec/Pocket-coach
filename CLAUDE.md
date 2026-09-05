@@ -195,7 +195,7 @@ SQLite: workouts, body_weights, waists, measurements, events + coach_state.json 
    │                    ни схлопывание, ни дисмиссы. Рядом plan_notes.md — пометки
    │                    «Проверка методики», которые валидатор дописывает в rationale.
    │
-   ├─ prompts/*.md      ВСЯ ПРОЗА, которую читает модель: system, phase_policy, report
+   ├─ prompts/*.md      ВСЯ ПРОЗА, которую читает модель: system, phase_policy, weekly_report
    │                    (шаблоны целиком), user_blocks (подписи к блокам, «## имя») и
    │                    plan_rules (жёсткие границы плана целиком: формулировка для
    │                    системного промпта и «для / требует / нарушение / починить»

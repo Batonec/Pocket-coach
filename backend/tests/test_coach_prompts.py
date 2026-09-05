@@ -84,7 +84,7 @@ class PromptTemplateTests(unittest.TestCase):
 
     def test_report_template_expects_exactly_the_computed_slots(self):
         self.assertEqual(
-            coach_prompts.slots(coach_prompts.load("report")),
+            coach_prompts.slots(coach_prompts.load("weekly_report")),
             {"profile", "phase_policy", "program"},
         )
 
@@ -123,13 +123,32 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertIn("<!--", coach_prompts._HEADER_RE.sub("", "Текст\n<!-- x -->\n", count=1))
 
     def test_report_header_does_not_reach_the_model(self):
-        """report.md несёт шапку для человека; собранный промпт начинается с роли."""
+        """weekly_report.md несёт шапку для человека; собранный промпт начинается с роли."""
         self.assertTrue(
-            (coach_prompts.PROMPTS_DIR / "report.md").read_text("utf-8").startswith("<!--")
+            (coach_prompts.PROMPTS_DIR / "weekly_report.md").read_text("utf-8").startswith("<!--")
         )
         built = prompt_builder._build_report_system_prompt()
         self.assertNotIn("<!--", built)
         self.assertTrue(built.startswith("Ты — персональный силовой тренер"))
+
+    def test_report_states_its_general_task_and_asks_the_four_course_questions(self):
+        """Генеральная задача отчёта — курс к долгосрочной цели, а не только неделя:
+        роль называет её, а блок «Курс к цели» задаёт четыре вопроса атлета."""
+        built = prompt_builder._build_report_system_prompt()
+        self.assertIn("где он на пути к своей долгосрочной цели", built)
+        self.assertIn("**Курс к цели**", built)
+        for question in (
+            "где он на пути к цели",
+            "в графике ли стратегии",
+            "всё ли хорошо",
+            "надо ли что-то корректировать",
+        ):
+            self.assertIn(question, built)
+        self.assertIn("ПО ПЛАНУ / ОТСТАЁТ / ОПЕРЕЖАЕТ", built)
+        # Все семь блоков формата известны парсеру фокуса, иначе новый блок после
+        # «Фокуса» уехал бы в промпт как его часть.
+        for name in prompt_builder._REPORT_BLOCKS:
+            self.assertIn(f"**{name[0].upper()}{name[1:]}**", built)
 
     def test_every_declared_block_is_used_by_the_code(self):
         """Фрагмент, оставшийся в файле без единого вызова _block(), — мёртвый
