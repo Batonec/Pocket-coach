@@ -164,6 +164,22 @@ class PromptTemplateTests(unittest.TestCase):
             finally:
                 coach_prompts.PROMPTS_DIR = saved
 
+    def test_section_headings_bound_fragments_and_stay_out_of_the_text(self):
+        """«# Раздел» — заголовок для человека: завершает предыдущий фрагмент и ни в
+        один текст не входит, так подписи сгруппированы в порядке промпта."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = coach_prompts.PROMPTS_DIR
+            coach_prompts.PROMPTS_DIR = pathlib.Path(tmp)
+            try:
+                (pathlib.Path(tmp) / "grouped.md").write_text(
+                    "# Раздел один\n\n## one\nA\n\n# Раздел два\n\n## two\nB\n", "utf-8"
+                )
+                self.assertEqual(coach_prompts.fragments("grouped"), {"one": "A", "two": "B"})
+            finally:
+                coach_prompts.PROMPTS_DIR = saved
+
     def test_fragment_keeps_leading_space(self):
         blocks = coach_prompts.fragments("user_blocks")
         self.assertTrue(blocks["deload_week_label"].startswith(" — "))

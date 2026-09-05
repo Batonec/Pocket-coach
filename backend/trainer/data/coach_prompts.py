@@ -69,6 +69,10 @@ def slots(template: str) -> set[str]:
 
 
 _FRAGMENT_RE = re.compile(r"^## ([a-z_]+)[ \t]*$", re.M)
+# Заголовок раздела «# …» — для человека: группирует фрагменты в порядке, в
+# котором их читает модель. Он завершает предыдущий фрагмент и ни в один
+# текст не входит.
+_SECTION_RE = re.compile(r"^# [^\n]*$", re.M)
 
 
 def fragments(name: str, *, directory: Path | None = None) -> dict[str, str]:
@@ -81,20 +85,27 @@ def fragments(name: str, *, directory: Path | None = None) -> dict[str, str]:
 
     У фрагмента срезаются только переводы строк, пробелы остаются: подпись может
     законно начинаться с пробела (« — плановая разгрузочная неделя.»). Всё до первого
-    заголовка — комментарий. Зовут ``prompt_builder`` (``user_blocks.md``) и
-    ``coach_signals`` (``signals.md``).
+    заголовка — комментарий. Строка «# Раздел» — заголовок для человека: она
+    завершает предыдущий фрагмент и в текст не входит, так подписи сгруппированы в
+    порядке промпта. Зовут ``prompt_builder`` (``user_blocks.md``), ``coach_signals``
+    (``signals.md``) и ``rule_engine`` (``plan_rules.md``, ``plan_notes.md``).
     """
     text = load(name, directory=directory)
-    marks = list(_FRAGMENT_RE.finditer(text))
-    if not marks:
+    marks = sorted(
+        [(m.start(), m.end(), m.group(1)) for m in _FRAGMENT_RE.finditer(text)]
+        + [(m.start(), m.end(), None) for m in _SECTION_RE.finditer(text)]
+    )
+    if not any(key for _start, _end, key in marks):
         raise PromptError(f"в {name!r} нет ни одного фрагмента «## имя»")
     out: dict[str, str] = {}
-    for i, mark in enumerate(marks):
-        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
-        body = text[mark.end() : end].strip("\n")
-        if mark.group(1) in out:
-            raise PromptError(f"фрагмент {mark.group(1)!r} в {name!r} объявлен дважды")
-        out[mark.group(1)] = body
+    for i, (_start, end, key) in enumerate(marks):
+        if key is None:
+            continue
+        stop = marks[i + 1][0] if i + 1 < len(marks) else len(text)
+        body = text[end:stop].strip("\n")
+        if key in out:
+            raise PromptError(f"фрагмент {key!r} в {name!r} объявлен дважды")
+        out[key] = body
     return out
 
 
