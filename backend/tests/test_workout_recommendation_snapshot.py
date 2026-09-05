@@ -8,7 +8,7 @@ from support import (
     sample_workout_payload,
 )
 
-from trainer import backend_store  # support puts backend/ on sys.path
+from trainer.data import backend_store  # support puts backend/ on sys.path
 
 
 def sample_snapshot(**overrides):

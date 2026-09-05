@@ -9,8 +9,8 @@ from pathlib import Path
 import support  # noqa: F401 — adds backend to sys.path
 from support import sample_workout_payload
 
-from trainer import coach_signals, coach_state
-from trainer.backend_store import MiniAppStore
+from trainer.data.backend_store import MiniAppStore
+from trainer.domain import coach_signals, coach_state
 
 TODAY = date(2026, 8, 14)
 STATE = dict(coach_state.DEFAULT_STATE, phase_started="2026-08-01")

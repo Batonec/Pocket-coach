@@ -26,7 +26,8 @@ from typing import Any
 # trainer) в sys.path кладём сами.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from trainer import backend_store, coach_state, recommender
+from trainer.data import backend_store
+from trainer.domain import coach_state, recommender
 
 BASE_DIR = Path(__file__).resolve().parents[2]  # backend/: там data/ и resources/
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))

@@ -184,7 +184,7 @@ _GROUP_TARGET_KEY = "group_targets"
 
 
 def _normalize_group_targets(value: Any) -> dict[str, tuple[float, float]]:
-    from trainer import coach_features
+    from trainer.domain import coach_features
 
     if not isinstance(value, dict):
         raise ValueError("group_targets должен быть объектом {группа: [min, max]}")

@@ -23,20 +23,15 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from trainer import (
-    anthropic_client,
-    coach_features,
-    coach_state,
-    plan_validator,
-    prompt_builder,
-)
-from trainer.anthropic_client import (
+from trainer.data import anthropic_client
+from trainer.data.anthropic_client import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
     DEFAULT_TIMEOUT,
     RecommendationError,
 )
+from trainer.domain import coach_features, coach_state, plan_validator, prompt_builder
 
 DEFAULT_HISTORY_LIMIT = int(os.getenv("RECOMMENDATION_HISTORY_LIMIT", "20"))
 

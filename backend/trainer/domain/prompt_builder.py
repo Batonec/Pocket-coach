@@ -15,7 +15,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
-from trainer import coach_features, coach_prompts, coach_state, plan_validator
+from trainer.data import coach_prompts
+from trainer.domain import coach_features, coach_state, plan_validator
 
 # Raw history shown to the model; everything older is covered by the computed
 # per-exercise summaries (the prompt must not grow from the feature work).

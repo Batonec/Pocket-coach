@@ -6,7 +6,7 @@
 «История». Дизайн-история и исходный бриф сохранены в
 [`ios/COACH_SIGNALS_BANNER_BRIEF.md`](../ios/COACH_SIGNALS_BANNER_BRIEF.md), но при
 расхождении ориентироваться нужно на этот документ, код
-[`backend/trainer/coach_signals.py`](../backend/trainer/coach_signals.py) и тесты
+[`backend/trainer/domain/coach_signals.py`](../backend/trainer/domain/coach_signals.py) и тесты
 [`backend/tests/test_coach_signals.py`](../backend/tests/test_coach_signals.py).
 
 ## Коротко: чего ожидать пользователю
@@ -436,4 +436,4 @@ Claude используется рядом с этой системой для �
 7. тесты на включение, невключение и эскалацию/смерть.
 
 Изменение порога или приоритета должно одновременно менять этот документ,
-`backend/trainer/coach_signals.py` и соответствующие тесты.
+`backend/trainer/domain/coach_signals.py` и соответствующие тесты.

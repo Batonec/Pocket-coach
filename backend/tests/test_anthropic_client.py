@@ -7,7 +7,7 @@ import urllib.error
 
 import support  # noqa: F401 — adds backend to sys.path
 
-from trainer import anthropic_client
+from trainer.data import anthropic_client
 
 
 class RequestModelCachingTests(unittest.TestCase):

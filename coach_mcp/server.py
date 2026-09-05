@@ -54,8 +54,8 @@ from mcp.server.fastmcp import FastMCP  # noqa: E402
 from mcp.server.transport_security import TransportSecuritySettings  # noqa: E402
 from mcp.types import CallToolResult, TextContent  # noqa: E402
 
-from trainer import (  # noqa: E402
-    backend_store,
+from trainer.data import backend_store  # noqa: E402
+from trainer.domain import (  # noqa: E402
     coach_features,
     coach_state,
     prompt_builder,

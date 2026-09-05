@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from trainer import RESOURCES_DIR, coach_signals, coach_state, recommender
-from trainer.backend_store import MiniAppStore
+from trainer import RESOURCES_DIR
+from trainer.data.backend_store import MiniAppStore
+from trainer.domain import coach_signals, coach_state, recommender
 
 BASE_DIR = Path(__file__).resolve().parent
 # Каталог упражнений едет с кодом; путь переопределяется только ради тестов и

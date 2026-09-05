@@ -114,19 +114,20 @@ Claude Desktop ──MCP──►  coach_mcp/server.py  ────────
 
 Раскладка `backend/`: наверху то, что читают глазами, — код, проза и тесты; обвязка сложена в
 две папки. Имена модулей внутри те же, что и раньше, поэтому в документации они упоминаются по
-имени файла (`coach_state.py` значит `backend/trainer/coach_state.py`).
+имени файла (`coach_state.py` значит `backend/trainer/domain/coach_state.py`).
 
 ```
 backend/
 ├── server.py      HTTP API — процесс, который крутит systemd; импортирует всё остальное
-├── trainer/       пакет: backend_store.py и восемь модулей слоя коуча (см. ниже)
+├── trainer/       пакет из двух частей: domain/ — правила и методика (см. ниже),
+│                  data/ — SQLite, файлы рядом с базой, шаблоны, HTTP к Claude
 ├── prompts/       проза для модели
 ├── tests/
 ├── infra/         deploy/ (deploy.sh и systemd-юниты) и jobs/ (скрипты таймеров)
 └── resources/     exercises.json (каталог упражнений) и signals.md (тексты баннеров для клиента)
 ```
 
-Импорт — `from trainer import coach_state`; где лежат `prompts/`, `resources/` и локальная
+Импорт — `from trainer.domain import coach_state`, `from trainer.data import backend_store`; где лежат `prompts/`, `resources/` и локальная
 `data/`, модули узнают через `trainer.BACKEND_DIR`. Скрипты в `infra/jobs/` запускаются как файлы
 (`python3 backend/infra/jobs/weekly_report.py`), поэтому корень backend в `sys.path` кладут сами.
 
@@ -139,8 +140,8 @@ backend/
 ### Слой коуча — где проходит граница «алгоритм / LLM»
 
 Это главный инвариант проекта. **LLM вызывается ровно в двух местах**, оба в `recommender.py`:
-план следующей тренировки и недельный отчёт. Всё остальное детерминировано. Все модули ниже
-лежат в `backend/trainer/`.
+план следующей тренировки и недельный отчёт. Всё остальное детерминировано. Модули ниже лежат в
+`backend/trainer/domain/`, кроме `coach_prompts.py` и `anthropic_client.py` — они в `data/`.
 
 ```
 SQLite: workouts, body_weights, waists, events + coach_state.json + coach_profile.json
@@ -305,7 +306,7 @@ enable --now` один раз руками.
 backend-модуль в тестах не импортируется. Значит `support` обязан идти **выше** них, а не по
 алфавиту. Держит это одна строка: `src = ["backend", "coach_mcp"]`. Оттуда ruff считает
 backend-модули своими и кладёт в секцию ниже, а `support` в неё не попадает и оказывается выше.
-Уберёшь `src` — isort отсортирует всё в одну кучу, `from trainer import coach_prompts`
+Уберёшь `src` — isort отсортирует всё в одну кучу, `from trainer.data import coach_prompts`
 уедет над `import support`, и **весь suite останется зелёным**: `discover` импортирует файлы по алфавиту,
 и `support` успевает отработать в чужом файле раньше. Развалится только запуск одного файла —
 тот самый сценарий из «Команд». Проверка: `python3 -m unittest discover -s backend/tests -p "test_coach_prompts.py"`.

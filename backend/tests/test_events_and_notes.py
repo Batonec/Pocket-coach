@@ -17,7 +17,8 @@ from pathlib import Path
 from support import JsonHttpClient, running_miniapp_server, sample_workout_payload
 
 from infra.jobs import refresh_recommendation, weekly_report
-from trainer import backend_store, coach_prompts, coach_state, prompt_builder, recommender
+from trainer.data import backend_store, coach_prompts
+from trainer.domain import coach_state, prompt_builder, recommender
 
 CATALOG = [
     {"id": 8, "name": "Жим ногами"},

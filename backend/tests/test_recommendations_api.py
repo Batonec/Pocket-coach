@@ -16,7 +16,7 @@ from support import (
     temporary_env,
 )
 
-from trainer import backend_store  # support (imported below) puts backend on sys.path
+from trainer.data import backend_store  # support (imported below) puts backend on sys.path
 
 FAKE_REC: dict[str, Any] = {
     "focus": "Тест",

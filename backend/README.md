@@ -9,14 +9,14 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 ## Состав
 
 - [backend/server.py](./server.py) — HTTP API, резолв сессии (iOS fixed-user + browser debug), раздача каталога упражнений
-- [backend/trainer/backend_store.py](./trainer/backend_store.py) — SQLite-хранилище и нормализация данных
-- [backend/trainer/recommender.py](./trainer/recommender.py) — точка входа «Совета тренера»: загрузка каталога, профиля и стратегии, оба вызова модели (план и недельный отчёт), один авто-репромпт по нарушениям валидатора
-- [backend/trainer/prompt_builder.py](./trainer/prompt_builder.py) — всё, что читает модель: системный промпт, user-промпт с вычисленными фичами и историей, JSON-схема ответа, промпт недельного отчёта; проза берётся из [prompts/](./prompts), здесь только слоты
-- [backend/trainer/plan_validator.py](./trainer/plan_validator.py) — проверка плана модели: санитизация по границам, которых нет в JSON-схеме, три жёсткие границы методики и детерминированное разрешение после неудачного репромпта
-- [backend/trainer/anthropic_client.py](./trainer/anthropic_client.py) — HTTP-вызов Claude Messages API на stdlib `urllib`: ретраи на временные сбои, prompt caching, structured output; единственное место, где открывается соединение с API
-- [backend/trainer/coach_state.py](./trainer/coach_state.py) — машина фаз подготовки (cut_recomp / lean_bulk / maintenance), volume ramp по неделям блока
-- [backend/trainer/coach_features.py](./trainer/coach_features.py) — вычисляемые фичи истории: per-exercise сводки (пики, e1RM, ПР), детектор застоя, ступени разгона после перерыва, эффективные недельные объёмы, тренды веса/талии и матрица питания
-- [backend/trainer/coach_signals.py](./trainer/coach_signals.py) — детерминированные баннеры коуча; каноническая спецификация — [docs/COACH_SIGNALS.md](../docs/COACH_SIGNALS.md)
+- [backend/trainer/data/backend_store.py](./trainer/data/backend_store.py) — SQLite-хранилище и нормализация данных
+- [backend/trainer/domain/recommender.py](./trainer/domain/recommender.py) — точка входа «Совета тренера»: загрузка каталога, профиля и стратегии, оба вызова модели (план и недельный отчёт), один авто-репромпт по нарушениям валидатора
+- [backend/trainer/domain/prompt_builder.py](./trainer/domain/prompt_builder.py) — всё, что читает модель: системный промпт, user-промпт с вычисленными фичами и историей, JSON-схема ответа, промпт недельного отчёта; проза берётся из [prompts/](./prompts), здесь только слоты
+- [backend/trainer/domain/plan_validator.py](./trainer/domain/plan_validator.py) — проверка плана модели: санитизация по границам, которых нет в JSON-схеме, три жёсткие границы методики и детерминированное разрешение после неудачного репромпта
+- [backend/trainer/data/anthropic_client.py](./trainer/data/anthropic_client.py) — HTTP-вызов Claude Messages API на stdlib `urllib`: ретраи на временные сбои, prompt caching, structured output; единственное место, где открывается соединение с API
+- [backend/trainer/domain/coach_state.py](./trainer/domain/coach_state.py) — машина фаз подготовки (cut_recomp / lean_bulk / maintenance), volume ramp по неделям блока
+- [backend/trainer/domain/coach_features.py](./trainer/domain/coach_features.py) — вычисляемые фичи истории: per-exercise сводки (пики, e1RM, ПР), детектор застоя, ступени разгона после перерыва, эффективные недельные объёмы, тренды веса/талии и матрица питания
+- [backend/trainer/domain/coach_signals.py](./trainer/domain/coach_signals.py) — детерминированные баннеры коуча; каноническая спецификация — [docs/COACH_SIGNALS.md](../docs/COACH_SIGNALS.md)
 - [backend/resources](./resources) — два файла, которые читает клиент, а не модель: `exercises.json` (каталог упражнений, отдаётся по `/data/exercises.json`) и `signals.md` (тексты баннеров)
 - [backend/infra/jobs](./infra/jobs) — скрипты systemd-таймеров: авто-свежесть совета, недельный отчёт, бэкап базы
 - [backend/infra/deploy](./infra/deploy) — деплой на VPS и systemd-юниты
