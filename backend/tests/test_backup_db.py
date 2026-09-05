@@ -50,6 +50,37 @@ class BackupDbTests(unittest.TestCase):
         backup_db.make_backup(self.db, self.dest, "20260101-040000")
         self.assertEqual(backup_db.rotate(self.dest, keep=14), [])
 
+    def test_rotate_removes_companions_with_their_db_backup(self) -> None:
+        # Имена копий — как их пишет main(): за ними файлы, уже лежащие на VPS.
+        prefixes = ("coach_profile", "coach_strategy", "coach_state")
+        old, new = "20260101-040000", "20260102-040000"
+        for stamp in (old, new):
+            backup_db.make_backup(self.db, self.dest, stamp)
+            for prefix in prefixes:
+                (self.dest / f"{prefix}-{stamp}.json").write_text("{}", encoding="utf-8")
+
+        removed = backup_db.rotate(self.dest, keep=1, companion_prefixes=prefixes)
+
+        self.assertEqual([p.name for p in removed], [f"trainer-{old}.db.gz"])
+        self.assertEqual(
+            sorted(p.name for p in self.dest.iterdir()),
+            sorted([f"trainer-{new}.db.gz", *(f"{prefix}-{new}.json" for prefix in prefixes)]),
+        )
+
+    def test_rotate_tolerates_a_missing_companion(self) -> None:
+        # Спутник мог не существовать в день снапшота (main() копирует только то, что есть).
+        old, new = "20260101-040000", "20260102-040000"
+        for stamp in (old, new):
+            backup_db.make_backup(self.db, self.dest, stamp)
+        (self.dest / f"coach_profile-{old}.json").write_text("{}", encoding="utf-8")
+
+        removed = backup_db.rotate(
+            self.dest, keep=1, companion_prefixes=("coach_profile", "coach_strategy")
+        )
+
+        self.assertEqual([p.name for p in removed], [f"trainer-{old}.db.gz"])
+        self.assertEqual([p.name for p in self.dest.iterdir()], [f"trainer-{new}.db.gz"])
+
 
 if __name__ == "__main__":
     unittest.main()
