@@ -217,36 +217,68 @@ class ProfileTests(unittest.TestCase):
         prompt = prompt_builder._build_system_prompt(CATALOG)
         self.assertIn("Профиль атлета не настроен", prompt)
 
-    def test_active_phase_policy_uses_athlete_overrides(self):
-        """Активная фаза рендерится из phase_params, а не из дефолтов: иначе блок
-        политики и блок КОНТЕКСТ несут разные числа, и модель получает две
-        противоречащие методики.
+    def test_context_line_uses_athlete_overrides(self) -> None:
+        """Ориентиры фазы в КОНТЕКСТЕ рендерятся из phase_params, а не из дефолтов,
+        и без машинного имени фазы: модель читает название этапа стратегии, а
+        cut_recomp / lean_bulk ей не нужны и в rationale им не место.
         """
+        from datetime import date
+
         from trainer.domain import coach_state
 
         state = coach_state.default_state()
         state["phase"] = "cut_recomp"
         state["phase_params"] = {"cut_recomp": {"title": "Ф0 · возврат", "calories": [2450, 2550]}}
-        prompt = prompt_builder._build_system_prompt(CATALOG, None, state)
-        self.assertIn("Ф0 · возврат", prompt)
-        self.assertIn("2450–2550", prompt)
+        workouts = [
+            {
+                "workout_date": "2026-06-10",
+                "data": {
+                    "load_type": "heavy",
+                    "exercises": [
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 10, "weight": 100}],
+                        }
+                    ],
+                },
+            }
+        ]
+        prompt = prompt_builder._build_user_prompt(workouts, [], date(2026, 6, 12), 20, state=state)
+        self.assertIn(
+            "Фаза: «Ф0 · возврат», неделя блока 1. Ориентиры фазы: 2450–2550 ккал", prompt
+        )
         self.assertNotIn("2100–2200", prompt)
-        # две неактивные фазы держат стандартный текст
-        self.assertIn("lean_bulk", prompt)
-        self.assertIn("maintenance", prompt)
+        self.assertNotIn("cut_recomp", prompt)
 
-    def test_phase_policy_survives_a_malformed_override(self):
+    def test_context_line_survives_a_malformed_override(self) -> None:
         """Ключ-диапазон, переопределённый скаляром, не должен ронять сборку промпта:
         генерация никогда не падает из-за методики.
         """
+        from datetime import date
+
         from trainer.domain import coach_state
 
         state = coach_state.default_state()
         state["phase"] = "maintenance"
         state["phase_params"] = {"maintenance": {"protein_g": 150, "session_sets": "восемь"}}
-        prompt = prompt_builder._build_system_prompt(CATALOG, None, state)
-        self.assertIn("~150+ г", prompt)
-        self.assertIn("восемь", prompt)
+        workouts = [
+            {
+                "workout_date": "2026-06-10",
+                "data": {
+                    "load_type": "heavy",
+                    "exercises": [
+                        {
+                            "exercise_id": 8,
+                            "name": "Жим ногами",
+                            "sets": [{"reps": 10, "weight": 100}],
+                        }
+                    ],
+                },
+            }
+        ]
+        prompt = prompt_builder._build_user_prompt(workouts, [], date(2026, 6, 12), 20, state=state)
+        self.assertIn("белок 150 г, сессия восемь рабочих подходов", prompt)
 
     def test_user_prompt_contains_context_volumes_and_weekday(self) -> None:
         from datetime import date
@@ -270,8 +302,10 @@ class ProfileTests(unittest.TestCase):
         self.assertTrue(prompt.startswith("=== КОНТЕКСТ ==="))
         self.assertIn("пятница", prompt)
         self.assertNotIn("гормонального цикла", prompt)
-        self.assertIn("Фаза: cut_recomp", prompt)
-        self.assertIn("Объём за последние 7 дней", prompt)
+        self.assertIn("Фаза: «лёгкий дефицит-рекомп», неделя блока 1", prompt)
+        self.assertNotIn("cut_recomp", prompt)
+        self.assertNotIn("Объём за последние 7 дней", prompt)  # темп — из явки
+        self.assertIn("Объём за КРУГ", prompt)
         self.assertIn("квадрицепс/ягодичные: 1 прямых / 1 эффективных", prompt)
         self.assertIn("Дней с последней тренировки: 2", prompt)
         # Явка и активное окно всегда в данных — шапка программы отправляет
@@ -478,7 +512,8 @@ class WeeklyReportTests(unittest.TestCase):
         # читала бы наугад, а статус заметок нигде не был бы объявлен.
         self.assertIn("Значок после подхода", seen["user"])
         self.assertIn("Заметки — факты о контексте", seen["user"])
-        self.assertIn("=== ФАЗЫ ПОДГОТОВКИ ===", seen["system"])
+        self.assertNotIn("cut_recomp", seen["system"])
+        self.assertIn("Фаза: «лёгкий дефицит-рекомп», неделя блока 1", seen["user"])
         self.assertIn("Объём за 7 дней", seen["user"])
         self.assertIn("Новых ПР за период нет.", seen["user"])
 

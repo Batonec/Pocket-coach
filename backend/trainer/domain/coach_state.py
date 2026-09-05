@@ -46,8 +46,6 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
         "protein_g": (155, 165),
         # Ритм плановой разгрузки: N недель накопления, затем одна лёгкая.
         "deload_every_weeks": 6,
-        # Достижение (по 7-дневной средней) — повод предложить переход в lean_bulk.
-        "target_weight_kg": 75.5,
     },
     "lean_bulk": {
         "title": "lean bulk",
@@ -63,8 +61,6 @@ PHASE_DEFAULTS: dict[str, dict[str, Any]] = {
         "ramp_cap": (10, 16),
         "protein_g": (155, 165),
         "deload_every_weeks": 6,
-        # Достижение потолка — повод предложить мини-сушку или смену фазы.
-        "ceiling_weight_kg": 84.0,
     },
     "maintenance": {
         "title": "поддержание",
@@ -182,6 +178,10 @@ _OVERRIDABLE_PARAM_KEYS = {
     "sets_per_group",
     "protein_g",
     "sessions_per_week",
+    # Цель по весу (срез) и потолок набора дефолтов не имеют: это цифры стратегии
+    # атлета, а не методики. Стоковая цель однажды доехала до отчёта и до опорной
+    # линии графика в iOS на этапе, где худеть было не нужно. Без переопределения
+    # отчёт и iOS цель не показывают, матрица «цель достигнута» не объявляет.
     "target_weight_kg",
     "ceiling_weight_kg",
     "deload_every_weeks",

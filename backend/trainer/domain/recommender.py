@@ -103,7 +103,7 @@ def generate_with_trace(
         today,
         session_cap=plan_validator.phase_session_cap(coach_state.phase_params(state)),
     )
-    system = prompt_builder._build_system_prompt(catalog, profile, state, strategy)
+    system = prompt_builder._build_system_prompt(catalog, profile, strategy)
     user = prompt_builder._build_user_prompt(
         workouts,
         body_weights,
@@ -318,7 +318,7 @@ def generate_weekly_report(
         previous_report=previous_report,
     )
     text, usage = anthropic_client._request_model(
-        prompt_builder._build_report_system_prompt(profile, strategy, state),
+        prompt_builder._build_report_system_prompt(profile, strategy),
         user,
         schema=None,
         model=model,

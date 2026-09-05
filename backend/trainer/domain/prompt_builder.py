@@ -2,7 +2,7 @@
 """Сборка текста, который читает модель.
 
 Всё, что уезжает в промпт, собирается здесь: системный промпт (профиль атлета,
-семантика каталога, политика фаз, срез стратегии), user-промпт (контекст,
+семантика каталога, срез стратегии), user-промпт (контекст,
 вычисленные фичи, сырая история вперемешку с событиями и заметками), JSON-схема
 ответа и промпт недельного отчёта. Проза живёт в prompts/*.md и подставляется
 через coach_prompts; этот модуль только считает слоты из данных атлета и
@@ -122,10 +122,7 @@ def _render_profile(profile: dict[str, Any] | None) -> str:
     строку; без профиля — нейтральный фолбэк про взрослого здорового любителя.
     """
     if not profile:
-        return (
-            "Профиль атлета не настроен — веди как взрослого здорового любителя, "
-            "цель: качественный набор мышечной массы."
-        )
+        return _block("profile_absent")
     parts = []
     for title, text in profile.get("blocks", {}).items():
         body = str(text).strip()
@@ -392,38 +389,45 @@ def _render_attendance(workouts: list[dict[str, Any]], today: date) -> str:
     )
 
 
-def _render_volume(
+def _render_round_volume(
     workouts: list[dict[str, Any]],
     today: date,
     week_target: tuple[int, int] | None,
-    maintenance_sets: tuple[int, int] | None,
     params: dict[str, Any],
-) -> list[str]:
-    """Два блока объёма: за 7 дней — темп календарной недели, и за КРУГ из
-    последних четырёх тренировок — с целями по группам: цели программы описывают
-    один проход каркаса, и атлет через день по календарю вечно «недобирал» бы. В
-    режиме поддержания круга нет (одна сессия в неделю), цели остаются у недельного
-    блока. Общий для плана и отчёта.
+) -> str | None:
+    """Блок «Объём за КРУГ» из последних четырёх тренировок с целями по группам:
+    цели программы описывают один проход каркаса, и атлет через день по календарю
+    вечно «недобирал» бы. У плана это единственный блок объёма — темп он читает из
+    явки, а блок за 7 дней только тянул бы обратно к «недобору недели». ``None``
+    без единой тренировки. Общий для плана и отчёта.
+    """
+    volume, days = coach_features.round_volume(workouts, today)
+    if not days:
+        return None
+    return (
+        _block(
+            "round_volume_header",
+            count=str(len(days)),
+            start=days[0].isoformat(),
+            end=days[-1].isoformat(),
+        )
+        + "\n"
+        + render_weekly_volume(volume, week_target, None, params.get("group_targets"))
+    )
+
+
+def _render_weekly_volume(
+    workouts: list[dict[str, Any]],
+    today: date,
+    header: str,
+    maintenance_sets: tuple[int, int] | None = None,
+) -> str:
+    """Объём за 7 дней под данной подписью. У отчёта — темп календарной недели
+    рядом с кругом; у плана — только в режиме поддержания: одна сессия в неделю,
+    круга нет, цели недельные.
     """
     weekly = coach_features.weekly_volume(workouts, today)
-    if maintenance_sets:
-        return [
-            _block("volume_header") + "\n" + render_weekly_volume(weekly, None, maintenance_sets)
-        ]
-    chunks = [_block("volume_header") + "\n" + render_weekly_volume(weekly, None)]
-    volume, days = coach_features.round_volume(workouts, today)
-    if days:
-        chunks.append(
-            _block(
-                "round_volume_header",
-                count=str(len(days)),
-                start=days[0].isoformat(),
-                end=days[-1].isoformat(),
-            )
-            + "\n"
-            + render_weekly_volume(volume, week_target, None, params.get("group_targets"))
-        )
-    return chunks
+    return header + "\n" + render_weekly_volume(weekly, None, maintenance_sets)
 
 
 def previous_advice(rationale: str | None) -> str | None:
@@ -471,9 +475,7 @@ def _render_previous_card(
         else 0
     )
     status = (
-        f"после неё записано тренировок: {newer} — она уже отработана"
-        if newer
-        else "тренировок по ней ещё не было — ты пересобираешь ту же сессию"
+        _block("previous_card_used", count=str(newer)) if newer else _block("previous_card_unused")
     )
     exercises = ", ".join(
         f"{exercise.get('name') or exercise.get('exercise_id')} ×{len(exercise.get('sets') or [])}"
@@ -489,7 +491,7 @@ def _render_previous_card(
         focus=" ".join(str(payload.get("focus") or "").split()) or "—",
         load=str(payload.get("load_type") or "?"),
         exercises=exercises or "—",
-        advice=f" Обещание на следующую сессию из её rationale: «{advice}»." if advice else "",
+        advice=_block("previous_card_promise", advice=advice) if advice else "",
     )
 
 
@@ -532,11 +534,8 @@ def _days_since_last(workouts: list[dict[str, Any]], today: date) -> int | None:
     return None
 
 
-# Шаблон политики фаз читается один раз: он не зависит от данных, а слоты нужны
-# для сборки — рендерить только то, что шаблон реально просит.
+# Фрагменты читаются один раз на импорт: от данных они не зависят.
 _BLOCKS = coach_prompts.fragments("user_blocks")
-_PHASE_POLICY_TEMPLATE = coach_prompts.load("phase_policy")
-_PHASE_POLICY_SLOTS = coach_prompts.slots(_PHASE_POLICY_TEMPLATE)
 # Текст исправляющего сообщения и первый пункт списка границ — из того же файла,
 # из которого plan_validator читает сами правила.
 _RULES = coach_prompts.fragments("plan_rules")
@@ -567,50 +566,6 @@ def _format_number(value: Any) -> str:
     return str(value)
 
 
-def _format_low(bounds: Any) -> str:
-    """Нижняя граница диапазонного параметра; скалярное переопределение — как есть."""
-    if isinstance(bounds, (tuple, list)) and bounds:
-        return _format_number(bounds[0])
-    return _format_number(bounds)
-
-
-def _render_phase_policy(state: dict[str, Any] | None = None) -> str:
-    """Политика фаз для системного промпта: проза в ``prompts/phase_policy.md``,
-    здесь считаются только числа в её слотах.
-
-    АКТИВНАЯ фаза рендерится из слитых параметров атлета (переопределения
-    ``phase_params`` поверх дефолтов), иначе промпт нёс бы стоковые числа, а блок
-    КОНТЕКСТ — настоящие, и модель получала бы две противоречащие методики в одном
-    запросе. Две неактивные фазы остаются со стоковыми числами: они фон, и при
-    переключении их всё равно задают заново.
-    """
-    merged = coach_state.phase_params(state) if state is not None else None
-    short = {"cut_recomp": "cut", "lean_bulk": "bulk", "maintenance": "maint"}
-    ranges = {"calories", "session_sets", "ramp_start", "ramp_cap", "sets_per_group"}
-    values: dict[str, str] = {}
-    for phase, prefix in short.items():
-        params = (
-            merged
-            if merged is not None and merged.get("phase") == phase
-            else coach_state.PHASE_DEFAULTS[phase]
-        )
-        for key in ("title", "rate_text", "frequency_text"):
-            if f"{prefix}_{key}" in _PHASE_POLICY_SLOTS:
-                values[f"{prefix}_{key}"] = str(params.get(key, ""))
-        for key in ranges:
-            if f"{prefix}_{key}" in _PHASE_POLICY_SLOTS:
-                values[f"{prefix}_{key}"] = _format_range(params.get(key))
-        if f"{prefix}_protein_g" in _PHASE_POLICY_SLOTS:
-            values[f"{prefix}_protein_g"] = (
-                _format_low(params.get("protein_g"))
-                if phase == "maintenance"
-                else _format_range(params.get("protein_g"))
-            )
-        if f"{prefix}_ceiling_weight_kg" in _PHASE_POLICY_SLOTS:
-            values[f"{prefix}_ceiling_weight_kg"] = _format_number(params.get("ceiling_weight_kg"))
-    return coach_prompts.render(_PHASE_POLICY_TEMPLATE, **values)
-
-
 def _render_hard_rules() -> str:
     """Блок «ЖЁСТКИЕ ГРАНИЦЫ» системного промпта: нумерованный список формулировок
     из ``plan_rules.md``. Первым — ``catalog_only`` (свойство JSON-схемы, а не
@@ -637,16 +592,18 @@ def _build_reprompt(violations: list[str]) -> str:
 def _build_system_prompt(
     catalog: list[dict[str, Any]],
     profile: dict[str, Any] | None = None,
-    state: dict[str, Any] | None = None,
     strategy: str | None = None,
 ) -> str:
     """Системный промпт плана из шаблона ``prompts/next_workout.md``.
 
-    Проза живёт в шаблоне; здесь только шесть слотов: профиль, каталог с семантикой
-    тренажёров (без дубля id 1), пробелы каталога, политика фаз, жёсткие границы
-    (из ``plan_rules.md`` в порядке ``plan_validator.RULES``), срез стратегии.
-    Всё, что не вычисленное значение, должно уйти в markdown. Зовут
-    ``recommender.generate_with_trace`` и Coach MCP (``coach_preview_prompt``).
+    Проза живёт в шаблоне; здесь только пять слотов: профиль, каталог с семантикой
+    тренажёров (без дубля id 1), пробелы каталога, жёсткие границы (из
+    ``plan_rules.md`` в порядке ``plan_validator.RULES``), срез стратегии.
+    Ориентиры фазы в системный промпт не входят: они меняются с состоянием
+    атлета и приходят первой строкой user-промпта (``context_phase``); семь фаз
+    стратегии модель читает в срезе ПРОГРАММЫ. Всё, что не вычисленное значение,
+    должно уйти в markdown. Зовут ``recommender.generate_with_trace`` и Coach MCP
+    (``coach_preview_prompt``).
     """
     catalog_lines = "\n".join(
         f"  {item['id']} — {item['name']}: {CATALOG_SEMANTICS.get(item['id'], 'тренажёр')}"
@@ -658,7 +615,6 @@ def _build_system_prompt(
         profile=_render_profile(profile),
         catalog=catalog_lines,
         catalog_gaps=CATALOG_GAPS,
-        phase_policy=_render_phase_policy(state),
         hard_rules=_render_hard_rules(),
         program=_render_program(strategy),
     )
@@ -716,7 +672,6 @@ def _build_user_prompt(
         ),
         _block(
             "context_phase",
-            phase=phase,
             title=str(params["title"]),
             week_label=week_label,
             calories=_format_range(params["calories"]),
@@ -747,7 +702,16 @@ def _build_user_prompt(
     chunks = ["=== КОНТЕКСТ ===\n" + "\n".join(context_lines)]
 
     maintenance_sets = params.get("sets_per_group") if phase == "maintenance" else None
-    chunks.extend(_render_volume(workouts, today, week_target, maintenance_sets, params))
+    if maintenance_sets:
+        chunks.append(
+            _render_weekly_volume(
+                workouts, today, _block("maintenance_volume_header"), maintenance_sets
+            )
+        )
+    else:
+        round_block = _render_round_volume(workouts, today, week_target, params)
+        if round_block:
+            chunks.append(round_block)
     chunks.append(_render_attendance(workouts, today))
 
     measurement_lines = render_measurements(body_weights, waists, today)
@@ -916,21 +880,19 @@ _REPORT_TEMPLATE = coach_prompts.load("weekly_report")
 def _build_report_system_prompt(
     profile: dict[str, Any] | None = None,
     strategy: str | None = None,
-    state: dict[str, Any] | None = None,
 ) -> str:
-    """Системный промпт недельного отчёта: профиль, политика фаз, срез программы.
+    """Системный промпт недельного отчёта: профиль и срез программы.
 
     До этого он был константой: отчёт не получал ни профиля, ни программы, то
     есть писался про абстрактного атлета. Гейту этапа при этом негде было
     прозвучать — а гейт жёсткий, и должно существовать место, где его статус
-    называют вслух. Политика фаз — та же, что у плана, и рендерится из
-    параметров атлета: без неё блок «без ПР — и почему это ок» писался бы, не
-    зная, что на срезе плато по весам не проблема, а на удержании объём не растёт.
+    называют вслух. Ориентиры фазы приходят user-промптом (``report_phase``), а
+    правила самой фазы — «на срезе веса могут встать, это дефицит, а не потолок» —
+    из глав стратегии в срезе, где они сказаны точнее любого общего описания.
     """
     return coach_prompts.render(
         _REPORT_TEMPLATE,
         profile=_render_profile(profile),
-        phase_policy=_render_phase_policy(state),
         program=_render_program(strategy, REPORT_STRATEGY_SECTIONS),
     )
 
@@ -1029,7 +991,6 @@ def _build_report_prompt(
         ),
         _block(
             "report_phase",
-            phase=params["phase"],
             title=str(params["title"]),
             week=str(position["block_week"]),
             flags=(_block("report_deload_label") if position["deload_week"] else "")
@@ -1054,7 +1015,10 @@ def _build_report_prompt(
             started=started,
             ended=today,
         )
-        progress = [_block("report_phase_progress_header"), render_phase_summary(summary)]
+        progress = [
+            _block("report_phase_progress_header"),
+            render_phase_summary(summary, title=str(params["title"])),
+        ]
         if params.get("target_weight_kg"):
             progress.append(
                 _block("report_phase_target", target=_format_number(params["target_weight_kg"]))
@@ -1111,17 +1075,22 @@ def _build_report_prompt(
         else coach_state.weekly_volume_target(state, position["cycle_week"])
     )
     maintenance_sets = params.get("sets_per_group") if params["phase"] == "maintenance" else None
-    volume_chunks = _render_volume(workouts, today, week_target, maintenance_sets, params)
-    volume_chunks[0] = volume_chunks[0].replace(
-        _block("volume_header"),
-        _block(
-            "report_volume_header",
-            total=str(coach_features.sets_in_window(workouts, today)),
-            previous=str(coach_features.sets_in_window(workouts, today - timedelta(days=7))),
-        ),
-        1,
+    chunks.append(
+        _render_weekly_volume(
+            workouts,
+            today,
+            _block(
+                "report_volume_header",
+                total=str(coach_features.sets_in_window(workouts, today)),
+                previous=str(coach_features.sets_in_window(workouts, today - timedelta(days=7))),
+            ),
+            maintenance_sets,
+        )
     )
-    chunks.extend(volume_chunks)
+    if not maintenance_sets:
+        round_block = _render_round_volume(workouts, today, week_target, params)
+        if round_block:
+            chunks.append(round_block)
     chunks.append(_render_attendance(workouts, today))
 
     summaries = coach_features.exercise_summaries(workouts, catalog, today)
@@ -1184,23 +1153,18 @@ def _build_report_prompt(
     next_bits: list[str] = []
     every = params.get("deload_every_weeks")
     if position["deload_week"]:
-        next_bits.append(
-            _block(
-                "report_next_deload_now",
-                ramp_start=_format_range(params.get("ramp_start")),
-            )
-        )
+        next_bits.append(_block("report_next_deload_now"))
     elif every and position["cycle_week"] >= int(every):
         next_bits.append(_block("report_next_deload_soon"))
-    else:
+    elif not params.get("group_targets"):
+        # Коридор недели блока — эффективные сеты на крупную группу по дефолтной
+        # методике. При целях по группам он спорил бы с блоком «Объём за КРУГ»
+        # (прямые сеты, за круг): отчёт однажды повторил атлету «9–15 эффективных»
+        # при целях «спина 12–14 прямых».
         next_week = coach_state.weekly_volume_target(state, position["cycle_week"] + 1)
         if next_week:
             next_bits.append(
-                _block(
-                    "report_next_target",
-                    low=str(next_week[0]),
-                    high=str(next_week[1]),
-                )
+                _block("report_next_target", low=str(next_week[0]), high=str(next_week[1]))
             )
     if next_bits:
         chunks.append("\n".join(next_bits))
@@ -1280,25 +1244,27 @@ def render_weekly_volume(
             line = f"  {group}: {counts['direct']} прямых / {effective} эффективных"
         lines.append(line)
     if group_targets:
-        lines.append(
-            "  Цели — в ПРЯМЫХ сетах на круг из четырёх тренировок (один проход каркаса; по "
-            "программе это неделя четырёхдневки) и на объём ЗРЕЛОГО блока; на неделях разгона "
-            "идём к ним снизу, ориентир — в разделе ПРОГРАММА. Эффективные сеты справочные: "
-            "показывают, сколько косвенной работы группа уже получила, но цель не закрывают."
-        )
+        lines.append(_block("round_targets_note"))
     elif week_target:
         small = ", ".join(
             f"{group} {low}–{high}"
             for group, (low, high) in coach_features.SMALL_GROUP_TARGETS.items()
         )
         lines.append(
-            f"  Цель круга (недели блока) для крупных групп: {week_target[0]}–{week_target[1]} "
-            f"эффективных сетов; ориентиры малых групп (прямых): {small}."
+            _block(
+                "round_default_targets",
+                low=str(week_target[0]),
+                high=str(week_target[1]),
+                small=small,
+            )
         )
     elif maintenance_sets:
         lines.append(
-            f"  Режим поддержания: {maintenance_sets[0]}–{maintenance_sets[1]} сета на группу "
-            "в неделю, объём НЕ растёт."
+            _block(
+                "maintenance_targets",
+                low=str(maintenance_sets[0]),
+                high=str(maintenance_sets[1]),
+            )
         )
     return "\n".join(lines)
 
@@ -1312,38 +1278,27 @@ def render_stall_report(report: dict[str, Any]) -> str:
         f"{group} {value:.1f} (порог {threshold:g})"
         for group, (value, threshold) in report["volume_per_round"].items()
     )
-    facts = (
-        f"Активное окно {report['window_days']} дн. (с {report['window_start'].isoformat()}; "
-        "перерыв ≥14 дней и прошлая фаза в него не входят): "
-        f"частота {report['frequency']:.1f}/нед; прямых сетов за круг из "
-        f"{coach_features.ROUND_SESSIONS} тренировок: {volume}."
+    facts = _block(
+        "stall_window",
+        days=str(report["window_days"]),
+        start=report["window_start"].isoformat(),
+        frequency=f"{report['frequency']:.1f}",
+        sessions=str(coach_features.ROUND_SESSIONS),
+        volume=volume,
     )
     if report["too_short"]:
-        verdict = (
-            f"Окно короче {coach_features.STALL_MIN_WINDOW_DAYS} дней — предусловия прогресса и застой "
-            "пока не оцениваются."
-        )
+        verdict = _block("stall_too_short", days=str(coach_features.STALL_MIN_WINDOW_DAYS))
     elif not report["preconditions_ok"]:
-        verdict = (
-            "Предусловия прогресса НЕ выполнены ("
-            + "; ".join(report["reasons"])
-            + ") — плато, если оно есть, объясняй посещаемостью/питанием, а не потолком."
-        )
+        verdict = _block("stall_preconditions_failed", reasons="; ".join(report["reasons"]))
     elif report["stalled"]:
         names = ", ".join(
             f"{s['name']} (без прироста {s['quiet_days']} дн.)" for s in report["stalled"]
         )
-        verdict = (
-            f"ЗАСТОЙ при выполненных предусловиях (частота/объём/питание в норме): {names}. "
-            "Предложи deload −10% с разгоном или вариацию по этим движениям."
-        )
+        verdict = _block("stall_detected", names=names)
     elif report["window_days"] < coach_features.STALL_NO_PR_DAYS:
-        verdict = (
-            f"Предусловия прогресса выполнены; окну меньше {coach_features.STALL_NO_PR_DAYS} дней — "
-            "застой ещё не оценивается."
-        )
+        verdict = _block("stall_window_young", days=str(coach_features.STALL_NO_PR_DAYS))
     else:
-        verdict = "Предусловия прогресса выполнены, застоя по упражнениям нет."
+        verdict = _block("stall_clear")
     return f"{facts}\n{verdict}"
 
 
@@ -1369,13 +1324,7 @@ def render_pre_break_weights(items: list[dict[str, Any]], break_days: int) -> st
         f"  {item['name']}: {item['last_working']:g}" + (" противовеса" if item["inverted"] else "")
         for item in items
     ]
-    return (
-        f"Рабочие веса в последней сессии ПЕРЕД перерывом ({break_days} дн. "
-        "назад). Это форма до паузы, а не сегодняшняя: отметки усилия и RIR в "
-        "истории тоже относятся к тем сессиям. Насколько снизить вход и как "
-        "быстро возвращаться к этим весам — решай сам по принципам возврата "
-        "после перерыва.\n" + "\n".join(lines)
-    )
+    return _block("pre_break_header", days=str(break_days)) + "\n" + "\n".join(lines)
 
 
 def render_comeback_ramp(items: list[dict[str, Any]]) -> list[str]:
@@ -1409,7 +1358,7 @@ def render_measurements(
         count = coach_features.weigh_ins_in_window(weights, today)
         line = f"Вес тела: {tail}. Дней с последнего замера: {age}. Замеров за последние 7 дней: {count}"
         line += (
-            f" (для недельной средней нужно ≥{coach_features.WEEKLY_MEAN_MIN_POINTS})."
+            _block("weekly_mean_hint", points=str(coach_features.WEEKLY_MEAN_MIN_POINTS)) + "."
             if count < coach_features.WEEKLY_MEAN_MIN_POINTS
             else "."
         )
@@ -1454,14 +1403,13 @@ def render_measurement_overview(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def render_phase_summary(summary: dict[str, Any]) -> str:
+def render_phase_summary(summary: dict[str, Any], title: str | None = None) -> str:
     """Итоги фазы текстом: длительность, тренировки, вес и талия от начала к концу,
-    ПР за фазу, дисциплина. Зовёт Coach MCP (``coach_phase_summary``).
+    ПР за фазу, дисциплина. Зовут Coach MCP (``coach_phase_summary``, машинное имя
+    фазы) и промпт отчёта — с ``title``, названием фазы для модели.
     """
-    lines = [
-        f"Фаза {summary['phase']}: {summary['started']} → {summary['ended']} "
-        f"({summary['weeks']} нед)."
-    ]
+    label = f"«{title}»" if title else summary["phase"]
+    lines = [f"Фаза {label}: {summary['started']} → {summary['ended']} ({summary['weeks']} нед)."]
     per_week = f" ({summary['per_week']}/нед)" if summary["per_week"] is not None else ""
     lines.append(f"Тренировок: {summary['workouts']}{per_week}.")
     if summary["weight_start"] is not None and summary["weight_end"] is not None:
