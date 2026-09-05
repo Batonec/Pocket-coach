@@ -16,7 +16,7 @@ from pathlib import Path
 
 from support import JsonHttpClient, running_miniapp_server, sample_workout_payload
 
-from jobs import refresh_recommendation, weekly_report
+from infra.jobs import refresh_recommendation, weekly_report
 from trainer import backend_store
 from trainer.coach import coach_prompts, coach_state, prompt_builder, recommender
 

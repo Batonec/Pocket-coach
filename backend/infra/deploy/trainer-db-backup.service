@@ -5,5 +5,5 @@ Description=Trainer: backup trainer.db (consistent snapshot + rotation)
 Type=oneshot
 WorkingDirectory=/opt/trainer-miniapp/app
 EnvironmentFile=/etc/trainer-miniapp/backend.env
-ExecStart=/usr/bin/python3 /opt/trainer-miniapp/app/jobs/backup_db.py
+ExecStart=/usr/bin/python3 /opt/trainer-miniapp/app/infra/jobs/backup_db.py
 User=root

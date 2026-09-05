@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-MINIAPP_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+# backend/ — на два уровня выше: скрипт лежит в backend/infra/deploy/.
+MINIAPP_DIR="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 
 # Адрес VPS в публичном репозитории не хранится: он берётся из переменной
 # TRAINER_VPS_HOST либо из gitignored-файла target.local рядом с этим скриптом
@@ -34,7 +35,7 @@ Usage:
   $(basename "$0") all
 
 Environment variables:
-  TRAINER_VPS_HOST      SSH target (required; may come from deploy/target.local)
+  TRAINER_VPS_HOST      SSH target (required; may come from infra/deploy/target.local)
   TRAINER_REMOTE_BASE   Remote base dir, default: $REMOTE_BASE
   TRAINER_BOT_SERVICE   systemd service name, default: $BOT_SERVICE
   TRAINER_BACKEND_SERVICE systemd service name, default: $BACKEND_SERVICE
@@ -140,21 +141,21 @@ deploy_backend() {
   log "Deploying backend files to $TARGET_HOST"
   remote "mkdir -p '$REMOTE_BASE/app'"
   scp "$MINIAPP_DIR/server.py" "${TARGET_HOST}:${REMOTE_BASE}/app/server.py" >/dev/null
-  # Код едет каталогами, как и проза: пакет trainer/ и скрипты таймеров jobs/
-  # целиком. Поимённого списка модулей нет специально — новому файлу негде
+  # Код едет каталогами, как и проза: пакет trainer/ и скрипты таймеров
+  # infra/jobs/ целиком. Поимённого списка модулей нет специально — новому файлу негде
   # потеряться по дороге на прод.
   sync_dir "$MINIAPP_DIR/trainer" "$REMOTE_BASE/app/trainer"
-  sync_dir "$MINIAPP_DIR/jobs" "$REMOTE_BASE/app/jobs"
+  sync_dir "$MINIAPP_DIR/infra/jobs" "$REMOTE_BASE/app/infra/jobs"
   sync_dir "$MINIAPP_DIR/prompts" "$REMOTE_BASE/app/prompts"
-  sync_dir "$MINIAPP_DIR/copy" "$REMOTE_BASE/app/copy"
-  # Юниты и таймеры едут все: таймеры ссылаются на пути скриптов в jobs/, и
+  sync_dir "$MINIAPP_DIR/resources/copy" "$REMOTE_BASE/app/resources/copy"
+  # Юниты и таймеры едут все: таймеры ссылаются на пути скриптов в infra/jobs/, и
   # переезд скрипта без юнита молча остановил бы таймер. Новый таймер это не
   # включает — enable делается руками один раз.
   scp "$SCRIPT_DIR"/*.service "$SCRIPT_DIR"/*.timer "${TARGET_HOST}:/etc/systemd/system/" >/dev/null
   scp "$SCRIPT_DIR/trainer-miniapp-backend.service" "${TARGET_HOST}:/etc/systemd/system/${BACKEND_SERVICE}" >/dev/null
-  # Плоская раскладка до пакета trainer/ держала модули прямо в app/. Строку
-  # можно убрать после первого деплоя новой раскладки.
-  remote "cd '$REMOTE_BASE/app' && rm -f backend_store.py anthropic_client.py coach_features.py coach_prompts.py coach_signals.py coach_state.py plan_validator.py prompt_builder.py recommender.py backup_db.py refresh_recommendation.py weekly_report.py"
+  # Плоская раскладка до пакета trainer/ держала модули прямо в app/, а тексты
+  # баннеров — в app/copy/. Строку можно убрать после первого деплоя новой раскладки.
+  remote "cd '$REMOTE_BASE/app' && rm -f backend_store.py anthropic_client.py coach_features.py coach_prompts.py coach_signals.py coach_state.py plan_validator.py prompt_builder.py recommender.py backup_db.py refresh_recommendation.py weekly_report.py && rm -rf copy"
   remote "find '$REMOTE_BASE/app' -name '*.py' -exec chmod 644 {} + && chmod 644 /etc/systemd/system/trainer-*.service /etc/systemd/system/trainer-*.timer"
   remote "test -f /etc/trainer-miniapp/backend.env"
   remote "systemctl daemon-reload && systemctl enable --now '$BACKEND_SERVICE' && systemctl restart '$BACKEND_SERVICE'"

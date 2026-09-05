@@ -18,7 +18,7 @@ from pathlib import Path
 
 from support import sample_workout_payload
 
-from jobs import weekly_report
+from infra.jobs import weekly_report
 from trainer import backend_store
 from trainer.coach import coach_state, recommender
 

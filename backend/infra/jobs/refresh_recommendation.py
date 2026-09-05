@@ -2,7 +2,7 @@
 """Keep the coach recommendation fresh: regenerate it when it's older than
 REFRESH_MAX_AGE_HOURS (default 24).
 
-Run by a systemd timer every morning (deploy/trainer-recommend-refresh.timer),
+Run by a systemd timer every morning (infra/deploy/trainer-recommend-refresh.timer),
 so the "когда идти" advice in the card is dated today, even if the athlete
 hasn't trained for a while. Standalone on purpose — no HTTP, no server import:
 reads the same env (EnvironmentFile=/etc/trainer-miniapp/backend.env), talks to
@@ -24,14 +24,14 @@ from typing import Any
 
 # Скрипт запускается как файл, а не как модуль: корень backend (там пакет
 # trainer) в sys.path кладём сами.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from trainer import backend_store
 from trainer.coach import coach_state, recommender
 
-BASE_DIR = Path(__file__).resolve().parents[1]  # backend/: там data/ и static/
+BASE_DIR = Path(__file__).resolve().parents[2]  # backend/: там data/ и resources/
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
-STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "static")))
+STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "resources" / "static")))
 PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
 STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))
 STATE_PATH = coach_state.default_state_path(DB_PATH)

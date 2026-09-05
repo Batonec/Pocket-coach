@@ -74,7 +74,7 @@ def load_profile(path: Path | str | None) -> dict[str, Any] | None:
 
     The real profile lives ONLY on the server next to the database — it holds
     personal/medical context and must never be committed to the public repo
-    (see examples/coach_profile.example.json). Missing/broken file → None: generation
+    (see resources/examples/coach_profile.example.json). Missing/broken file → None: generation
     still works, just without the personal context.
     """
     if not path:

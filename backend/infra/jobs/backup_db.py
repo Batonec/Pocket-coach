@@ -7,7 +7,7 @@ sqlite3 CLI or a service stop. The result is gzip-compressed, and the athlete
 profile (which lives next to the DB and is NOT in git) is copied alongside so a
 single backup directory restores everything.
 
-Run by deploy/trainer-db-backup.timer (daily). Keeps the newest
+Run by infra/deploy/trainer-db-backup.timer (daily). Keeps the newest
 BACKUP_KEEP backups and deletes older ones.
 
     python3 backup_db.py                  # backup + rotate
@@ -24,7 +24,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parents[1]  # backend/: там data/ и static/
+BASE_DIR = Path(__file__).resolve().parents[2]  # backend/: там data/ и resources/
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
 PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
 STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))

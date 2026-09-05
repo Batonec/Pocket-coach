@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate and cache the coach weekly report.
 
-Run by deploy/trainer-weekly-report.timer in the night from Sunday to Monday,
+Run by infra/deploy/trainer-weekly-report.timer in the night from Sunday to Monday,
 once the week is actually over, so the athlete opens an instant, token-free
 report in the Coach MCP chat. Standalone like refresh_recommendation.py: no
 HTTP, reads the same env, talks to SQLite and the Claude API directly.
@@ -20,14 +20,14 @@ from pathlib import Path
 
 # Скрипт запускается как файл, а не как модуль: корень backend (там пакет
 # trainer) в sys.path кладём сами.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from trainer import backend_store
 from trainer.coach import coach_state, recommender
 
-BASE_DIR = Path(__file__).resolve().parents[1]  # backend/: там data/ и static/
+BASE_DIR = Path(__file__).resolve().parents[2]  # backend/: там data/ и resources/
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
-STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "static")))
+STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "resources" / "static")))
 STATE_PATH = coach_state.default_state_path(DB_PATH)
 PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
 STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))

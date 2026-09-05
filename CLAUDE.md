@@ -49,7 +49,7 @@ ruff check .            # Python: линт          (brew install ruff)
 ruff format .           # Python: формат
 git ls-files -z '*.swift' | xargs -0 xcrun swift-format lint --strict --parallel
 git ls-files -z '*.swift' | xargs -0 xcrun swift-format format --in-place --parallel
-shellcheck backend/deploy/deploy.sh .claude/hooks/claude-md-reminder.sh
+shellcheck backend/infra/deploy/deploy.sh .claude/hooks/claude-md-reminder.sh
 actionlint              # .github/workflows/*.yml (brew install actionlint)
 ```
 
@@ -82,7 +82,7 @@ unittest-suite (всегда), `swift-format lint --strict` и iOS-тесты (�
 blind-except проезжает молча.
 
 Деплой: пуш в `main` → CI прогоняет тесты → если затронут backend, деплоит его на VPS.
-Ручной вариант — `./backend/deploy/deploy.sh backend` (`web`/`bot` там мёртвые, `coach-mcp` живой).
+Ручной вариант — `./backend/infra/deploy/deploy.sh backend` (`web`/`bot` там мёртвые, `coach-mcp` живой).
 
 ## Архитектура
 
@@ -104,25 +104,24 @@ Claude Desktop ──MCP──►  coach_mcp/server.py  ────────
 поэтому правила модели (одно открытое событие, запрет будущего) живут в `backend_store.py`,
 а не в хендлерах и не в UI.
 
-Раскладка `backend/`: в корне только точка входа и папки, имена модулей внутри те же, что и
-раньше, поэтому в документации они упоминаются по имени файла (`coach_state.py` значит
-`backend/trainer/coach/coach_state.py`).
+Раскладка `backend/`: наверху то, что читают глазами, — код, проза и тесты; обвязка сложена в
+две папки. Имена модулей внутри те же, что и раньше, поэтому в документации они упоминаются по
+имени файла (`coach_state.py` значит `backend/trainer/coach/coach_state.py`).
 
 ```
 backend/
-├── server.py        HTTP API — процесс, который крутит systemd; импортирует всё остальное
-├── trainer/         пакет: backend_store.py и coach/ — восемь модулей слоя коуча (см. ниже)
-├── jobs/            скрипты таймеров: refresh_recommendation.py, weekly_report.py, backup_db.py
-├── prompts/ copy/   проза для модели и тексты баннеров для клиента: две аудитории, две папки
-├── static/          каталог упражнений
-├── examples/        шаблоны личных файлов, которые живут только на VPS (*.example.*)
-├── deploy/          deploy.sh и systemd-юниты
-└── tests/
+├── server.py      HTTP API — процесс, который крутит systemd; импортирует всё остальное
+├── trainer/       пакет: backend_store.py и coach/ — восемь модулей слоя коуча (см. ниже)
+├── prompts/       проза для модели
+├── tests/
+├── infra/         deploy/ (deploy.sh и systemd-юниты) и jobs/ (скрипты таймеров)
+└── resources/     static/ (каталог упражнений), copy/ (тексты баннеров для клиента),
+                   examples/ (шаблоны личных файлов, которые живут только на VPS)
 ```
 
-Импорт — `from trainer.coach import coach_state`; где лежат `prompts/`, `copy/`, `static/` и
-локальная `data/`, модули узнают через `trainer.BACKEND_DIR`. Скрипты в `jobs/` запускаются как
-файлы (`python3 backend/jobs/weekly_report.py`), поэтому корень backend в `sys.path` кладут сами.
+Импорт — `from trainer.coach import coach_state`; где лежат `prompts/`, `resources/` и локальная
+`data/`, модули узнают через `trainer.BACKEND_DIR`. Скрипты в `infra/jobs/` запускаются как файлы
+(`python3 backend/infra/jobs/weekly_report.py`), поэтому корень backend в `sys.path` кладут сами.
 
 `server.py` — `BaseHTTPRequestHandler` без фреймворка: `do_*` отдают запрос в `_dispatch`, а тот
 ищет обработчик в таблицах `ROUTES` (метод + точный путь) и `ID_ROUTES` (`/api/<коллекция>/<id>`).
@@ -149,7 +148,7 @@ SQLite: workouts, body_weights, waists, events + coach_state.json + coach_profil
    │                    доперерывному рабочему (не к пику), тренды веса/талии, матрица
    │                    питания по коридору темпа фазы, дисциплина «факт vs план»
    │
-   ├─ copy/signals.md   ТЕКСТЫ БАННЕРОВ для клиента — не промпт, модель их не видит.
+   ├─ resources/copy/signals.md  ТЕКСТЫ БАННЕРОВ для клиента — не промпт, модель их не видит.
    │                    Пороги и жизненный цикл остаются в coach_signals.py: ключ
    │                    эпизода строится из фактов, поэтому правка текста не трогает
    │                    ни схлопывание, ни дисмиссы.
@@ -272,15 +271,15 @@ UI. Отсюда два следствия: стор стал синглтоно
 модель читает историю.
 
 **Код backend едет на прод каталогами, а не списком.** `server.py` копируется поимённо, всё
-остальное — целиком: `trainer/`, `jobs/`, `prompts/`, `copy/` и юниты из `deploy/` (`sync_dir` в
+остальное — целиком: `trainer/`, `infra/jobs/`, `prompts/`, `resources/copy/` и юниты из `infra/deploy/` (`sync_dir` в
 скрипте, `scp -r` в воркфлоу). Новый модуль внутри этих папок доезжает сам. Что всё ещё держится
 руками — **новая папка верхнего уровня** в `backend/`, её нужно прописать в трёх местах:
 
 1. `.github/workflows/ci.yml` — регексп фильтра изменённых файлов (job `changes`);
 2. `.github/workflows/deploy-backend.yml` — `mkdir` и `scp -r`;
-3. `backend/deploy/deploy.sh` — `sync_dir` в `deploy_backend`.
+3. `backend/infra/deploy/deploy.sh` — `sync_dir` в `deploy_backend`.
 
-Юниты systemd тоже едут с кодом: таймеры ссылаются на пути скриптов в `jobs/`, и переезд
+Юниты systemd тоже едут с кодом: таймеры ссылаются на пути скриптов в `infra/jobs/`, и переезд
 скрипта без юнита молча остановил бы таймер. Новый таймер деплой не включает — `systemctl
 enable --now` один раз руками.
 
@@ -327,7 +326,7 @@ backend-модули своими и кладёт в секцию ниже, а `
 
 **Персональные данные не в репозитории.** Репозиторий публичный. `backend/data/` в `.gitignore`;
 реальные `coach_profile.json` (медицинский контекст), `coach_state.json` и `coach_strategy.md`
-живут только на VPS рядом с базой. В репо — только шаблоны `*.example.*` в `backend/examples/`. Не коммить содержимое профиля
+живут только на VPS рядом с базой. В репо — только шаблоны `*.example.*` в `backend/resources/examples/`. Не коммить содержимое профиля
 и стратегии и не вставляй их в примеры.
 
 **Стратегия доезжает до промпта срезом, и это ДВА места ручной синхронизации, оба молчащие.**
@@ -337,7 +336,7 @@ backend-модули своими и кладёт в секцию ниже, а `
 заголовок не исчезает молча — он попадает в промпт отдельным предупреждением и виден в
 `coach_preview_prompt`. Проверять после каждой правки документа именно там.
 
-**Каталог упражнений закрыт.** 12 упражнений в `backend/static/data/exercises.json`, отдаётся по
+**Каталог упражнений закрыт.** 12 упражнений в `backend/resources/static/data/exercises.json`, отдаётся по
 `GET /data/exercises.json`; в iOS есть fallback-копия `ios/TrainerIOS/Resources/exercises.json`.
 `exercise_id` зашит enum'ом в JSON-схему запроса к модели. Дубль каталога (id 1 ≡ id 18) слит на
 сериализации: модель видит только id 18. Гравитрон (id 4) выведен из каталога в августе 2026 —

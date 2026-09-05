@@ -17,10 +17,10 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 - [backend/trainer/coach/coach_state.py](./trainer/coach/coach_state.py) — машина фаз подготовки (cut_recomp / lean_bulk / maintenance), volume ramp по неделям блока
 - [backend/trainer/coach/coach_features.py](./trainer/coach/coach_features.py) — вычисляемые фичи истории: per-exercise сводки (пики, e1RM, ПР), детектор застоя, ступени разгона после перерыва, эффективные недельные объёмы, тренды веса/талии и матрица питания
 - [backend/trainer/coach/coach_signals.py](./trainer/coach/coach_signals.py) — детерминированные баннеры коуча; каноническая спецификация — [docs/COACH_SIGNALS.md](../docs/COACH_SIGNALS.md)
-- [backend/static/data/exercises.json](./static/data/exercises.json) — каталог упражнений (отдаётся клиенту по `/data/exercises.json`)
-- [backend/jobs](./jobs) — скрипты systemd-таймеров: авто-свежесть совета, недельный отчёт, бэкап базы
-- [backend/examples](./examples) — шаблоны личных файлов, которые живут только на VPS рядом с базой: профиль, состояние, стратегия
-- [backend/deploy](./deploy) — деплой на VPS и systemd-юниты
+- [backend/resources/static/data/exercises.json](./resources/static/data/exercises.json) — каталог упражнений (отдаётся клиенту по `/data/exercises.json`)
+- [backend/infra/jobs](./infra/jobs) — скрипты systemd-таймеров: авто-свежесть совета, недельный отчёт, бэкап базы
+- [backend/resources/examples](./resources/examples) — шаблоны личных файлов, которые живут только на VPS рядом с базой: профиль, состояние, стратегия
+- [backend/infra/deploy](./infra/deploy) — деплой на VPS и systemd-юниты
 - [backend/tests](./tests) — тесты backend
 
 ## HTTP endpoints
@@ -64,19 +64,19 @@ Messages API (structured outputs, чистый stdlib `urllib` — без SDK/ve
   Удаление последней тренировки вместо бессмысленной генерации очищает актуальную строку
   `recommendations`; история генераций в `recommendation_log` остаётся для аудита.
 - **Авто-свежесть:** systemd-таймер
-  ([deploy/trainer-recommend-refresh.timer](./deploy/trainer-recommend-refresh.timer),
-  06:30 МСК) запускает [jobs/refresh_recommendation.py](./jobs/refresh_recommendation.py) —
+  ([infra/deploy/trainer-recommend-refresh.timer](./infra/deploy/trainer-recommend-refresh.timer),
+  06:30 МСК) запускает [infra/jobs/refresh_recommendation.py](./infra/jobs/refresh_recommendation.py) —
   перегенерирует совет, если ему больше `REFRESH_MAX_AGE_HOURS` (по умолчанию 24 ч),
   упавшие/зависшие генерации добиваются. Так «когда идти» в карточке всегда датировано
   сегодняшним днём, даже после долгого перерыва. Ручной запуск: `--force`.
 
 ## Бэкап базы
 
-[jobs/backup_db.py](./jobs/backup_db.py) делает консистентный снапшот `trainer.db` через SQLite
+[infra/jobs/backup_db.py](./infra/jobs/backup_db.py) делает консистентный снапшот `trainer.db` через SQLite
 online-backup API (без остановки сервиса, без зависимостей), сжимает в gzip и копирует
 рядом профиль атлета; держит последние `BACKUP_KEEP` копий. Запускается ночным
 systemd-таймером
-([deploy/trainer-db-backup.timer](./deploy/trainer-db-backup.timer), 04:00 МСК).
+([infra/deploy/trainer-db-backup.timer](./infra/deploy/trainer-db-backup.timer), 04:00 МСК).
 Восстановление: `gunzip -c backups/trainer-<stamp>.db.gz > trainer.db`.
 
 Формат: `focus`, `load_type` (heavy/medium/light), `rest_days` (через сколько дней от
@@ -118,7 +118,7 @@ per-exercise сводки за всю историю (топ-сет, e1RM по �
 сравним с весом на первом. Сырыми остаются последние ~10 тренировок.
 
 **Фазы** (`coach_state.py`, состояние в `coach_state.json` рядом с базой, шаблон —
-[examples/coach_state.example.json](./examples/coach_state.example.json)): `cut_recomp` / `lean_bulk` /
+[resources/examples/coach_state.example.json](./resources/examples/coach_state.example.json)): `cut_recomp` / `lean_bulk` /
 `maintenance` + вычисляемый режим «возврат после перерыва». Переключение — только руками
 через Coach MCP (`coach_set_phase`); при достижении цели фазы промпт лишь просит модель
 предложить смену в rationale. Недельный объём строительных фаз идёт ramp'ом 6–8 →
@@ -151,8 +151,8 @@ per-exercise сводки за всю историю (топ-сет, e1RM по �
 MCP, когда ищет отчёт в кэше. Якорь общий не для красоты: разъедутся — инструмент
 промахнётся мимо кэша и молча перегенерирует отчёт за токены. Отчёт кэшируется в
 таблице `coach_reports`: systemd-таймер в ночь на понедельник
-([deploy/trainer-weekly-report.timer](./deploy/trainer-weekly-report.timer), 00:00 МСК,
-скрипт [jobs/weekly_report.py](./jobs/weekly_report.py)) генерирует его заранее, и инструмент
+([infra/deploy/trainer-weekly-report.timer](./infra/deploy/trainer-weekly-report.timer), 00:00 МСК,
+скрипт [infra/jobs/weekly_report.py](./infra/jobs/weekly_report.py)) генерирует его заранее, и инструмент
 отдаёт кэш мгновенно и бесплатно (`fresh=true` — перегенерация). Полночь, а не
 воскресный вечер, потому что вечерняя воскресная тренировка обязана попасть в отчёт
 о своей неделе.
@@ -162,7 +162,7 @@ MCP, когда ищет отчёт в кэше. Якорь общий не дл
 а условие работоспособности: старый воскресный юнит с новым кодом будит скрипт в день,
 когда последняя закрытая неделя уже в кэше, тот честно пишет «уже в кэше» и выходит —
 и отчёт перестаёт появляться совсем, молча. Код и `OnCalendar` едут вместе:
-`scp backend/deploy/trainer-weekly-report.timer <vps>:/etc/systemd/system/` +
+`scp backend/infra/deploy/trainer-weekly-report.timer <vps>:/etc/systemd/system/` +
 `systemctl daemon-reload && systemctl restart trainer-weekly-report.timer`.
 
 **Журнал фаз и итоги**: `coach_set_phase` закрывает уходящую фазу записью
@@ -193,7 +193,7 @@ Coach MCP); единый допустимый диапазон записи и �
 
 `recommender.load_profile()` читает JSON с произвольными текстовыми блоками
 (`{"schema":1, "blocks": {"Атлет": "...", "Цель": "...", ...}}`), которые попадают в
-системный промпт. Шаблон — [examples/coach_profile.example.json](./examples/coach_profile.example.json).
+системный промпт. Шаблон — [resources/examples/coach_profile.example.json](./resources/examples/coach_profile.example.json).
 **Реальный профиль содержит персональные/медицинские данные и живёт только на сервере**
 (`/opt/trainer-miniapp/data/coach_profile.json`, рядом с базой) — в публичный репозиторий
 он не коммитится. Файл отсутствует/битый → генерация работает с нейтральным фоллбеком.
@@ -281,11 +281,11 @@ Backend деплоится через CI ([../.github/workflows/deploy-backend.y
 после зелёных тестов на `main`, либо вручную:
 
 ```bash
-./backend/deploy/deploy.sh backend
+./backend/infra/deploy/deploy.sh backend
 ```
 
 **Адрес VPS в репозитории не хранится** (репозиторий публичный): скрипт берёт его из
-`TRAINER_VPS_HOST` либо из gitignored-файла `backend/deploy/target.local` рядом с собой —
+`TRAINER_VPS_HOST` либо из gitignored-файла `backend/infra/deploy/target.local` рядом с собой —
 одна строка `TRAINER_VPS_HOST=root@<адрес>`. Без адреса деплой падает с подсказкой,
 не дойдя до `ssh`. В CI адрес приходит из секрета `VPS_HOST`.
 
@@ -297,8 +297,8 @@ Backend деплоится через CI ([../.github/workflows/deploy-backend.y
 Backend workflow предполагает существование `/etc/trainer-miniapp/backend.env` на VPS
 (там же лежит `ANTHROPIC_API_KEY`).
 
-Код едет каталогами: `server.py` поимённо, `trainer/`, `jobs/`, `prompts/`, `copy/` целиком и
-вместе с ними все юниты и таймеры из `deploy/`. Таймеры деплой не включает: новый таймер один
+Код едет каталогами: `server.py` поимённо, `trainer/`, `infra/jobs/`, `prompts/`, `resources/copy/`
+целиком и вместе с ними все юниты и таймеры из `infra/deploy/`. Таймеры деплой не включает: новый таймер один
 раз `systemctl enable --now` руками.
 
 ## GitHub Actions

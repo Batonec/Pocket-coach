@@ -60,9 +60,9 @@ jobs:
             fi
           }
 
-          # Код backend едет каталогами (trainer/, jobs/), поэтому и фильтр по
+          # Код backend едет каталогами (trainer/, infra/jobs/), поэтому и фильтр по
           # каталогам: новый модуль внутри них ничего здесь не требует.
-          echo "backend=$(has_match '^(backend/server\.py$|backend/trainer/.*\.py$|backend/jobs/.*\.py$|backend/prompts/.*\.md$|backend/copy/.*\.md$|backend/deploy/.*\.(service|timer)$|coach_mcp/server\.py$|\.github/workflows/deploy-backend\.yml$)')" >> "$GITHUB_OUTPUT"
+          echo "backend=$(has_match '^(backend/server\.py$|backend/trainer/.*\.py$|backend/infra/jobs/.*\.py$|backend/prompts/.*\.md$|backend/resources/copy/.*\.md$|backend/infra/deploy/.*\.(service|timer)$|coach_mcp/server\.py$|\.github/workflows/deploy-backend\.yml$)')" >> "$GITHUB_OUTPUT"
 
           # Каталог целиком: в iOS нет списка модулей, который можно забыть
           # обновить, — любой .swift, ресурс или сам проект требуют пересборки.
@@ -110,7 +110,7 @@ jobs:
           "$HOME/.local/bin/actionlint" --version
 
       - name: Lint shell scripts
-        run: shellcheck backend/deploy/deploy.sh .claude/hooks/claude-md-reminder.sh
+        run: shellcheck backend/infra/deploy/deploy.sh .claude/hooks/claude-md-reminder.sh
 
       # actionlint сам прогоняет shellcheck по инлайновым `run:`.
       - name: Lint GitHub Actions workflows

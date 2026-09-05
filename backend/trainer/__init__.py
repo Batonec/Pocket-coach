@@ -2,12 +2,12 @@
 
 Пакет держит хранилище (``backend_store``) и слой коуча (``coach/``). Точка
 входа HTTP-сервера — ``backend/server.py`` рядом с пакетом, скрипты таймеров —
-в ``jobs/``, проза для модели — в ``prompts/``, тексты баннеров — в ``copy/``;
-где всё это лежит, пакет знает через ``BACKEND_DIR``.
+в ``infra/jobs/``, проза для модели — в ``prompts/``, тексты баннеров — в
+``resources/copy/``; где всё это лежит, пакет знает через ``BACKEND_DIR``.
 """
 
 from pathlib import Path
 
 # Корень backend: локально backend/, на VPS /opt/trainer-miniapp/app. Здесь же
-# лежат prompts/, copy/, static/ и локальная data/ — всё, что код читает с диска.
+# лежат prompts/, resources/ и локальная data/ — всё, что код читает с диска.
 BACKEND_DIR = Path(__file__).resolve().parent.parent

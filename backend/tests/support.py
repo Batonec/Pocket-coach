@@ -21,7 +21,7 @@ from urllib.parse import urlencode
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 MINIAPP_DIR = ROOT_DIR / "backend"
-STATIC_DIR = MINIAPP_DIR / "static"
+STATIC_DIR = MINIAPP_DIR / "resources" / "static"
 
 if str(MINIAPP_DIR) not in sys.path:
     sys.path.insert(0, str(MINIAPP_DIR))
