@@ -1,29 +1,35 @@
 #!/usr/bin/env python3
-"""Coach MCP — talk to your training data in Claude and debug recommendations.
+"""Coach MCP — разговор с данными тренировок в Claude и отладка рекомендаций.
 
-A thin read-only MCP server over the same SQLite database the Trainer mini app
-uses (``backend``). It reuses ``backend_store`` and ``recommender`` so
-the recommendation debugging tools generate exactly what the backend would.
+Тонкий MCP-сервер над той же базой SQLite, что и backend приложения: импортирует
+``backend_store``, ``files``, ``coach_state``, ``coach_features``,
+``prompt_builder`` и ``recommender`` напрямую, поэтому инструменты отладки
+генерируют ровно то, что сгенерировал бы backend. Читает историю и замеры; пишет
+талию, события, состояние подготовки и профиль; по просьбе генерирует совет и
+недельный отчёт. Docstring каждого инструмента — его описание для модели,
+поэтому они на русском и короткие.
 
-Run (stdio, for local Claude Desktop):
+Запуск (stdio, локальный Claude Desktop):
     python coach_mcp/server.py
 
-Run (streamable-http, behind a Cloudflare tunnel like investor-mcp):
+Запуск (streamable-http, за Cloudflare Tunnel, как investor-mcp):
     python coach_mcp/server.py --transport streamable-http --host 127.0.0.1 --port 8001
 
-Environment:
-    ANTHROPIC_API_KEY        required for the generate/debug tools
-    COACH_MCP_BACKEND_DIR    backend root holding the trainer/ package
-                             (default: ../backend; on the VPS set it to
-                             /opt/trainer-miniapp/app)
-    MINIAPP_DB_PATH          SQLite path (default: <backend_dir>/data/trainer.db)
-    EXERCISE_CATALOG_PATH    exercise catalog JSON (default:
+Окружение:
+    ANTHROPIC_API_KEY        нужен инструментам генерации и отладки
+    COACH_MCP_BACKEND_DIR    корень backend с пакетом trainer/ (по умолчанию
+                             ../backend; на VPS — /opt/trainer-miniapp/app)
+    MINIAPP_DB_PATH          путь к SQLite (по умолчанию <backend_dir>/data/trainer.db)
+    EXERCISE_CATALOG_PATH    JSON каталога упражнений (по умолчанию
                              <backend_dir>/resources/exercises.json)
-    COACH_MCP_USER_ID        user id to operate on (default: 3)
-    ANTHROPIC_MODEL          override model (default from recommender)
-    COACH_MCP_PATH           HTTP path for streamable transport (default: /mcp)
-    COACH_MCP_AUTH_TOKEN     if set, require Authorization: Bearer <token>
-    COACH_MCP_ALLOWED_HOSTS  comma list to enable strict DNS-rebinding protection
+    COACH_MCP_PROFILE_PATH   профиль атлета (иначе COACH_PROFILE_PATH, иначе рядом с базой)
+    COACH_MCP_STRATEGY_PATH  документ стратегии (иначе COACH_STRATEGY_PATH, иначе рядом с базой)
+    COACH_STATE_PATH         состояние подготовки (по умолчанию рядом с базой)
+    COACH_MCP_USER_ID        id пользователя (по умолчанию 3)
+    ANTHROPIC_MODEL          модель вместо дефолтной из anthropic_client
+    COACH_MCP_PATH           HTTP-путь streamable-транспорта (по умолчанию /mcp)
+    COACH_MCP_AUTH_TOKEN     если задан, требуется Authorization: Bearer <token>
+    COACH_MCP_ALLOWED_HOSTS  список через запятую → строгая защита от DNS-rebinding
 """
 
 from __future__ import annotations
@@ -43,7 +49,7 @@ try:
 except Exception:  # noqa: BLE001, S110 — dotenv опционален, .env может не быть
     pass
 
-# --- locate and import the backend package (trainer/) ------------------------
+# --- найти и импортировать пакет backend (trainer/) ---------------------------
 _BACKEND_DIR = os.getenv("COACH_MCP_BACKEND_DIR") or str(
     Path(__file__).resolve().parent.parent / "backend"
 )
@@ -65,7 +71,7 @@ from trainer.domain import (  # noqa: E402
     recommender,
 )
 
-# --- configuration ------------------------------------------------------------
+# --- настройки ----------------------------------------------------------------
 _DB_PATH = Path(os.getenv("MINIAPP_DB_PATH") or str(Path(_BACKEND_DIR) / "data" / "trainer.db"))
 _CATALOG_PATH = Path(
     os.getenv("EXERCISE_CATALOG_PATH") or str(Path(_BACKEND_DIR) / "resources" / "exercises.json")
@@ -82,8 +88,8 @@ _STRATEGY_PATH = Path(
     or os.getenv("COACH_STRATEGY_PATH")
     or str(_DB_PATH.parent / "coach_strategy.md")
 )
-# Mutable coaching state (phase, waist limit, injection day) — next to the DB,
-# same as the profile; COACH_STATE_PATH overrides.
+# Изменяемое состояние подготовки (фаза, лимиты талии) — рядом с базой, как и
+# профиль; COACH_STATE_PATH переопределяет.
 _STATE_PATH = files.default_state_path(_DB_PATH)
 _DEFAULT_USER_ID = int(os.getenv("COACH_MCP_USER_ID") or "3")
 
@@ -134,17 +140,18 @@ coach_list_events показывает их (новые сверху), coach_add
 mcp = FastMCP("Coach MCP", instructions=_INSTRUCTIONS)
 
 
-# --- helpers ------------------------------------------------------------------
+# --- хелперы ------------------------------------------------------------------
 def _json(data: dict[str, Any]) -> str:
+    """JSON с юникодом и отступами для текстовой части ответа."""
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
 def _result(payload: dict[str, Any]) -> CallToolResult:
-    """Wrap a dict into an MCP CallToolResult (text + structuredContent + isError).
+    """Обернуть словарь в ``CallToolResult`` (текст + structuredContent + isError).
 
-    Mirrors the investor-mcp convention: the whole payload is serialized into the
-    text content (so every client shows the model the data) and also placed in
-    structuredContent; isError is derived from ``ok``.
+    Та же конвенция, что в investor-mcp: весь payload сериализуется в текстовый
+    блок (так данные видит модель в любом клиенте) и дублируется в
+    structuredContent; isError выводится из ``ok``.
     """
     summary = payload.get("summary") or ("Ошибка." if not payload.get("ok", True) else "Готово.")
     return CallToolResult(
@@ -155,19 +162,23 @@ def _result(payload: dict[str, Any]) -> CallToolResult:
 
 
 def _err(summary: str) -> dict[str, Any]:
+    """Payload ошибки: ``ok=False`` и текст для модели."""
     return {"ok": False, "summary": summary}
 
 
 def _uid(user_id: int | None) -> int:
+    """Id пользователя из аргумента инструмента или настроенный по умолчанию."""
     return int(user_id) if user_id else _DEFAULT_USER_ID
 
 
 def _catalog() -> list[dict[str, Any]]:
+    """Каталог упражнений из ``EXERCISE_CATALOG_PATH`` — тот же файл, что у backend."""
     return files.load_catalog(_CATALOG_PATH)
 
 
 def _estimate_cost(model: str, usage: dict[str, Any]) -> dict[str, Any] | None:
-    # Per-1M-token prices for the models this project uses.
+    # Цены за миллион токенов для моделей, которыми пользуется проект.
+    """Оценка стоимости вызова в USD по таблице цен; ``None`` для незнакомой модели."""
     prices = {
         "claude-opus-5": (5.0, 25.0),
         "claude-opus-4-8": (5.0, 25.0),
@@ -183,7 +194,7 @@ def _estimate_cost(model: str, usage: dict[str, Any]) -> dict[str, Any] | None:
     return {"input_tokens": it, "output_tokens": ot, "usd": round(usd, 4)}
 
 
-# --- tools: data --------------------------------------------------------------
+# --- инструменты: данные ------------------------------------------------------
 @mcp.tool()
 def coach_list_workouts(limit: int = 20, user_id: int | None = None) -> CallToolResult:
     """История тренировок (новые сверху) + компактная сериализация, как её видит модель."""
@@ -246,7 +257,7 @@ def coach_get_catalog() -> CallToolResult:
         return _result(_err(f"Каталог недоступен: {exc}"))
 
 
-# --- tools: coaching state (phase machine, waist limits) ----------------------
+# --- инструменты: состояние подготовки (фазы, лимиты талии) -------------------
 @mcp.tool()
 def coach_get_state(user_id: int | None = None) -> CallToolResult:
     """Текущее состояние подготовки: фаза + её параметры, неделя блока, целевой объём недели, лимит/база талии."""
@@ -366,7 +377,7 @@ def coach_update_profile(block: str, text: str | None = None) -> CallToolResult:
         return _result(_err(f"Ошибка: {exc}"))
 
 
-# --- tools: waist measurements ------------------------------------------------
+# --- инструменты: замеры талии ------------------------------------------------
 @mcp.tool()
 def coach_add_waist(
     waist_cm: float,
@@ -440,7 +451,7 @@ def coach_delete_waist(entry_id: int, user_id: int | None = None) -> CallToolRes
         return _result(_err(f"Ошибка: {exc}"))
 
 
-# --- tools: events (перерывы в тренировках с причиной) ------------------------
+# --- инструменты: события (перерывы в тренировках с причиной) -----------------
 def _event_period(entry: dict[str, Any]) -> str:
     """Период события строкой: открытое, однодневное или отрезок."""
     if entry["end_date"] is None:
@@ -572,7 +583,7 @@ def coach_delete_event(event_id: int, user_id: int | None = None) -> CallToolRes
         return _result(_err(f"Ошибка: {exc}"))
 
 
-# --- tools: recommendation debugging -----------------------------------------
+# --- инструменты: отладка и генерация советов ---------------------------------
 @mcp.tool()
 def coach_get_stored_recommendation(user_id: int | None = None) -> CallToolResult:
     """Текущая рекомендация из кэша приложения (status, based_on, payload, токены, ошибка)."""
@@ -956,15 +967,17 @@ def coach_generate_recommendation(
         return _result(_err(f"Ошибка генерации: {exc}"))
 
 
-# --- ASGI bearer-auth middleware (same shape as investor-mcp) -----------------
+# --- ASGI-middleware с bearer-токеном (та же форма, что в investor-mcp) --------
 class _BearerAuthMiddleware:
-    """Require ``Authorization: Bearer <token>`` on HTTP; active only when a token is set."""
+    """Требовать ``Authorization: Bearer <token>`` на HTTP; включается, только когда токен задан."""
 
     def __init__(self, app: Any, token: str) -> None:
+        """Обернуть ASGI-приложение и запомнить ожидаемый токен."""
         self.app = app
         self.token = token
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        """Не-HTTP scope пропустить как есть; HTTP без верного токена — 401 JSON."""
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
@@ -984,6 +997,9 @@ class _BearerAuthMiddleware:
 
 
 def main() -> None:
+    """CLI: stdio по умолчанию; streamable-http с хостом, портом, путём и защитой
+    от DNS-rebinding, а при заданном токене — через uvicorn с bearer-middleware.
+    """
     parser = argparse.ArgumentParser(description="Coach MCP server")
     parser.add_argument("--transport", choices=["stdio", "streamable-http"], default="stdio")
     parser.add_argument("--host", default=os.getenv("COACH_MCP_HOST", "127.0.0.1"))

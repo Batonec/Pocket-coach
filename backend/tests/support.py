@@ -1,3 +1,11 @@
+"""Общая обвязка тестов backend.
+
+При импорте кладёт ``backend/`` в ``sys.path`` — поэтому ``import support`` стоит
+в тестах выше backend-модулей (порядок держит ``src`` в ruff.toml). Дальше
+фабрики payload'ов, загрузка ``server.py`` с тестовым окружением, живой
+HTTP-сервер на свободном порту и JSON-клиент с cookie.
+"""
+
 from __future__ import annotations
 
 import importlib
@@ -38,6 +46,7 @@ def sample_workout_payload(
     effort: str | None = None,
     notes: str | None = None,
 ) -> dict[str, Any]:
+    """Минимальный payload тренировки, как его шлёт клиент: одно упражнение, один подход."""
     return {
         "client_id": client_id,
         "workout_date": workout_date,
@@ -69,6 +78,7 @@ def sample_body_weight_payload(
     weight: float = 82.4,
     notes: str | None = None,
 ) -> dict[str, Any]:
+    """Payload взвешивания за дату."""
     return {
         "entry_date": entry_date,
         "weight": weight,
@@ -78,6 +88,7 @@ def sample_body_weight_payload(
 
 @contextmanager
 def temporary_env(values: dict[str, str]) -> Iterator[None]:
+    """Подменить переменные окружения на время блока и вернуть прежние значения."""
     previous: dict[str, str | None] = {}
     for key, value in values.items():
         previous[key] = os.environ.get(key)
@@ -101,6 +112,10 @@ def load_server_module(
     dev_mode: bool = False,
     session_secret: str = "trainer-test-session-secret",
 ) -> Any:
+    """Импортировать (или перезагрузить) ``server.py`` с тестовым окружением: своя
+    база, каталог, debug-пользователь, секрет сессии. Модуль читает env при импорте,
+    поэтому каждый вызов — свежая конфигурация.
+    """
     env = {
         "EXERCISE_CATALOG_PATH": str(catalog_path),
         "MINIAPP_HOST": "127.0.0.1",
@@ -123,6 +138,8 @@ def load_server_module(
 
 @dataclass
 class RunningMiniApp:
+    """Живой backend в потоке: адрес, модуль, сервер и временный каталог с базой."""
+
     base_url: str
     module: Any
     httpd: Any
@@ -130,6 +147,7 @@ class RunningMiniApp:
     temp_dir: tempfile.TemporaryDirectory[str]
 
     def close(self) -> None:
+        """Остановить сервер, дождаться потока, снести временный каталог."""
         self.httpd.shutdown()
         self.thread.join(timeout=5)
         self.httpd.server_close()
@@ -144,6 +162,9 @@ def running_miniapp_server(
     dev_mode: bool = False,
     session_secret: str = "trainer-test-session-secret",
 ) -> Iterator[RunningMiniApp]:
+    """Контекст с backend на ``127.0.0.1`` и свободном порту поверх временной базы;
+    по выходу всё останавливается и удаляется. Зовут все API-тесты.
+    """
     temp_dir = tempfile.TemporaryDirectory()
     db_path = Path(temp_dir.name) / "trainer.db"
     module = load_server_module(
@@ -174,13 +195,18 @@ def running_miniapp_server(
 
 @dataclass
 class JsonResponse:
+    """Ответ сервера: код, разобранный JSON и заголовки."""
+
     status: int
     payload: dict[str, Any]
     headers: Message
 
 
 class JsonHttpClient:
+    """Мини-клиент API с cookie-jar: сессия живёт между запросами, как в iOS."""
+
     def __init__(self, base_url: str):
+        """Запомнить базовый адрес и завести cookie-jar."""
         self.base_url = base_url.rstrip("/")
         self.cookie_jar = CookieJar()
         self.opener = urllib.request.build_opener(
@@ -193,6 +219,7 @@ class JsonHttpClient:
         path: str,
         payload: dict[str, Any] | None = None,
     ) -> JsonResponse:
+        """Запрос с JSON-телом; ошибочные коды возвращаются как ``JsonResponse``, а не исключением."""
         data = None
         headers = {"Content-Type": "application/json; charset=utf-8"}
         if payload is not None:

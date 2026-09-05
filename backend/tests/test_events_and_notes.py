@@ -36,6 +36,7 @@ def _workout(
     sets: list[dict[str, object]] | None = None,
     notes: str | None = None,
 ) -> dict[str, object]:
+    """Тренировка на дату с одним упражнением и заметкой."""
     return {
         "workout_date": when,
         "data": {
@@ -53,6 +54,8 @@ def _workout(
 
 
 class EventNormalizationTests(unittest.TestCase):
+    """``rules.normalize_event_payload``: даты, период, будущее, текст."""
+
     def test_dates_are_strict_iso_on_every_python_and_text_is_trimmed(self) -> None:
         # В 3.11+ date.fromisoformat принимает и «20260801», на VPS (3.10) — нет.
         # Формат один для любого интерпретатора: только YYYY-MM-DD, иначе периоды
@@ -117,6 +120,8 @@ class EventNormalizationTests(unittest.TestCase):
 
 
 class EventStoreTests(unittest.TestCase):
+    """События в сторе: порядок, отдельные записи, одно открытое, закрытие."""
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
@@ -124,6 +129,7 @@ class EventStoreTests(unittest.TestCase):
         self.user = self.store.ensure_debug_user("event-tests")
 
     def _save(self, start: str, end: str | None, text: str) -> dict[str, object]:
+        """Записать событие через стор."""
         return self.store.save_event(
             self.user["id"], {"start_date": start, "end_date": end, "text": text}
         )
@@ -223,6 +229,8 @@ class EventStoreTests(unittest.TestCase):
 
 
 class EventsApiTests(unittest.TestCase):
+    """REST события: CRUD, ошибки, сессия."""
+
     def test_events_endpoint_creates_lists_updates_and_deletes(self) -> None:
         with running_miniapp_server(allow_debug_user=True) as app:
             client = JsonHttpClient(app.base_url)
@@ -297,6 +305,7 @@ class WorkoutClosesOpenEventTests(unittest.TestCase):
     тренировка: правка истории — это правка истории, а не выход из перерыва."""
 
     def _open_event(self, client: JsonHttpClient) -> dict[str, object]:
+        """Открыть событие 10 дней назад через API."""
         started = (date.today() - timedelta(days=10)).isoformat()
         response = client.request_json(
             "POST", "/api/events", {"start_date": started, "text": "болею"}
@@ -305,6 +314,7 @@ class WorkoutClosesOpenEventTests(unittest.TestCase):
         return response.payload["event"]
 
     def _current(self, client: JsonHttpClient, event_id: int) -> dict[str, object]:
+        """Текущее состояние события по id через API."""
         events = client.request_json("GET", "/api/events").payload["events"]
         return next(event for event in events if event["id"] == event_id)
 
@@ -440,6 +450,8 @@ class AthleteNotesInPromptTests(unittest.TestCase):
 
 
 class EventPromptTests(unittest.TestCase):
+    """События в промпте: контекст, хроника, легенда, обрезка, ни одного числа."""
+
     WORKOUTS = [  # list_workouts() отдаёт новые сверху
         _workout("2026-06-10"),
         _workout("2026-06-01", exercise_id=9, name="Тяга верт."),
@@ -451,6 +463,7 @@ class EventPromptTests(unittest.TestCase):
     ]
 
     def _prompt(self, events: list[dict[str, object]] | None) -> str:
+        """User-промпт на фиксированной истории с заданными событиями."""
         return prompt_builder._build_user_prompt(
             self.WORKOUTS, [], TODAY, 20, catalog=CATALOG, events=events
         )
@@ -572,9 +585,12 @@ class EventPromptTests(unittest.TestCase):
 
 
 class WeeklyReportEventTests(unittest.TestCase):
+    """События в промпте недельного отчёта."""
+
     DAYS = 7  # период отчёта: 2026-06-06 … 2026-06-12
 
     def _report(self, events: list[dict[str, object]] | None) -> str:
+        """Промпт отчёта на одной тренировке с заданными событиями."""
         return prompt_builder._build_report_prompt(
             [_workout("2026-06-10")],
             [],
@@ -639,6 +655,7 @@ class EventsReachGenerationTests(unittest.TestCase):
     }
 
     def _store_with_event(self) -> tuple[backend_store.MiniAppStore, int]:
+        """Стор с одной тренировкой и открытым событием."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         store = backend_store.MiniAppStore(Path(tmp.name) / "trainer.db")
@@ -648,6 +665,8 @@ class EventsReachGenerationTests(unittest.TestCase):
         return store, uid
 
     def _capture_generate(self, seen: dict[str, object]):
+        """Подмена ``generate``, запоминающая kwargs."""
+
         def capture(workouts, body_weights, catalog, **kwargs):
             seen.update(kwargs)
             return self.RECOMMENDATION, {"input_tokens": 1, "output_tokens": 2}, "claude-test"
@@ -655,6 +674,7 @@ class EventsReachGenerationTests(unittest.TestCase):
         return capture
 
     def _texts(self, seen: dict[str, object]) -> list[str]:
+        """Тексты событий, дошедших до генерации."""
         return [str(event["text"]) for event in seen.get("events") or []]
 
     def test_backend_generation_passes_events(self) -> None:

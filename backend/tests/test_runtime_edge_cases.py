@@ -1,3 +1,8 @@
+"""Граничные случаи процессов: чистые хелперы ``server.py``, фоновый воркер
+совета, границы хендлеров, скрипты таймеров и Coach MCP (импортируется со
+стабами пакета mcp).
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -31,38 +36,47 @@ COACH_MCP_SERVER = ROOT_DIR / "coach_mcp" / "server.py"
 
 
 def bare_handler(module: types.ModuleType):
-    """Build a handler without opening a socket or constructing HTTPServer."""
+    """Хендлер без сокета и HTTPServer: голый объект с пустыми заголовками."""
     handler = object.__new__(module.MiniAppHandler)
     handler.headers = {}
     return handler
 
 
 class _Record:
+    """Простой объект из kwargs — стаб для типов mcp."""
+
     def __init__(self, **values: object) -> None:
+        """Разложить значения в атрибуты."""
         vars(self).update(values)
 
 
 class _FakeFastMCP:
+    """Стаб FastMCP: декоратор tool ничего не оборачивает, run ничего не запускает."""
+
     def __init__(self, *_args: object, **_kwargs: object) -> None:
+        """Пустые настройки."""
         self.settings = types.SimpleNamespace()
 
     def tool(self):
+        """Декоратор-пустышка."""
         return lambda function: function
 
     def run(self, *_args: object, **_kwargs: object) -> None:
-        return None
+        """Ничего не запускает."""
+        return
 
     def streamable_http_app(self):
+        """Любой объект вместо ASGI-приложения."""
         return object()
 
 
 @contextmanager
 def loaded_coach_mcp(temp_dir: Path):
-    """Import coach_mcp/server.py with tiny stdlib-only MCP type stubs.
+    """Импортировать coach_mcp/server.py с крошечными stdlib-стабами типов mcp.
 
-    The production dependency is deliberately not installed in the backend test
-    environment. The stubs leave all boundary logic intact while ensuring an
-    import never starts a transport or reaches the network.
+    Боевая зависимость намеренно не установлена в тестовом окружении backend.
+    Стабы оставляют всю граничную логику нетронутой и гарантируют, что импорт не
+    запускает транспорт и не ходит в сеть.
     """
     stub_names = (
         "mcp",
@@ -122,6 +136,8 @@ def loaded_coach_mcp(temp_dir: Path):
 
 
 class ServerPureHelperTests(unittest.TestCase):
+    """Чистые хелперы и генерация совета в ``server.py`` на моках стора."""
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -271,6 +287,8 @@ class ServerPureHelperTests(unittest.TestCase):
 
 
 class RecommendationWorkerTests(unittest.TestCase):
+    """Фоновый воркер ``trigger_recommendation_async``: учёт, схлопывание, ошибки."""
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -357,6 +375,8 @@ class RecommendationWorkerTests(unittest.TestCase):
 
 
 class HandlerBoundaryTests(unittest.TestCase):
+    """Границы хендлеров: диспетчер, OPTIONS, тело запроса, ответы, cookie, refresh, dismiss."""
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -593,6 +613,8 @@ class HandlerBoundaryTests(unittest.TestCase):
 
 
 class ScheduledJobEdgeCaseTests(unittest.TestCase):
+    """Скрипты таймеров: пороги свежести, ошибки генерации, бэкап и ротация."""
+
     def test_should_refresh_exact_thresholds_missing_timestamps_and_unknown_status(self) -> None:
         now = 10 * 3600
         refresh, reason = refresh_job.recommender.should_refresh(
@@ -679,7 +701,7 @@ class ScheduledJobEdgeCaseTests(unittest.TestCase):
         self.assertTrue(unrelated.exists())
 
     def test_backup_rotation_removes_strategy_companion_with_database(self) -> None:
-        """Companion state must follow the same retention window as its DB snapshot."""
+        """Копия-спутник живёт столько же, сколько снимок базы."""
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -724,6 +746,8 @@ class ScheduledJobEdgeCaseTests(unittest.TestCase):
 
 
 class CoachMcpBoundaryTests(unittest.TestCase):
+    """Coach MCP со стабами: результат, id, стоимость, кэш отчёта, генерация, bearer-middleware."""
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

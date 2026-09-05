@@ -1,3 +1,8 @@
+"""Баннеры без LLM: пороги каждого сигнала, лестница замеров, режим возврата,
+разгрузка, «неделя закрыта», схлопывание семейств и отсрочки на живом сторе,
+решение по дисмиссу.
+"""
+
 from __future__ import annotations
 
 import tempfile
@@ -6,7 +11,7 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-import support  # noqa: F401 — adds backend to sys.path
+import support  # noqa: F401 — кладёт backend в sys.path
 from support import sample_workout_payload
 
 from trainer.data.backend_store import MiniAppStore
@@ -17,6 +22,7 @@ STATE = dict(coach_state.DEFAULT_STATE, phase_started="2026-08-01")
 
 
 def _workout(when: str, exercise_id: int = 8, sets: int = 3) -> dict:
+    """Тренировка на дату с ``sets`` подходами одного упражнения."""
     return {
         "workout_date": when,
         "data": {
@@ -33,15 +39,20 @@ def _workout(when: str, exercise_id: int = 8, sets: int = 3) -> dict:
 
 
 def _weights(days_ago: int) -> list[dict]:
+    """Одно взвешивание ``days_ago`` дней назад."""
     return [{"entry_date": (TODAY - timedelta(days=days_ago)).isoformat(), "weight": 79.0}]
 
 
 def _waists(days_ago: int) -> list[dict]:
+    """Один замер талии ``days_ago`` дней назад."""
     return [{"entry_date": (TODAY - timedelta(days=days_ago)).isoformat(), "waist": 84.0}]
 
 
 class WaistLimitSignalTests(unittest.TestCase):
+    """Критичный сигнал лимита талии: два подряд показания на наборе."""
+
     def _state(self, **overrides) -> dict:
+        """Состояние lean_bulk с лимитом 88 см и переопределениями."""
         state = dict(
             STATE,
             phase="lean_bulk",
@@ -52,6 +63,7 @@ class WaistLimitSignalTests(unittest.TestCase):
         return state
 
     def _points(self, older: float, latest: float, latest_days_ago: int = 0) -> list[dict]:
+        """Два замера талии с интервалом в неделю."""
         return [
             {
                 "entry_date": (TODAY - timedelta(days=latest_days_ago + 7)).isoformat(),
@@ -93,6 +105,8 @@ class WaistLimitSignalTests(unittest.TestCase):
 
 
 class MeasurementsSignalTests(unittest.TestCase):
+    """Лестница напоминаний о замерах: пора, просрочено, мёртвый тренд."""
+
     def test_fresh_measurements_mean_no_signal(self) -> None:
         self.assertIsNone(coach_signals._measurements_signal(_weights(3), _waists(5), STATE, TODAY))
 
@@ -119,9 +133,9 @@ class MeasurementsSignalTests(unittest.TestCase):
         self.assertEqual(signal["action"]["target"], "waist")
 
     def test_dead_trend_in_building_phase_nudges_before_due_stage(self) -> None:
-        # Weight 6 days old — freshness is still green, but a single in-phase
-        # point cannot form the trend the calorie matrix steers by, and a
-        # weigh-in today is the first one that can revive it.
+        # Весу 6 дней — свежесть ещё зелёная, но одна точка внутри фазы не
+        # образует тренд, по которому матрица ведёт калории, и взвешивание
+        # сегодня — первое, которое может его оживить.
         signal = coach_signals._measurements_signal(_weights(6), _waists(2), STATE, TODAY)
         self.assertEqual(signal["id"], "weight_trend_stale")
         self.assertEqual(signal["severity"], "info")
@@ -130,7 +144,7 @@ class MeasurementsSignalTests(unittest.TestCase):
         self.assertEqual(signal["action"]["target"], "weight")
 
     def test_trend_nudge_waits_until_a_new_point_can_help(self) -> None:
-        # Day 4: even a weigh-in today cannot reach the 5-day trend span yet.
+        # День 4: даже взвешивание сегодня ещё не дотягивает до 5-дневного окна тренда.
         self.assertIsNone(coach_signals._measurements_signal(_weights(4), _waists(2), STATE, TODAY))
 
     def test_live_trend_or_maintenance_phase_means_no_nudge(self) -> None:
@@ -146,6 +160,8 @@ class MeasurementsSignalTests(unittest.TestCase):
 
 
 class TrainingsSignalTests(unittest.TestCase):
+    """Сигналы о перерыве: «скоро возврат» и режим возврата по статусу совета."""
+
     def test_recent_training_is_silent(self) -> None:
         workouts = [_workout((TODAY - timedelta(days=4)).isoformat())]
         self.assertIsNone(coach_signals._trainings_signal(workouts, TODAY))
@@ -218,13 +234,16 @@ class TrainingsSignalTests(unittest.TestCase):
 
 
 class DeloadSignalTests(unittest.TestCase):
+    """Баннер плановой разгрузки."""
+
     def _dense(self, start: date, count: int) -> list[dict]:
+        """``count`` тренировок раз в три дня от ``start``."""
         return [_workout((start + timedelta(days=i * 3)).isoformat()) for i in range(count)]
 
     def test_deload_week_signal_until_first_session(self) -> None:
         start = date(2026, 5, 1)
         state = dict(coach_state.DEFAULT_STATE, phase_started=start.isoformat())
-        workouts = self._dense(start, 14)  # 6 недель набора, week 7 = deload
+        workouts = self._dense(start, 14)  # 6 недель набора, неделя 7 — разгрузка
         today = start + timedelta(days=43)  # день внутри 7-й недели без тренировки
         signal = coach_signals._deload_signal(state, workouts, today)
         self.assertIsNotNone(signal)
@@ -235,7 +254,10 @@ class DeloadSignalTests(unittest.TestCase):
 
 
 class WeekDoneSignalTests(unittest.TestCase):
+    """Позитивный баннер закрытой недели: порог 90% и частота фазы."""
+
     def _planned_workout(self, when: str, done: int, planned: int) -> dict:
+        """Тренировка с ``done`` сетами против плана на ``planned``."""
         workout = _workout(when, sets=done)
         workout["data"]["recommendation"] = {
             "schema": 1,
@@ -246,6 +268,7 @@ class WeekDoneSignalTests(unittest.TestCase):
         return workout
 
     def _state(self, sessions_per_week: int | None = None) -> dict:
+        """cut_recomp с переопределённой частотой сессий в неделю."""
         state = dict(coach_state.DEFAULT_STATE, phase="cut_recomp")
         if sessions_per_week is not None:
             state["phase_params"] = {"cut_recomp": {"sessions_per_week": sessions_per_week}}
@@ -293,6 +316,8 @@ class WeekDoneSignalTests(unittest.TestCase):
 
 
 class ComputeSignalsIntegrationTests(unittest.TestCase):
+    """``compute_signals`` на живом сторе: порядок, подавление, отсрочки, смерть сигналов."""
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
@@ -301,6 +326,7 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
         self.uid = self.user["id"]
 
     def _add_workout(self, when: str) -> None:
+        """Записать тренировку на дату через стор."""
         payload = sample_workout_payload(client_id=f"w-{when}", workout_date=when)
         self.store.save_workout(self.uid, payload)
 
@@ -425,9 +451,9 @@ class ComputeSignalsIntegrationTests(unittest.TestCase):
         self.assertEqual(ready[0]["action"]["type"], "open_next_workout")
 
     def test_trend_nudge_rides_the_return_banner_note_instead_of_hiding(self) -> None:
-        # The client shows only the first banner, so an accent return_mode
-        # would silently mask the info-grade trend nudge — it must ride along
-        # as the muted third line instead.
+        # Клиент показывает только первый баннер, и accent return_mode молча
+        # спрятал бы info-подсказку о тренде — она должна ехать третьей
+        # приглушённой строкой.
         today = date(2026, 8, 14)
         self._add_workout("2026-07-20")  # 25 дней → return_mode
         self.store.save_body_weight(

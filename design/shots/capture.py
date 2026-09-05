@@ -50,6 +50,7 @@ IDS = [
 
 
 def serve():
+    """Поднять статику design/ на локальном порту в фоновом потоке; вернуть сервер."""
     handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(DESIGN))
     socketserver.TCPServer.allow_reuse_address = True
     httpd = socketserver.TCPServer(("127.0.0.1", PORT), handler)
@@ -58,6 +59,7 @@ def serve():
 
 
 def shrink(path: pathlib.Path) -> None:
+    """Ужать PNG до ширины из ``WIDTHS`` (или дефолтной), сохранить WebP рядом и удалить PNG."""
     image = Image.open(path).convert("RGBA")
     target = WIDTHS.get(path.stem, DEFAULT_WIDTH)
     if image.width > target:
@@ -69,6 +71,9 @@ def shrink(path: pathlib.Path) -> None:
 
 
 def main() -> None:
+    """Отрендерить макет безголовым Chromium, снять каждый ``#shot-<id>`` с прозрачным
+    фоном и положить WebP в docs/assets/; ошибка JS в макете останавливает всё.
+    """
     OUT.mkdir(parents=True, exist_ok=True)
     httpd = serve()
     try:

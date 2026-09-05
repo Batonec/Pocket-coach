@@ -1,3 +1,7 @@
+"""Граничные случаи слоя data: клиент Claude API, файлы состояния, профиля и
+стратегии, загрузчик промптов, стор (прагмы, транзакции, каскады, миграции).
+"""
+
 from __future__ import annotations
 
 import io
@@ -10,7 +14,7 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
-import support  # noqa: F401 - adds backend/ to sys.path
+import support  # noqa: F401 — кладёт backend в sys.path
 from support import sample_body_weight_payload, sample_workout_payload
 
 from trainer.data import anthropic_client, backend_store, coach_prompts, files
@@ -18,20 +22,27 @@ from trainer.domain import coach_state
 
 
 class _Response:
+    """Заглушка ответа urlopen с готовым телом."""
+
     def __init__(self, body: bytes) -> None:
+        """Тело ответа байтами."""
         self.body = body
 
     def __enter__(self):
+        """Контекст-менеджер, как у настоящего ответа."""
         return self
 
     def __exit__(self, *exc: object) -> bool:
+        """Исключения не гасит."""
         return False
 
     def read(self) -> bytes:
+        """Отдать тело."""
         return self.body
 
 
 def _http_error(code: int, detail: bytes = b"detail") -> urllib.error.HTTPError:
+    """``HTTPError`` с кодом и телом, как от API."""
     return urllib.error.HTTPError(
         "https://api.anthropic.test/messages",
         code,
@@ -42,10 +53,13 @@ def _http_error(code: int, detail: bytes = b"detail") -> urllib.error.HTTPError:
 
 
 class AnthropicClientEdgeCaseTests(unittest.TestCase):
+    """Разбор ответов и ошибок ``anthropic_client`` на подменённом urlopen."""
+
     def _request_with_response(
         self,
         response: object,
     ) -> tuple[str, dict[str, object]]:
+        """Вызвать ``_request_model`` с одним готовым ответом."""
         body = response if isinstance(response, bytes) else json.dumps(response).encode("utf-8")
         with mock.patch.object(
             anthropic_client.urllib.request,
@@ -282,6 +296,8 @@ class AnthropicClientEdgeCaseTests(unittest.TestCase):
 
 
 class FileHelperEdgeCaseTests(unittest.TestCase):
+    """``files``: пути, дефолты, каталог, профиль, стратегия."""
+
     def test_default_state_path_prefers_env_and_otherwise_neighbors_database(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("COACH_STATE_PATH", None)
@@ -412,6 +428,8 @@ class FileHelperEdgeCaseTests(unittest.TestCase):
 
 
 class PromptHelperEdgeCaseTests(unittest.TestCase):
+    """``coach_prompts``: фрагменты, срез документа, рендер."""
+
     def test_fragments_rejects_a_file_without_fragment_headings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
@@ -460,6 +478,7 @@ class PromptHelperEdgeCaseTests(unittest.TestCase):
 
 
 def _recommendation(focus: str = "Test") -> dict[str, object]:
+    """Минимальный совет для записи в кэш."""
     return {
         "focus": focus,
         "load_type": "medium",
@@ -476,6 +495,10 @@ def _recommendation(focus: str = "Test") -> dict[str, object]:
 
 
 class StoreEdgeCaseTests(unittest.TestCase):
+    """Стор: прагмы, откат транзакции, внешние ключи, каскады, кэш и журнал, отчёты,
+    отсрочки, расход токенов.
+    """
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
@@ -772,6 +795,8 @@ class StoreEdgeCaseTests(unittest.TestCase):
 
 
 class StoreMigrationEdgeCaseTests(unittest.TestCase):
+    """Аддитивные миграции схемы на базах старого формата."""
+
     def test_initialization_adds_read_at_to_legacy_coach_reports_table(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "legacy.db"

@@ -1,3 +1,7 @@
+"""Состояние подготовки: файл и дефолты, смена фазы с журналом, неделя блока,
+ramp объёма, разгрузка по позиции в цикле, переопределения целей по группам.
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,17 +11,20 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-import support  # noqa: F401 — adds backend to sys.path
+import support  # noqa: F401 — кладёт backend в sys.path
 
 from trainer.data import files
 from trainer.domain import coach_features, coach_state, prompt_builder
 
 
 def _workout(when: str) -> dict:
+    """Пустая тренировка на дату — для счёта недель хватает даты."""
     return {"workout_date": when, "data": {"exercises": []}}
 
 
 class StateFileTests(unittest.TestCase):
+    """Чтение, запись и смена фазы через ``files``."""
+
     def test_missing_or_broken_file_falls_back_to_defaults(self) -> None:
         state = coach_state.default_state()
         self.assertEqual(state["phase"], "cut_recomp")
@@ -37,8 +44,8 @@ class StateFileTests(unittest.TestCase):
                         "phase": "maintenance",
                         "phase_started": "2026-08-01",
                         "waist_limit_cm": 86.5,
-                        "waist_base_cm": 9000,  # implausible → ignored
-                        "injection_day": "вс",  # legacy field → ignored
+                        "waist_base_cm": 9000,  # неправдоподобно → игнорируется
+                        "injection_day": "вс",  # легаси-поле → игнорируется
                     }
                 ),
                 "utf-8",
@@ -63,7 +70,7 @@ class StateFileTests(unittest.TestCase):
             params = coach_state.phase_params(reloaded)
             self.assertEqual(params["phase"], "lean_bulk")
             self.assertEqual(params["target_weight_kg"], 80)
-            # Defaults survive alongside the override.
+            # Дефолты живут рядом с переопределением.
             self.assertEqual(params["ramp_cap"], (10, 16))
 
     def test_set_phase_journals_the_closed_phase(self) -> None:
@@ -75,7 +82,7 @@ class StateFileTests(unittest.TestCase):
                 state["phase_history"],
                 [{"phase": "cut_recomp", "started": "2026-08-14", "ended": "2026-10-25"}],
             )
-            # And the journal survives a reload.
+            # И журнал переживает перечитывание.
             self.assertEqual(len(files.load_state(path)["phase_history"]), 1)
 
     def test_set_phase_without_start_date_journals_nothing(self) -> None:
@@ -96,6 +103,8 @@ class StateFileTests(unittest.TestCase):
 
 
 class BlockWeekTests(unittest.TestCase):
+    """Неделя блока от старта фазы или возврата."""
+
     def test_counts_weeks_from_phase_start(self) -> None:
         state = dict(coach_state.DEFAULT_STATE, phase_started="2026-08-01")
         workouts = [_workout("2026-08-12"), _workout("2026-08-08"), _workout("2026-08-02")]
@@ -103,7 +112,7 @@ class BlockWeekTests(unittest.TestCase):
 
     def test_long_gap_resets_the_anchor(self) -> None:
         state = dict(coach_state.DEFAULT_STATE, phase_started="2026-05-01")
-        workouts = [  # a 30-day gap before 2026-07-01 starts a new block
+        workouts = [  # разрыв 30 дней перед 2026-07-01 начинает новый блок
             _workout("2026-07-15"),
             _workout("2026-07-08"),
             _workout("2026-07-01"),
@@ -124,13 +133,15 @@ class BlockWeekTests(unittest.TestCase):
 
 
 class VolumeRampTests(unittest.TestCase):
+    """Коридор недельного объёма по неделе блока."""
+
     def test_building_phase_ramps_to_the_cap(self) -> None:
         state = dict(coach_state.DEFAULT_STATE)  # cut_recomp: 6–8 → 10–14
         self.assertEqual(coach_state.weekly_volume_target(state, 1), (6, 8))
         self.assertEqual(coach_state.weekly_volume_target(state, 3), (8, 12))
         self.assertEqual(coach_state.weekly_volume_target(state, 6), (10, 14))
 
-        bulk = dict(state, phase="lean_bulk")  # cap 10–16
+        bulk = dict(state, phase="lean_bulk")  # потолок 10–16
         self.assertEqual(coach_state.weekly_volume_target(bulk, 6), (10, 16))
 
     def test_maintenance_has_no_ramp(self) -> None:
@@ -139,7 +150,10 @@ class VolumeRampTests(unittest.TestCase):
 
 
 class CyclePositionTests(unittest.TestCase):
+    """Позиция в цикле и плановая разгрузка."""
+
     def _dense_workouts(self, start: date, count: int, step_days: int = 3) -> list[dict]:
+        """``count`` тренировок с шагом ``step_days`` от ``start``."""
         return [
             _workout((start + timedelta(days=index * step_days)).isoformat())
             for index in range(count)
@@ -148,15 +162,15 @@ class CyclePositionTests(unittest.TestCase):
     def test_deload_fires_on_week_seven_with_real_volume(self) -> None:
         start = date(2026, 5, 1)
         state = dict(coach_state.DEFAULT_STATE, phase_started=start.isoformat())
-        workouts = self._dense_workouts(start, 15)  # every 3 days → 2.3/wk
-        today = start + timedelta(days=42)  # block week 7
+        workouts = self._dense_workouts(start, 15)  # раз в 3 дня → 2.3/нед
+        today = start + timedelta(days=42)  # неделя блока 7
         position = coach_state.cycle_position(state, workouts, today)
         self.assertEqual(position["block_week"], 7)
         self.assertEqual(position["cycle_week"], 7)
         self.assertTrue(position["deload_week"])
 
-        # After the light week the cycle wraps and the ramp restarts.
-        later = start + timedelta(days=49)  # block week 8
+        # После лёгкой недели цикл замыкается, и ramp начинается заново.
+        later = start + timedelta(days=49)  # неделя блока 8
         more = workouts + self._dense_workouts(start + timedelta(days=43), 2)
         position = coach_state.cycle_position(state, more, later)
         self.assertEqual(position["cycle_week"], 1)
@@ -166,7 +180,7 @@ class CyclePositionTests(unittest.TestCase):
     def test_deload_withheld_without_accumulated_work(self) -> None:
         start = date(2026, 5, 1)
         state = dict(coach_state.DEFAULT_STATE, phase_started=start.isoformat())
-        workouts = self._dense_workouts(start, 7, step_days=7)  # 1/wk — no fatigue
+        workouts = self._dense_workouts(start, 7, step_days=7)  # 1/нед — усталости нет
         today = start + timedelta(days=42)
         position = coach_state.cycle_position(state, workouts, today)
         self.assertEqual(position["cycle_week"], 7)
@@ -192,6 +206,7 @@ class GroupTargetOverrideTests(unittest.TestCase):
     коридором на все крупные группы — для этого и заведён group_targets."""
 
     def _path(self, tmp):
+        """Путь к файлу состояния во временном каталоге."""
         return pathlib.Path(tmp) / "state.json"
 
     def test_group_targets_override_the_uniform_corridor(self):
@@ -236,8 +251,8 @@ class GroupTargetOverrideTests(unittest.TestCase):
     def test_render_prints_the_group_goal_inline(self):
         volume = coach_features.weekly_volume([], date(2026, 8, 16))
         text = prompt_builder.render_weekly_volume(volume, (6, 9), None, {"спина": (16, 16)})
-        # The goal stands next to the DIRECT count — that is the column the
-        # programme's table uses — and the effective count is marked reference.
+        # Цель стоит рядом с ПРЯМЫМ счётом — это колонка из таблицы программы, —
+        # а эффективный счёт помечен как справочный.
         self.assertIn("спина: 0 прямых (цель 16–16) / 0 эффективных (справочно)", text)
         self.assertIn("ЗРЕЛОГО блока", text)
         self.assertIn("ПРЯМЫХ", text)

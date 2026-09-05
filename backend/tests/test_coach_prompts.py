@@ -1,3 +1,8 @@
+"""Шаблоны промптов: слоты совпадают с тем, что считает код, фрагменты и тексты
+баннеров не мёртвые, срез стратегии идёт по заголовкам, собранный промпт без
+пустых слотов.
+"""
+
 from __future__ import annotations
 
 import pathlib
@@ -11,12 +16,14 @@ from trainer.domain import prompt_builder
 
 
 class PromptTemplateTests(unittest.TestCase):
-    def test_system_template_expects_exactly_the_computed_slots(self):
-        """The template's slots and what recommender computes must line up.
+    """Загрузчик ``coach_prompts`` и рендеры ``prompt_builder`` против файлов в prompts/."""
 
-        A slot added to the markdown without a value in the code would ship
-        «{{...}}» straight to the model; a value with no slot would silently
-        vanish from the prompt. Both fail loudly instead.
+    def test_system_template_expects_exactly_the_computed_slots(self):
+        """Слоты шаблона и то, что считает код, обязаны совпадать.
+
+        Слот, добавленный в markdown без значения в коде, отправил бы «{{...}}» прямо
+        в модель; значение без слота молча пропало бы из промпта. И то и другое
+        падает громко.
         """
         self.assertEqual(
             coach_prompts.slots(coach_prompts.load("system")),
@@ -36,16 +43,18 @@ class PromptTemplateTests(unittest.TestCase):
             coach_prompts.load("no_such_prompt")
 
     def test_braces_in_prose_are_not_touched(self):
-        """No str.format under the hood: JSON snippets and ranges in the prose
-        must survive without escaping."""
+        """Под капотом нет str.format: JSON-фрагменты и диапазоны в прозе должны
+        выживать без экранирования.
+        """
         self.assertEqual(
             coach_prompts.render('{"reps": 12} и {{slot}}', slot="X"),
             '{"reps": 12} и X',
         )
 
     def test_phase_policy_template_slots_match_the_renderer(self):
-        """Every slot in phase_policy.md must be filled by _render_phase_policy
-        for any phase — a new number in the prose must not ship as «{{...}}»."""
+        """Каждый слот phase_policy.md обязан заполняться _render_phase_policy для любой
+        фазы — новое число в прозе не должно уехать как «{{...}}».
+        """
         from trainer.domain import coach_state
 
         expected = coach_prompts.slots(coach_prompts.load("phase_policy"))
@@ -146,6 +155,8 @@ class PromptTemplateTests(unittest.TestCase):
 
 
 class BuiltPromptTests(unittest.TestCase):
+    """Собранный системный промпт на настоящем каталоге."""
+
     def test_built_system_prompt_has_no_unfilled_slots(self):
         catalog = files.load_catalog(CATALOG_PATH)
         prompt = prompt_builder._build_system_prompt(catalog)

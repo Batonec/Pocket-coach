@@ -1,9 +1,13 @@
+"""Правила записи: снапшот совета при ретрае и правке, одно открытое событие,
+автозакрытие сегодняшней тренировкой.
+"""
+
 from __future__ import annotations
 
 import unittest
 from datetime import date
 
-import support  # noqa: F401 — adds backend to sys.path
+import support  # noqa: F401 — кладёт backend в sys.path
 
 from trainer.domain import rules
 
@@ -55,6 +59,8 @@ class RetryAndEditSnapshotTests(unittest.TestCase):
 
 
 class OpenEventTests(unittest.TestCase):
+    """Одно открытое событие и его закрытие тренировкой."""
+
     def test_second_open_event_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             rules.check_single_open_event(True)

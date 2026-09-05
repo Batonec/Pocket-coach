@@ -1,8 +1,12 @@
+"""Валидатор плана: ровно три жёсткие границы (покрытие групп, возвратный потолок,
+размер сессии); всё остальное — суждение модели, и тесты держат эту свободу.
+"""
+
 from __future__ import annotations
 
 import unittest
 
-import support  # noqa: F401 — adds backend to sys.path
+import support  # noqa: F401 — кладёт backend в sys.path
 
 from trainer.domain import plan_validator, prompt_builder
 
@@ -14,11 +18,12 @@ CATALOG = [
 
 
 class SemanticValidatorTests(unittest.TestCase):
-    """The validator owns exactly two hard bounds (comeback ceiling, group
-    coverage). Everything the old validator policed — weight bands, session
-    corridors, rep waves, rest_days, load sequencing — is now the model's
-    coaching judgement, and these tests pin the freedom down so it doesn't
-    silently regrow."""
+    """Валидатор держит ровно три жёсткие границы (возвратный потолок, покрытие
+    групп, потолок сессии). Всё, что проверял старый валидатор — полосы весов,
+    коридоры сессии, волны повторов, rest_days, порядок нагрузок, — теперь
+    тренерское суждение модели, и эти тесты закрепляют свободу, чтобы она молча
+    не отросла обратно.
+    """
 
     CATALOG = [
         {"id": 8, "name": "Жим ногами"},
@@ -27,8 +32,9 @@ class SemanticValidatorTests(unittest.TestCase):
     ]
 
     def _history(self, when: str = "2026-06-10", load_type: str = "medium"):
-        # Covers every coverage-rule group (chest/back/quads/hamstrings) so the
-        # tests below exercise exactly the rule they are about.
+        # Покрывает все группы правила покрытия (грудь/спина/квадрицепс/бицепс
+        # бедра), чтобы тесты ниже проверяли ровно то правило, о котором они.
+        """История, покрывающая все группы правила покрытия."""
         return [
             {
                 "workout_date": when,
@@ -70,6 +76,7 @@ class SemanticValidatorTests(unittest.TestCase):
         focus: str = "f",
         rationale: str = "r",
     ):
+        """Сырой ответ модели: жим ногами и тяга на ``sets`` подходов."""
         first = sets - sets // 2
         return {
             "focus": focus,
@@ -93,6 +100,7 @@ class SemanticValidatorTests(unittest.TestCase):
         }
 
     def _violations(self, rec, workouts=None, today=None):
+        """Нарушения жёстких границ для ответа на данной истории."""
         from datetime import date as _date
 
         return plan_validator._semantic_violations(
@@ -107,8 +115,8 @@ class SemanticValidatorTests(unittest.TestCase):
         self.assertEqual(self._violations(rec), [])
 
     def test_weight_jumps_are_the_models_call(self) -> None:
-        # +40% over the recent range used to be rejected; the model may now
-        # judge it (the prompt carries the progression defaults instead).
+        # +40% к недавнему диапазону раньше отвергалось; теперь это суждение
+        # модели (дефолты прогрессии несёт промпт).
         rec = plan_validator._validate(self._rec(weight=140, sets=14), self.CATALOG)
         self.assertEqual(self._violations(rec), [])
         low = plan_validator._validate(self._rec(weight=60, sets=14), self.CATALOG)
@@ -119,11 +127,11 @@ class SemanticValidatorTests(unittest.TestCase):
 
         tiny = plan_validator._validate(self._rec(sets=5), self.CATALOG)
         big = plan_validator._validate(self._rec(sets=24), self.CATALOG)
-        # Without a cap (no phase parameters) the size is the model's call.
+        # Без потолка (нет параметров фазы) размер — решение модели.
         self.assertEqual(self._violations(tiny), [])
         self.assertEqual(self._violations(big), [])
-        # With the phase cap only the UPPER bound is enforced: a short session
-        # can be a decision, an oversized one is not.
+        # С потолком фазы держится только ВЕРХНЯЯ граница: короткая сессия может
+        # быть решением, раздутая — нет.
         capped = lambda rec: plan_validator._semantic_violations(  # noqa: E731
             rec, self.CATALOG, self._history(), _date(2026, 6, 12), session_cap=20
         )
@@ -147,6 +155,8 @@ class SemanticValidatorTests(unittest.TestCase):
 
 
 class CoverageAndDeloadValidatorTests(unittest.TestCase):
+    """Покрытие сухих групп и то, что разгрузка больше не ограничивает план."""
+
     CATALOG = [
         {"id": 8, "name": "Жим ногами"},
         {"id": 9, "name": "Тяга верт."},
@@ -155,6 +165,7 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
     ]
 
     def _fullbody(self, when: str, sets_each: int = 2):
+        """Fullbody-сессия на дату по ``sets_each`` подходов."""
         return {
             "workout_date": when,
             "data": {
@@ -171,6 +182,7 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
         }
 
     def _plan(self, ids_sets: list[tuple[int, int]], rationale: str = "r"):
+        """План из пар (id, сетов)."""
         names = {item["id"]: item["name"] for item in self.CATALOG}
         return {
             "focus": "f",
@@ -191,7 +203,7 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
     def test_dry_group_missing_from_plan_is_flagged(self) -> None:
         from datetime import date as _date
 
-        # Hamstrings (id 15) last trained 12 days ago → dry; the plan skips them.
+        # Бицепс бедра (id 15) тренировали 12 дней назад → сухой; план его пропускает.
         workouts = [
             self._fullbody("2026-06-10", sets_each=2),
             {
@@ -236,23 +248,24 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
         workouts = [
             self._fullbody((start + _timedelta(days=index * 3)).isoformat()) for index in range(15)
         ]
-        today = start + _timedelta(days=42)  # block week 7 → planned deload
-        # The flag still reaches the prompt via the context block…
+        today = start + _timedelta(days=42)  # неделя блока 7 → плановая разгрузка
+        # Флаг по-прежнему доходит до промпта через блок контекста…
         self.assertTrue(coach_state.cycle_position(state, workouts, today)["deload_week"])
 
-        # …but the validator no longer polices deload volume or weights: how
-        # to build the light week is the model's call.
-        heavy_volume = self._plan([(8, 5), (9, 5), (18, 4), (15, 2)])  # 16 sets
+        # …но валидатор больше не следит за объёмом и весами разгрузки: как
+        # строить лёгкую неделю — решение модели.
+        heavy_volume = self._plan([(8, 5), (9, 5), (18, 4), (15, 2)])  # 16 сетов
         rec = plan_validator._validate(heavy_volume, self.CATALOG)
         violations = plan_validator._semantic_violations(rec, self.CATALOG, workouts, today)
         self.assertEqual(violations, [])
 
 
 class ReturnLadderIsDataOnlyTests(unittest.TestCase):
-    """The comeback ladder used to be a validation bound (first rung + one
-    step). It is data-only now: on a return the single hard ceiling for EVERY
-    movement is the pre-break working weight; the ladder in the prompt guides
-    the sessions after it."""
+    """Лестница возврата раньше была границей валидации (первая ступень плюс шаг).
+    Теперь это только данные: на возврате единственный жёсткий потолок для
+    КАЖДОГО движения — доперерывный рабочий вес; лестница в промпте ведёт
+    следующие сессии.
+    """
 
     CATALOG = [
         {"id": 8, "name": "Жим ногами"},
@@ -262,9 +275,10 @@ class ReturnLadderIsDataOnlyTests(unittest.TestCase):
     ]
 
     def _history(self):
-        # 40-day break; leg-press peak 120, last working weight 80 → the ladder
-        # (90 → 100 → 110 → 120) exists as prompt data, but the return session
-        # itself is capped at the pre-break 80.
+        # Перерыв 40 дней; пик жима ногами 120, последний рабочий 80 → лестница
+        # (90 → 100 → 110 → 120) существует как данные промпта, но сама
+        # возвратная сессия ограничена доперерывными 80.
+        """Перерыв 40 дней; пик жима ногами 120, последний рабочий 80."""
         return [
             {
                 "workout_date": "2026-05-03",
@@ -336,6 +350,7 @@ class ReturnLadderIsDataOnlyTests(unittest.TestCase):
         ]
 
     def _plan(self, leg_press_weight: float):
+        """Возвратный план с заданным весом жима ногами."""
         return {
             "focus": "возврат",
             "load_type": "medium",
@@ -370,6 +385,7 @@ class ReturnLadderIsDataOnlyTests(unittest.TestCase):
         }
 
     def _violations(self, plan):
+        """Нарушения после санитизации плана."""
         from datetime import date as _date
 
         rec = plan_validator._validate(plan, self.CATALOG)
@@ -389,8 +405,9 @@ class ReturnLadderIsDataOnlyTests(unittest.TestCase):
 
 
 class ReturnCeilingTests(unittest.TestCase):
-    """After a break EVERY exercise is capped at its pre-break working weight
-    — including the ones the athlete left at their peak."""
+    """После перерыва КАЖДОЕ упражнение ограничено доперерывным рабочим весом — и те,
+    что атлет оставил на пике.
+    """
 
     CATALOG = [
         {"id": 8, "name": "Жим ногами"},
@@ -400,8 +417,9 @@ class ReturnCeilingTests(unittest.TestCase):
     ]
 
     def _history(self, last: str = "2026-05-22"):
-        # Two identical sessions at the same weights: nothing is below peak,
-        # so comeback_ramp_steps yields NO ladder for any movement.
+        # Две одинаковые сессии на тех же весах: ничего ниже пика, поэтому
+        # comeback_ramp_steps не даёт лестницы ни одному движению.
+        """Две одинаковые сессии на одних весах: ничего ниже пика, лестницы нет."""
         return [
             {
                 "workout_date": last,
@@ -462,6 +480,7 @@ class ReturnCeilingTests(unittest.TestCase):
         ]
 
     def _plan(self, leg_press: float):
+        """Возвратный план с заданным жимом ногами."""
         return {
             "focus": "возврат",
             "load_type": "medium",
@@ -496,27 +515,28 @@ class ReturnCeilingTests(unittest.TestCase):
         }
 
     def _violations(self, plan, today):
+        """Нарушения плана на дату ``today``."""
         rec = plan_validator._validate(plan, self.CATALOG)
         return plan_validator._semantic_violations(rec, self.CATALOG, self._history(), today)
 
     def test_progression_after_a_break_is_rejected(self) -> None:
         from datetime import date as _date
 
-        # 21 days off and the model still adds weight to the pre-break 100.
+        # 21 день без зала, а модель всё равно прибавляет к доперерывным 100.
         violations = self._violations(self._plan(leg_press=105), _date(2026, 6, 12))
         self.assertTrue(any("не место для прибавки" in v for v in violations))
 
     def test_below_pre_break_weight_passes(self) -> None:
         from datetime import date as _date
 
-        # How far below is the coach's call — the server only blocks the plus.
+        # Насколько ниже — решение тренера; сервер блокирует только плюс.
         self.assertEqual(self._violations(self._plan(leg_press=85), _date(2026, 6, 12)), [])
         self.assertEqual(self._violations(self._plan(leg_press=100), _date(2026, 6, 12)), [])
 
     def test_no_ceilings_outside_a_break(self) -> None:
         from datetime import date as _date
 
-        # Trained 3 days ago: normal progression rules, no comeback guardrail.
+        # Тренировался 3 дня назад: обычные правила прогрессии, без возвратного ограничителя.
         rec = plan_validator._validate(self._plan(leg_press=105), self.CATALOG)
         violations = plan_validator._semantic_violations(
             rec, self.CATALOG, self._history(last="2026-06-09"), _date(2026, 6, 12)
@@ -531,8 +551,8 @@ class ReturnCeilingTests(unittest.TestCase):
         )
         self.assertIn("21 дн.", text)
         self.assertIn("Жим ногами: 100", text)
-        # The server states data and defers the judgement; no percentages, no
-        # physiology lecture baked into the algorithmic layer.
+        # Сервер называет данные и оставляет суждение модели: ни процентов, ни
+        # лекции по физиологии, зашитой в алгоритмический слой.
         self.assertIn("решай сам", text)
         self.assertNotIn("%", text)
         self.assertNotIn("связк", text)

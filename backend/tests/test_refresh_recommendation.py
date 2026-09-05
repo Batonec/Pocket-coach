@@ -1,3 +1,7 @@
+"""Скрипт утреннего обновления совета: когда пересобирать (``should_refresh``) и
+что делает ``run`` на живом сторе.
+"""
+
 from __future__ import annotations
 
 import tempfile
@@ -9,7 +13,7 @@ import support  # noqa: F401
 from support import sample_workout_payload
 
 from infra.jobs import refresh_recommendation as refresh
-from trainer.data import backend_store  # support puts backend/ on sys.path
+from trainer.data import backend_store  # support кладёт backend/ в sys.path
 from trainer.domain import recommender
 
 NOW = int(time.time())
@@ -17,10 +21,13 @@ HOUR = 3600
 
 
 def rec_row(status: str, age_hours: float) -> dict:
+    """Строка кэша со статусом и возрастом в часах."""
     return {"status": status, "updated_at": NOW - int(age_hours * HOUR)}
 
 
 class ShouldRefreshTests(unittest.TestCase):
+    """Решение о пересборке по статусу и возрасту."""
+
     def test_missing_recommendation_refreshes(self) -> None:
         refresh_needed, _ = recommender.should_refresh(None, NOW)
         self.assertTrue(refresh_needed)
@@ -42,6 +49,8 @@ class ShouldRefreshTests(unittest.TestCase):
 
 
 class RunTests(unittest.TestCase):
+    """``run`` на временной базе с подменённой генерацией."""
+
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

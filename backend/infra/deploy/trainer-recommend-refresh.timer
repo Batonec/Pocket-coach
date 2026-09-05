@@ -2,8 +2,8 @@
 Description=Trainer: morning refresh of the coach recommendation
 
 [Timer]
-# VPS runs Europe/Moscow — 06:30 local, so the card greets the athlete with a
-# today-dated plan. Persistent=true catches up after VPS downtime.
+# VPS живёт в Europe/Moscow — 06:30 по местному, чтобы карточка встречала атлета
+# планом с сегодняшней датой. Persistent=true догоняет пропуск после простоя VPS.
 OnCalendar=*-*-* 06:30:00
 Persistent=true
 RandomizedDelaySec=300
