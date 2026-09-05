@@ -55,10 +55,10 @@ All tools accept an optional `user_id` (defaults to the configured user).
 ## State files (next to the DB)
 
 - `coach_profile.json` — athlete prose profile (personal/medical context; never
-  in the repo, template: `backend/resources/examples/coach_profile.example.json`);
+  in the repo, shape documented in `backend/README.md`; override path with
+  `COACH_PROFILE_PATH`);
 - `coach_state.json` — structured coaching state: phase, phase start, per-phase
-  overrides, waist limit/base, injection day (template:
-  `backend/resources/examples/coach_state.example.json`; override path with `COACH_STATE_PATH`).
+  overrides, waist limit/base (override path with `COACH_STATE_PATH`).
 
 ## Environment
 

@@ -19,7 +19,6 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 - [backend/trainer/coach/coach_signals.py](./trainer/coach/coach_signals.py) — детерминированные баннеры коуча; каноническая спецификация — [docs/COACH_SIGNALS.md](../docs/COACH_SIGNALS.md)
 - [backend/resources/static/data/exercises.json](./resources/static/data/exercises.json) — каталог упражнений (отдаётся клиенту по `/data/exercises.json`)
 - [backend/infra/jobs](./infra/jobs) — скрипты systemd-таймеров: авто-свежесть совета, недельный отчёт, бэкап базы
-- [backend/resources/examples](./resources/examples) — шаблоны личных файлов, которые живут только на VPS рядом с базой: профиль, состояние, стратегия
 - [backend/infra/deploy](./infra/deploy) — деплой на VPS и systemd-юниты
 - [backend/tests](./tests) — тесты backend
 
@@ -117,9 +116,13 @@ per-exercise сводки за всю историю (топ-сет, e1RM по �
 тренажёру у каждой сессии стоит позиция упражнения `[#k/n]` — вес на шестом месте не
 сравним с весом на первом. Сырыми остаются последние ~10 тренировок.
 
-**Фазы** (`coach_state.py`, состояние в `coach_state.json` рядом с базой, шаблон —
-[resources/examples/coach_state.example.json](./resources/examples/coach_state.example.json)): `cut_recomp` / `lean_bulk` /
-`maintenance` + вычисляемый режим «возврат после перерыва». Переключение — только руками
+**Фазы** (`coach_state.py`, состояние в `coach_state.json` рядом с базой): `cut_recomp` / `lean_bulk` /
+`maintenance` + вычисляемый режим «возврат после перерыва». Файл состояния — JSON вида
+`{"schema": 1, "phase": "cut_recomp", "phase_started": "2026-08-14", "phase_params": {},
+"waist_limit_cm": null, "waist_base_cm": null}`; `phase_params` — переопределения дефолтов фазы
+(`coach_state.PHASE_DEFAULTS`). В репозитории его нет: на VPS он лежит в
+`/opt/trainer-miniapp/data/coach_state.json`, путь переопределяется `COACH_STATE_PATH`, меняется
+только инструментами Coach MCP. Переключение — только руками
 через Coach MCP (`coach_set_phase`); при достижении цели фазы промпт лишь просит модель
 предложить смену в rationale. Недельный объём строительных фаз идёт ramp'ом 6–8 →
 потолок фазы (+1–2 сета/нед), перерыв ≥14 дней сбрасывает ramp на старт блока.
@@ -193,16 +196,20 @@ Coach MCP); единый допустимый диапазон записи и �
 
 `recommender.load_profile()` читает JSON с произвольными текстовыми блоками
 (`{"schema":1, "blocks": {"Атлет": "...", "Цель": "...", ...}}`), которые попадают в
-системный промпт. Шаблон — [resources/examples/coach_profile.example.json](./resources/examples/coach_profile.example.json).
+системный промпт как есть; имена блоков произвольные.
 **Реальный профиль содержит персональные/медицинские данные и живёт только на сервере**
-(`/opt/trainer-miniapp/data/coach_profile.json`, рядом с базой) — в публичный репозиторий
-он не коммитится. Файл отсутствует/битый → генерация работает с нейтральным фоллбеком.
+(`/opt/trainer-miniapp/data/coach_profile.json`, рядом с базой; путь переопределяется
+`COACH_PROFILE_PATH`) — в публичный репозиторий он не коммитится, шаблона в репозитории тоже нет. Файл отсутствует/битый → генерация работает с нейтральным фоллбеком.
 Блоки правятся удалённо инструментом Coach MCP `coach_update_profile`
 (`recommender.update_profile_block()`: замена/удаление одного блока, предыдущая версия
 файла сохраняется рядом как `.bak-таймстамп`) — содержимое профиля при этом в репозиторий
 не попадает.
-Рядом с профилем живёт `coach_state.json` — структурное состояние подготовки (фаза, дата
-её старта, переопределения параметров, лимит/база талии).
+Рядом с профилем живут `coach_state.json` — структурное состояние подготовки (фаза, дата
+её старта, переопределения параметров, лимит/база талии) — и `coach_strategy.md`, рабочий
+документ стратегии: обычный markdown с заголовками `## N. Название`, в системный промпт уходит
+не весь документ, а срез по заголовкам из `prompt_builder.STRATEGY_SECTIONS` (по тексту заголовка,
+номер не важен; ненайденный заголовок попадает в промпт предупреждением). Оба файла личные, живут
+только на VPS рядом с базой; пути — `COACH_STATE_PATH` и `COACH_STRATEGY_PATH`.
 
 ### Связка тренировка ↔ рекомендация
 
@@ -260,6 +267,7 @@ API поднимается на `http://127.0.0.1:8080/`, SQLite — локал�
 - `ANTHROPIC_RETRY_BACKOFF` — базовая пауза экспоненциального backoff в секундах, по умолчанию `1.5`
 - `COACH_PROFILE_PATH` — путь к профилю атлета, по умолчанию `<dir(MINIAPP_DB_PATH)>/coach_profile.json`
 - `COACH_STATE_PATH` — путь к состоянию подготовки (фаза/цикл/талия-лимиты), по умолчанию `<dir(MINIAPP_DB_PATH)>/coach_state.json`
+- `COACH_STRATEGY_PATH` — путь к рабочему документу стратегии, по умолчанию `<dir(MINIAPP_DB_PATH)>/coach_strategy.md`
 - `REFRESH_MAX_AGE_HOURS` — порог авто-свежести для `refresh_recommendation.py`, по умолчанию `24`
 - `BACKUP_DIR` / `BACKUP_KEEP` — каталог и глубина ротации для `backup_db.py`, по умолчанию `<dir(MINIAPP_DB_PATH)>/backups` и `14`
 - `ANTHROPIC_TIMEOUT` — таймаут **одного** вызова Claude, по умолчанию `120`.
