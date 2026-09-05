@@ -134,6 +134,16 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertNotIn("<!--", built)
         self.assertTrue(built.startswith("Ты — персональный фитнес-тренер"))
 
+    def test_system_header_does_not_reach_the_model(self):
+        """system.md несёт такую же шапку для человека; собранный промпт плана
+        начинается с роли, а не с комментария."""
+        self.assertTrue(
+            (coach_prompts.PROMPTS_DIR / "system.md").read_text("utf-8").startswith("<!--")
+        )
+        built = prompt_builder._build_system_prompt([])
+        self.assertNotIn("<!--", built)
+        self.assertTrue(built.startswith("Ты — персональный силовой тренер"))
+
     def test_report_states_its_general_task_and_asks_the_four_course_questions(self):
         """Генеральная задача отчёта — курс к долгосрочной цели, а не только неделя:
         роль называет её, а блок «Курс к цели» задаёт четыре вопроса атлета."""
