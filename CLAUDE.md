@@ -131,6 +131,8 @@ backend/
 Импорт — `from trainer.domain import coach_state`, `from trainer.data import backend_store`; где лежат `prompts/`, `resources/` и локальная
 `data/`, модули узнают через `trainer.BACKEND_DIR`. Скрипты в `infra/jobs/` запускаются как файлы
 (`python3 backend/infra/jobs/weekly_report.py`), поэтому корень backend в `sys.path` кладут сами.
+`__init__.py` есть только у `trainer/` — там живёт `BACKEND_DIR`; `domain/`, `data/`, `infra/` и
+`coach_mcp/` импортируются как namespace-пакеты без него, и новой подпапке этот файл не нужен.
 
 `server.py` — `BaseHTTPRequestHandler` без фреймворка: `do_*` отдают запрос в `_dispatch`, а тот
 ищет обработчик в таблицах `ROUTES` (метод + точный путь) и `ID_ROUTES` (`/api/<коллекция>/<id>`).
