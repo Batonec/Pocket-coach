@@ -477,6 +477,58 @@ class NutritionMatrixTests(unittest.TestCase):
         self.assertFalse(any("ккал" in line for line in result["lines"] if "−100" in line))
 
 
+class SupportWeekMatrixTests(unittest.TestCase):
+    """Недели поддержки: матрица молчит на них и две недели после, их точки не в тренде."""
+
+    def _state(self, *mondays: date) -> dict:
+        """Срез по умолчанию с отмеченными неделями поддержки."""
+        return coach_state.normalize_state(
+            dict(coach_state.DEFAULT_STATE, support_weeks=[m.isoformat() for m in mondays])
+        )
+
+    def _daily(self, per_week: float, days: int = 28, bump: tuple[date, date] | None = None):
+        """Ежедневные взвешивания с темпом ``per_week`` и, по желанию, +1 кг в ``bump``."""
+        points = []
+        for offset in range(days, -1, -1):
+            when = TODAY - timedelta(days=offset)
+            weight = 80.0 + per_week * (days - offset) / 7
+            if bump and bump[0] <= when <= bump[1]:
+                weight += 1.0
+            points.append({"entry_date": when.isoformat(), "weight": round(weight, 2)})
+        return points
+
+    def _lines(self, state: dict, weights: list[dict]) -> list[str]:
+        return coach_features.nutrition_matrix(
+            state, coach_state.phase_params(state), weights, [], TODAY
+        )["lines"]
+
+    def test_current_support_week_silences_calorie_advice(self) -> None:
+        monday = coach_state._week_start(TODAY)
+        lines = self._lines(self._state(monday), self._daily(0.0))  # вес стоит
+        self.assertTrue(any("НЕДЕЛЯ ПОДДЕРЖКИ" in line for line in lines))
+        self.assertFalse(any("ккал" in line for line in lines))
+        # Без отметки та же неделя стоячего веса на срезе — повод резать калории.
+        plain = self._lines(coach_state.default_state(), self._daily(0.0))
+        self.assertTrue(any("−100–150 ккал" in line for line in plain))
+
+    def test_confirmation_window_restarts_after_a_support_week(self) -> None:
+        last_week = coach_state._week_start(TODAY) - timedelta(days=7)
+        lines = self._lines(self._state(last_week), self._daily(0.0))
+        self.assertTrue(any("окно коррекции набирается заново" in line for line in lines))
+        self.assertFalse(any("ккал" in line for line in lines))
+
+    def test_support_week_points_do_not_bend_the_trend(self) -> None:
+        """Три недели назад — неделя поддержки с +1 кг: без исключения её точек
+        тренд выглядел бы обвалом темпа, с ним — темп в коридоре фазы."""
+        monday = coach_state._week_start(TODAY) - timedelta(days=21)
+        bump = (monday, monday + timedelta(days=6))
+        weights = self._daily(-0.3, bump=bump)  # коридор среза −0.35…−0.25
+        lines = self._lines(self._state(monday), weights)
+        self.assertTrue(any("в коридоре фазы" in line for line in lines), lines)
+        plain = self._lines(coach_state.default_state(), weights)
+        self.assertFalse(any("в коридоре фазы" in line for line in plain), plain)
+
+
 class MeasurementRenderTests(unittest.TestCase):
     """Рендер замеров: мусор отбрасывается, талия перечисляется, средняя названа."""
 

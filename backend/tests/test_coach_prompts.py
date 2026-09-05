@@ -141,7 +141,6 @@ class PromptTemplateTests(unittest.TestCase):
             for name in ("prompt_builder.py", "recommender.py")
         )
         used = set(re.findall(r'_block\(\s*\n?\s*"([a-z_]+)"', source))
-        used |= set(re.findall(r'"(report_deload_(?:yes|no))"', source))
         declared = set(coach_prompts.fragments("user_blocks"))
         self.assertEqual(declared - used, set(), "объявлены, но не используются")
         self.assertEqual(used - declared, set(), "используются, но не объявлены")
@@ -162,7 +161,8 @@ class PromptTemplateTests(unittest.TestCase):
     def test_fragment_keeps_leading_space(self):
         blocks = coach_prompts.fragments("user_blocks")
         self.assertTrue(blocks["deload_week_label"].startswith(" — "))
-        self.assertEqual(blocks["report_deload_no"], ".")
+        self.assertTrue(blocks["report_deload_label"].startswith(" — "))
+        self.assertTrue(blocks["support_week_label"].startswith(" — "))
 
     def test_every_signal_text_is_used(self):
         """Текст баннера, объявленный и не вызванный, — мёртвый копирайт."""

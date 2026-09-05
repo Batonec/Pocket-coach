@@ -358,6 +358,16 @@ def _serialize_history(
     return "\n".join(row[2] for row in rows)
 
 
+def _support_week_label(state: dict[str, Any], today: date) -> str:
+    """Флаг недели поддержки для подписи недели блока (план и отчёт) либо пустая
+    строка: калории на уровне TDEE, тренировки в обычном режиме, это не разгрузка.
+    """
+    bounds = coach_state.support_week_bounds(state, today)
+    if bounds is None:
+        return ""
+    return _block("support_week_label", start=bounds[0].isoformat(), end=bounds[1].isoformat())
+
+
 def _render_attendance(workouts: list[dict[str, Any]], today: date) -> str:
     """Блок явки: тренировочные дни по календарным неделям и серии из ≥3 и ≥4 —
     факт, который стоит и за переключением сплита («каркас включается, когда атлет
@@ -583,6 +593,7 @@ def _build_user_prompt(
     week_label = f"неделя блока {week}"
     if position["deload_week"]:
         week_label += _block("deload_week_label", weeks=str(params.get("deload_every_weeks")))
+    week_label += _support_week_label(state, today)
     context_lines = [
         _block(
             "context_today",
@@ -901,7 +912,8 @@ def _build_report_prompt(
             phase=params["phase"],
             title=str(params["title"]),
             week=str(position["block_week"]),
-            deload=_block("report_deload_yes" if position["deload_week"] else "report_deload_no"),
+            flags=(_block("report_deload_label") if position["deload_week"] else "")
+            + _support_week_label(state, today),
             calories=_format_range(params["calories"]),
             rate=str(params["rate_text"]),
             protein=_format_range(params["protein_g"]),
@@ -1019,9 +1031,14 @@ def _build_report_prompt(
         nutrition.append(_block("nutrition_matrix", lines="; ".join(matrix["lines"])))
     if matrix["goal"]:
         nutrition.append(_block("nutrition_goal", goal=matrix["goal"]))
-    estimate = coach_features.tdee_estimate(
-        params, coach_features.weight_points(body_weights), today, phase_start=started
-    )
+    # Недели поддержки в калибровку не входят, как и в матрицу: их точки
+    # объявили бы расход ниже на пустом месте.
+    calibration_points = [
+        point
+        for point in coach_features.weight_points(body_weights)
+        if not coach_state.is_support_week(state, point[0])
+    ]
+    estimate = coach_features.tdee_estimate(params, calibration_points, today, phase_start=started)
     if estimate:
         nutrition.append(
             _block(

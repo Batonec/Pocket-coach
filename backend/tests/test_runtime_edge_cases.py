@@ -826,6 +826,21 @@ class CoachMcpBoundaryTests(unittest.TestCase):
         self.assertTrue(result.structuredContent["cached"])
         generate.assert_not_called()
 
+    def test_mark_support_week_writes_the_monday_into_the_state_file(self) -> None:
+        marked = self.module.coach_mark_support_week(day="2026-09-10")
+        self.assertFalse(marked.isError)
+        self.assertTrue(marked.structuredContent["changed"])
+        self.assertEqual(marked.structuredContent["week_start"], "2026-09-07")
+        saved = json.loads((self.root / "coach_state.json").read_text("utf-8"))
+        self.assertEqual(saved["support_weeks"], ["2026-09-07"])
+
+        again = self.module.coach_mark_support_week(day="2026-09-13")
+        self.assertFalse(again.structuredContent["changed"])
+        cleared = self.module.coach_mark_support_week(day="2026-09-07", active=False)
+        self.assertTrue(cleared.structuredContent["changed"])
+        self.assertEqual(cleared.structuredContent["support_weeks"], [])
+        self.assertTrue(self.module.coach_mark_support_week(day="10.09.2026").isError)
+
     def test_weekly_report_generation_passes_last_weeks_focus(self) -> None:
         """Прошлый отчёт ищется тем же якорем, что и текущий, на `days` раньше."""
         store = mock.Mock()

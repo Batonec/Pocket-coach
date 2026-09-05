@@ -114,6 +114,47 @@ class PhaseStartTests(unittest.TestCase):
         self.assertIsNone(coach_state.phase_start({}))
 
 
+class SupportWeekTests(unittest.TestCase):
+    """Недели поддержки: понедельники в состоянии, границы, отметка и снятие."""
+
+    def test_any_day_of_the_week_normalizes_to_its_monday(self) -> None:
+        state = coach_state.normalize_state(
+            {"support_weeks": ["2026-09-09", "2026-09-07", "мусор", 5, "2026-09-21"]}
+        )
+        self.assertEqual(state["support_weeks"], ["2026-09-07", "2026-09-21"])
+        self.assertEqual(coach_state.default_state()["support_weeks"], [])
+
+    def test_bounds_membership_and_days_since(self) -> None:
+        state = coach_state.normalize_state({"support_weeks": ["2026-09-07"]})
+        self.assertEqual(
+            coach_state.support_week_bounds(state, date(2026, 9, 13)),
+            (date(2026, 9, 7), date(2026, 9, 13)),
+        )
+        self.assertIsNone(coach_state.support_week_bounds(state, date(2026, 9, 14)))
+        self.assertTrue(coach_state.is_support_week(state, date(2026, 9, 10)))
+        self.assertFalse(coach_state.is_support_week(state, date(2026, 9, 6)))
+        # Идущая неделя не «закончилась»: считает только прошедшие воскресенья.
+        self.assertIsNone(coach_state.days_since_support_week(state, date(2026, 9, 10)))
+        self.assertEqual(coach_state.days_since_support_week(state, date(2026, 9, 14)), 1)
+        self.assertEqual(coach_state.days_since_support_week(state, date(2026, 10, 1)), 18)
+
+    def test_mark_and_unmark_report_whether_anything_changed(self) -> None:
+        state = coach_state.default_state()
+        self.assertEqual(
+            coach_state.mark_support_week(state, date(2026, 9, 10)),
+            (date(2026, 9, 7), date(2026, 9, 13), True),
+        )
+        self.assertEqual(coach_state.mark_support_week(state, date(2026, 9, 7))[2], False)
+        self.assertEqual(state["support_weeks"], ["2026-09-07"])
+        self.assertEqual(
+            coach_state.mark_support_week(state, date(2026, 9, 13), active=False)[2], True
+        )
+        self.assertEqual(state["support_weeks"], [])
+        self.assertEqual(
+            coach_state.mark_support_week(state, date(2026, 9, 13), active=False)[2], False
+        )
+
+
 class BlockWeekTests(unittest.TestCase):
     """Неделя блока от старта фазы или возврата."""
 

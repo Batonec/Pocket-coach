@@ -252,3 +252,23 @@ class ReportPromptTests(unittest.TestCase):
         self.assertIn("Фокус, поставленный в прошлом отчёте", with_memory)
         self.assertIn("Сгибания ног в каждую сессию.", with_memory)
         self.assertNotIn("Фокус, поставленный", self._report([self._workout("2026-06-12", 105)]))
+
+    def test_support_week_flag_reaches_plan_and_report(self) -> None:
+        """Флаг недели поддержки стоит в подписи недели блока у обоих промптов;
+        без отметки его нет."""
+        state = coach_state.default_state()
+        coach_state.mark_support_week(state, self.TODAY)  # неделя 8–14 июня
+        report = self._report([self._workout("2026-06-12", 105)], state=state)
+        self.assertIn(
+            "неделя блока 1 — НЕДЕЛЯ ПОДДЕРЖКИ по плану (2026-06-08 – 2026-06-14)", report
+        )
+        plan = prompt_builder._build_user_prompt(
+            [self._workout("2026-06-12", 105)],
+            [],
+            self.TODAY,
+            10,
+            catalog=files.load_catalog(CATALOG_PATH),
+            state=state,
+        )
+        self.assertIn("НЕДЕЛЯ ПОДДЕРЖКИ по плану (2026-06-08 – 2026-06-14)", plan)
+        self.assertNotIn("НЕДЕЛЯ ПОДДЕРЖКИ", self._report([self._workout("2026-06-12", 105)]))

@@ -122,6 +122,8 @@ _INSTRUCTIONS = """\
 
 Записывающие инструменты: coach_set_phase (смена фазы подготовки — только по
 явной просьбе пользователя), coach_update_state (лимит/база талии),
+coach_mark_support_week (неделя поддержки внутри дефицита — только по явной
+просьбе: матрица питания на ней и две недели после молчит),
 coach_update_profile (правка блока профиля атлета — только по явной просьбе),
 coach_add_waist / coach_delete_waist (замеры талии, см), coach_add_event /
 coach_update_event / coach_delete_event (события, см. ниже).
@@ -346,6 +348,44 @@ def coach_update_state(
         )
     except ValueError as exc:
         return _result(_err(str(exc)))
+    except Exception as exc:  # noqa: BLE001
+        return _result(_err(f"Ошибка: {exc}"))
+
+
+@mcp.tool()
+def coach_mark_support_week(day: str | None = None, active: bool = True) -> CallToolResult:
+    """Отметить (active=true) или снять (active=false) НЕДЕЛЮ ПОДДЕРЖКИ — неделю на уровне TDEE
+    внутри дефицита (стратегия: 4 недели дефицита → 1 неделя поддержки, либо по стоп-сигналу «два
+    утра подряд разбитость без причины»). day — любая дата этой недели, YYYY-MM-DD, по умолчанию
+    сегодня; неделя считается пн–вс. На ней и две недели после матрица питания калории не трогает,
+    её замеры не входят в тренд; план и отчёт видят флаг в контексте. Только по явной просьбе
+    атлета."""
+    try:
+        when = date.fromisoformat(day) if day else date.today()
+        state = files.load_state(_STATE_PATH)
+        monday, sunday, changed = coach_state.mark_support_week(state, when, active=active)
+        files.save_state(_STATE_PATH, state)
+        week = f"{monday.isoformat()} – {sunday.isoformat()}"
+        if not changed:
+            summary = f"Неделя {week} " + (
+                "уже отмечена неделей поддержки." if active else "и так не была неделей поддержки."
+            )
+        else:
+            summary = f"Неделя {week} " + (
+                "отмечена неделей поддержки." if active else "больше не неделя поддержки."
+            )
+        return _result(
+            {
+                "ok": True,
+                "summary": summary,
+                "changed": changed,
+                "week_start": monday.isoformat(),
+                "week_end": sunday.isoformat(),
+                "support_weeks": state["support_weeks"],
+            }
+        )
+    except ValueError as exc:
+        return _result(_err(f"Неверная дата: {exc}"))
     except Exception as exc:  # noqa: BLE001
         return _result(_err(f"Ошибка: {exc}"))
 

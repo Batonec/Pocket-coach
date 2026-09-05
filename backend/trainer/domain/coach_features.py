@@ -150,6 +150,10 @@ STALL_MIN_EXERCISE_SESSIONS = 3  # не застоится движение, к�
 # Допуск темпа веса вокруг коридора фазы (кг/нед), общий для предусловий и
 # матрицы питания.
 RATE_TOLERANCE = 0.15
+# Сколько дней после недели поддержки матрица ещё молчит: ровно окно её
+# подтверждения — разница 7-дневных средних с интервалом две недели — иначе
+# «вторым свидетелем» отклонения оказалась бы сама неделя поддержки.
+SUPPORT_WEEK_SETTLE_DAYS = 14
 
 _EFFORT_MARK = {"easy": "-", "ok": "", "hard": "+"}
 
@@ -1003,6 +1007,10 @@ def nutrition_matrix(
     ``weight_trend_per_week``): невалидный даёт явную ветку «недостаточно данных»,
     а не число, экстраполированное через дыру отпуска.
 
+    Недели поддержки из состояния (``coach_state.support_week_bounds``) в тренд и
+    средние не входят; пока идёт сама неделя и ``SUPPORT_WEEK_SETTLE_DAYS`` после
+    неё, ветка одна — «калории не трогай».
+
     Возвращает ``{"lines": строки для промпта, "goal": цель фазы, если достигнута,
     "trend_per_week": тренд}``. Зовёт ``prompt_builder`` (план и отчёт).
     """
@@ -1017,14 +1025,22 @@ def nutrition_matrix(
 
     # В матрицу идут только замеры ТЕКУЩЕЙ фазы: смена фазы сбрасывает базу
     # (замер в день старта считается).
-    weights = [p for p in weight_points(body_weights) if phase_start is None or p[0] >= phase_start]
+    in_phase = [
+        p for p in weight_points(body_weights) if phase_start is None or p[0] >= phase_start
+    ]
     waist = [p for p in waist_points(waists) if phase_start is None or p[0] >= phase_start]
 
     lines: list[str] = []
     goal: str | None = None
 
-    fresh_weight = _is_fresh(weights, today)
+    # Свежесть — по всем замерам фазы; тренд и средние — без недель поддержки:
+    # вес на них стоит или растёт по плану, и точка оттуда в окне читалась бы
+    # как плато или обвал темпа.
+    fresh_weight = _is_fresh(in_phase, today)
     fresh_waist = _is_fresh(waist, today)
+    weights = [p for p in in_phase if not coach_state.is_support_week(state, p[0])]
+    support = coach_state.support_week_bounds(state, today)
+    settling = coach_state.days_since_support_week(state, today)
     if not fresh_weight:
         lines.append(
             "замер веса устарел (>14 дней) или отсутствует — советы по калориям не давай, "
@@ -1106,6 +1122,25 @@ def nutrition_matrix(
                     "посоветуй −100–150 ккал или паузу набора"
                 )
                 weight_line_due = False
+
+        # Неделя поддержки (стратегия §3/§7): пока она идёт и пока окно
+        # подтверждения матрицы (две недели) захватывает её, советов по
+        # калориям нет — остановка или рост веса тут запланированы.
+        if weight_line_due and support is not None:
+            lines.append(
+                f"НЕДЕЛЯ ПОДДЕРЖКИ по плану ({support[0].isoformat()} – "
+                f"{support[1].isoformat()}): калории на уровне TDEE, вес стоит или растёт "
+                "запланированно — это не плато, калории не трогай; тренд и окно коррекции "
+                "считаются после неё"
+            )
+            weight_line_due = False
+        elif weight_line_due and settling is not None and settling <= SUPPORT_WEEK_SETTLE_DAYS:
+            lines.append(
+                f"неделя поддержки закончилась {settling} дн. назад — окно коррекции "
+                f"набирается заново (нужно {SUPPORT_WEEK_SETTLE_DAYS} дн. без неё), калории "
+                "не трогай"
+            )
+            weight_line_due = False
 
         if weight_line_due:
             if trend is None:

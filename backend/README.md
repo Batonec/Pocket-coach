@@ -124,8 +124,11 @@ per-exercise сводки за всю историю (топ-сет, e1RM по �
 **Фазы** (`coach_state.py`, состояние в `coach_state.json` рядом с базой): `cut_recomp` / `lean_bulk` /
 `maintenance` + вычисляемый режим «возврат после перерыва». Файл состояния — JSON вида
 `{"schema": 1, "phase": "cut_recomp", "phase_started": "2026-08-14", "phase_params": {},
-"waist_limit_cm": null, "waist_base_cm": null}`; `phase_params` — переопределения дефолтов фазы
-(`coach_state.PHASE_DEFAULTS`). В репозитории его нет: на VPS он лежит в
+"waist_limit_cm": null, "waist_base_cm": null, "support_weeks": []}`; `phase_params` —
+переопределения дефолтов фазы (`coach_state.PHASE_DEFAULTS`), `support_weeks` — понедельники
+недель поддержки (неделя на уровне TDEE внутри дефицита; отмечает атлет через
+`coach_mark_support_week`, матрица питания исключает их замеры и молчит на них и две недели
+после, план и отчёт видят флаг в контексте). В репозитории его нет: на VPS он лежит в
 `/opt/trainer-miniapp/data/coach_state.json`, путь переопределяется `COACH_STATE_PATH`, меняется
 только инструментами Coach MCP. Переключение — только руками
 через Coach MCP (`coach_set_phase`); при достижении цели фазы промпт лишь просит модель

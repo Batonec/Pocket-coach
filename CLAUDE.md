@@ -114,9 +114,9 @@ Claude Desktop ──MCP──►  coach_mcp/server.py  ────────
 `coach_mcp` — не отдельный сервис поверх API, а **второй процесс поверх той же базы**: он
 импортирует `backend_store` / `recommender` / `coach_features` / `coach_state` и видит ровно то же,
 что генерирует backend. Поэтому изменение сигнатуры в `backend/trainer/` может молча сломать MCP.
-Через MCP не только читают: талию и события (`coach_list_events` / `coach_add_event` /
-`coach_update_event` / `coach_delete_event`) записывают прямо из разговора с тренером — это
-штатный сценарий, а не отладка. У событий два равноправных клиента, iOS и Claude Desktop,
+Через MCP не только читают: талию, события (`coach_list_events` / `coach_add_event` /
+`coach_update_event` / `coach_delete_event`) и недели поддержки (`coach_mark_support_week`)
+записывают прямо из разговора с тренером — это штатный сценарий, а не отладка. У событий два равноправных клиента, iOS и Claude Desktop,
 поэтому правила модели (запрет будущего, одно открытое событие) живут в `domain/rules.py`,
 а не в хендлерах и не в UI.
 
@@ -178,7 +178,8 @@ SQLite: workouts, body_weights, waists, events + coach_state.json + coach_profil
    │                    домен; нужен, чтобы в rules остались только границы и решения.
    │
    ├─ coach_state.py    фаза (cut_recomp / lean_bulk / maintenance), неделя блока,
-   │                    ramp недельного объёма, плановый deload, «возврат после перерыва» (≥14 дней)
+   │                    ramp недельного объёма, плановый deload, «возврат после перерыва» (≥14 дней),
+   │                    недели поддержки (отмечает атлет; матрица их исключает и молчит две недели после)
    │
    ├─ coach_features.py вычисляемые фичи вместо сырой истории: e1RM по Эпли, ПР, % от пика,
    │                    позиция упражнения в сессии, эффективные недельные объёмы, явка по
