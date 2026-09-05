@@ -861,13 +861,22 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         print(f"[miniapp] {self.address_string()} - {format % args}")
 
     def _read_json_body(self) -> dict[str, Any] | None:
-        content_length = int(self.headers.get("Content-Length", "0"))
-        payload_raw = self.rfile.read(content_length).decode("utf-8")
         try:
-            return json.loads(payload_raw or "{}")
-        except json.JSONDecodeError:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length < 0:
+                raise ValueError
+            payload_raw = self.rfile.read(content_length).decode("utf-8")
+            payload = json.loads(payload_raw or "{}")
+        except (TypeError, ValueError):
             self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": "Invalid JSON body"})
             return None
+        if not isinstance(payload, dict):
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"ok": False, "reason": "JSON body must be an object"},
+            )
+            return None
+        return payload
 
     def _recommendation_response(self, user: dict[str, Any]) -> dict[str, Any]:
         user_id = int(user["id"])

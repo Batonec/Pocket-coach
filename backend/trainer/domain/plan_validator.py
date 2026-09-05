@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date
 from typing import Any
 
@@ -52,17 +53,23 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
 
     try:
         rest_days = int(raw.get("rest_days"))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         rest_days = 1
     rest_days = min(max(rest_days, 0), MAX_REST_DAYS)
 
+    raw_exercises = raw.get("exercises", [])
+    if not isinstance(raw_exercises, list):
+        raw_exercises = []
     exercises_out: list[dict[str, Any]] = []
-    for exercise in raw.get("exercises", []) or []:
+    for exercise in raw_exercises:
         if not isinstance(exercise, dict):
             continue
+        raw_exercise_id = exercise.get("exercise_id")
+        if isinstance(raw_exercise_id, bool):
+            continue
         try:
-            exercise_id = int(exercise.get("exercise_id"))
-        except (TypeError, ValueError):
+            exercise_id = int(raw_exercise_id)
+        except (TypeError, ValueError, OverflowError):
             continue
         # The schema enum already excludes the duplicate ids; re-map defensively
         # in case an aliased id sneaks in anyway.
@@ -70,16 +77,24 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
         if exercise_id not in valid_ids:
             continue
 
+        raw_sets = exercise.get("sets", [])
+        if not isinstance(raw_sets, list):
+            continue
         sets_out: list[dict[str, Any]] = []
-        for workout_set in exercise.get("sets", []) or []:
+        for workout_set in raw_sets:
             if not isinstance(workout_set, dict):
                 continue
-            try:
-                reps = int(workout_set.get("reps"))
-                weight = float(workout_set.get("weight"))
-            except (TypeError, ValueError):
+            raw_reps = workout_set.get("reps")
+            if isinstance(raw_reps, bool) or isinstance(workout_set.get("weight"), bool):
                 continue
-            if reps < 1:
+            if isinstance(raw_reps, float) and not raw_reps.is_integer():
+                continue
+            try:
+                reps = int(raw_reps)
+                weight = float(workout_set.get("weight"))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if reps < 1 or not math.isfinite(weight):
                 continue
             reps = min(reps, MAX_REPS)
             weight = min(max(weight, 0.0), MAX_WEIGHT)
@@ -141,9 +156,10 @@ def _session_cap(params: dict[str, Any]) -> int | None:
     bounds = params.get("session_sets")
     if isinstance(bounds, (list, tuple)) and len(bounds) == 2:
         try:
-            return int(bounds[1])
-        except (TypeError, ValueError):
+            cap = int(bounds[1])
+        except (TypeError, ValueError, OverflowError):
             return None
+        return cap if cap >= 0 else None
     return None
 
 

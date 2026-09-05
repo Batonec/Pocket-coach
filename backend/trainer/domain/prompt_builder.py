@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 from typing import Any
 
@@ -192,10 +193,19 @@ def _serialize_workout(workout: dict[str, Any], names_by_id: dict[int, str] | No
             name = names_by_id[canonical]
         sets_repr: list[str] = []
         for workout_set in exercise.get("sets", []) or []:
+            if not isinstance(workout_set, dict):
+                continue
+            raw_reps = workout_set.get("reps", 0)
+            if isinstance(raw_reps, bool) or isinstance(workout_set.get("weight"), bool):
+                continue
+            if isinstance(raw_reps, float) and not raw_reps.is_integer():
+                continue
             try:
-                reps = int(workout_set.get("reps", 0))
+                reps = int(raw_reps)
                 weight = float(workout_set.get("weight", 0))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if reps < 1 or not math.isfinite(weight):
                 continue
             mark = _EFFORT_MARK.get(workout_set.get("effort") or "", "")
             rir = workout_set.get("rir")

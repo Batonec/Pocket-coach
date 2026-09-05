@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 from datetime import date, timedelta
 from typing import Any
@@ -57,9 +58,11 @@ def normalize_set_rir(value: object) -> int | None:
         return None
     if isinstance(value, bool):
         raise ValueError("Set rir must be an integer between 0 and 4")
+    if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
+        raise ValueError("Set rir must be an integer between 0 and 4")
     try:
         rir = int(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError("Set rir must be an integer between 0 and 4") from exc
     if not 0 <= rir <= 4:
         raise ValueError("Set rir must be an integer between 0 and 4")
@@ -109,12 +112,17 @@ def normalize_recommendation_snapshot(value: object) -> dict[str, Any] | None:
         for raw_set in raw_sets[:12]:
             if not isinstance(raw_set, dict):
                 continue
-            try:
-                reps = int(raw_set.get("reps"))
-                weight = float(raw_set.get("weight"))
-            except (TypeError, ValueError):
+            if isinstance(raw_set.get("reps"), bool) or isinstance(raw_set.get("weight"), bool):
                 continue
-            if reps < 1:
+            raw_reps = raw_set.get("reps")
+            if isinstance(raw_reps, float) and not raw_reps.is_integer():
+                continue
+            try:
+                reps = int(raw_reps)
+                weight = float(raw_set.get("weight"))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if reps < 1 or not math.isfinite(weight):
                 continue
             sets.append({"reps": min(reps, 1000), "weight": min(max(weight, 0.0), 10000.0)})
 
@@ -144,13 +152,17 @@ def normalize_recommendation_snapshot(value: object) -> dict[str, Any] | None:
         "exercises": exercises,
     }
 
-    if len(json.dumps(snapshot, ensure_ascii=False)) > MAX_RECOMMENDATION_SNAPSHOT_BYTES:
+    encoded = json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
+    if len(encoded) > MAX_RECOMMENDATION_SNAPSHOT_BYTES:
         return None
     return snapshot
 
 
 def normalize_workout_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
-    raw_exercises = payload.get("data", {}).get("exercises", [])
+    data = payload.get("data", {})
+    if not isinstance(data, dict):
+        raise ValueError("Workout data must be an object")
+    raw_exercises = data.get("exercises", [])
     if not isinstance(raw_exercises, list) or not raw_exercises:
         raise ValueError("Workout must contain at least one exercise")
 
@@ -160,7 +172,7 @@ def normalize_workout_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
             raise ValueError("Exercise payload must be an object")
 
         exercise_id = raw_exercise.get("exercise_id")
-        if not isinstance(exercise_id, int):
+        if not isinstance(exercise_id, int) or isinstance(exercise_id, bool):
             raise ValueError("exercise_id must be an integer")
 
         exercise_name = str(raw_exercise.get("name", "")).strip()
@@ -176,14 +188,21 @@ def normalize_workout_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
             if not isinstance(raw_set, dict):
                 raise ValueError("Set payload must be an object")
 
+            raw_reps = raw_set.get("reps", 0)
+            if isinstance(raw_reps, bool) or isinstance(raw_set.get("weight"), bool):
+                raise ValueError("Set reps and weight must be numeric")
+            if isinstance(raw_reps, float) and not raw_reps.is_integer():
+                raise ValueError("Set reps must be an integer")
             try:
-                reps = int(raw_set.get("reps", 0))
+                reps = int(raw_reps)
                 weight = float(raw_set.get("weight", 0))
-            except (TypeError, ValueError) as exc:
+            except (TypeError, ValueError, OverflowError) as exc:
                 raise ValueError("Set reps and weight must be numeric") from exc
 
             if reps < 1:
                 raise ValueError("Set reps must be at least 1")
+            if not math.isfinite(weight):
+                raise ValueError("Set weight must be finite")
             if weight < 0:
                 raise ValueError("Set weight must be zero or positive")
 
@@ -212,7 +231,6 @@ def normalize_workout_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
     if not client_id:
         raise ValueError("client_id is required")
 
-    data = payload.get("data", {})
     normalized_payload = {
         "workout_date": workout_date,
         "plan_id": None,

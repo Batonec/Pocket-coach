@@ -14,6 +14,8 @@ automatically.
 
 from __future__ import annotations
 
+import math
+from copy import deepcopy
 from datetime import date, timedelta
 from itertools import pairwise
 from typing import Any
@@ -112,10 +114,7 @@ def _valid_iso_date(value: Any) -> str | None:
 
 def default_state() -> dict[str, Any]:
     """Состояние по умолчанию: с него начинается генерация, если файла нет."""
-    return {
-        key: (dict(value) if isinstance(value, dict) else value)
-        for key, value in DEFAULT_STATE.items()
-    }
+    return deepcopy(DEFAULT_STATE)
 
 
 def normalize_state(raw: object) -> dict[str, Any]:
@@ -179,6 +178,14 @@ _OVERRIDABLE_PARAM_KEYS = {
 _GROUP_TARGET_KEY = "group_targets"
 
 
+def _is_finite_number(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and (not isinstance(value, float) or math.isfinite(value))
+    )
+
+
 def _normalize_group_targets(value: Any) -> dict[str, tuple[float, float]]:
     from trainer.domain import coach_features
 
@@ -194,7 +201,7 @@ def _normalize_group_targets(value: Any) -> dict[str, tuple[float, float]]:
         if not (
             isinstance(bounds, (list, tuple))
             and len(bounds) == 2
-            and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in bounds)
+            and all(_is_finite_number(x) for x in bounds)
         ):
             raise ValueError(f"Цель группы {group!r} должна быть парой чисел [min, max]")
         clean[group] = (bounds[0], bounds[1])
@@ -203,14 +210,16 @@ def _normalize_group_targets(value: Any) -> dict[str, tuple[float, float]]:
 
 def _normalize_param_value(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
-        if len(value) == 2 and all(
-            isinstance(item, (int, float)) and not isinstance(item, bool) for item in value
-        ):
+        if len(value) == 2 and all(_is_finite_number(item) for item in value):
             return (value[0], value[1])
         raise ValueError("Диапазон должен быть парой чисел [min, max]")
     if isinstance(value, bool) or value is None:
         raise ValueError("Параметр должен быть числом, строкой или парой чисел")
-    if isinstance(value, (int, float, str)):
+    if isinstance(value, (int, float)):
+        if not _is_finite_number(value):
+            raise ValueError("Параметр должен быть конечным числом")
+        return value
+    if isinstance(value, str):
         return value
     raise ValueError("Параметр должен быть числом, строкой или парой чисел")
 
@@ -228,6 +237,23 @@ def switch_phase(
     запись файла — в ``data/files.set_phase``."""
     if phase not in PHASES:
         raise ValueError(f"Неизвестная фаза {phase!r}; допустимые: {', '.join(PHASES)}")
+    clean: dict[str, Any] | None = None
+    if params:
+        if not isinstance(params, dict):
+            raise ValueError("params должен быть объектом {ключ: значение}")
+        clean = {}
+        for key, value in params.items():
+            if key not in _OVERRIDABLE_PARAM_KEYS:
+                raise ValueError(
+                    f"Неизвестный параметр {key!r}; допустимые: "
+                    f"{', '.join(sorted(_OVERRIDABLE_PARAM_KEYS))}"
+                )
+            clean[key] = (
+                _normalize_group_targets(value)
+                if key == _GROUP_TARGET_KEY
+                else _normalize_param_value(value)
+            )
+
     today = today or date.today()
     # Close the outgoing phase into the history journal — the phase-summary
     # tool derives all its numbers from workouts/measurements by date range,
@@ -244,21 +270,7 @@ def switch_phase(
         state["phase_history"] = history
     state["phase"] = phase
     state["phase_started"] = today.isoformat()
-    if params:
-        if not isinstance(params, dict):
-            raise ValueError("params должен быть объектом {ключ: значение}")
-        clean: dict[str, Any] = {}
-        for key, value in params.items():
-            if key not in _OVERRIDABLE_PARAM_KEYS:
-                raise ValueError(
-                    f"Неизвестный параметр {key!r}; допустимые: "
-                    f"{', '.join(sorted(_OVERRIDABLE_PARAM_KEYS))}"
-                )
-            clean[key] = (
-                _normalize_group_targets(value)
-                if key == _GROUP_TARGET_KEY
-                else _normalize_param_value(value)
-            )
+    if clean is not None:
         phase_params = dict(state.get("phase_params") or {})
         phase_params[phase] = clean
         state["phase_params"] = phase_params

@@ -4,8 +4,8 @@
 Uses the SQLite online-backup API (``Connection.backup``) so the dump is
 transactionally consistent even while the backend is writing — no need for the
 sqlite3 CLI or a service stop. The result is gzip-compressed, and the athlete
-profile (which lives next to the DB and is NOT in git) is copied alongside so a
-single backup directory restores everything.
+profile, coaching strategy, and state (which live next to the DB and are NOT in
+git) are copied alongside so a single backup directory restores everything.
 
 Run by infra/deploy/trainer-db-backup.timer (daily). Keeps the newest
 BACKUP_KEEP backups and deletes older ones.
@@ -82,8 +82,8 @@ def main() -> None:
     size_kb = gz_path.stat().st_size / 1024
     print(f"[backup] создан {gz_path.name} ({size_kb:.0f} КБ)")
 
-    # The profile and coaching state are small and not in git — snapshot them
-    # next to the DB backup so one directory restores everything.
+    # The profile, coaching strategy, and state are small and not in git —
+    # snapshot them next to the DB backup so one directory restores everything.
     for source, prefix, label in (
         (PROFILE_PATH, "coach_profile", "профиль"),
         (STRATEGY_PATH, "coach_strategy", "стратегия"),
@@ -98,7 +98,7 @@ def main() -> None:
     # Keep companion copies in lockstep with the db backups we removed.
     for path in removed:
         stamp_part = path.name[len(DB_PREFIX) : -len(DB_SUFFIX)]
-        for prefix in ("coach_profile", "coach_state"):
+        for prefix in ("coach_profile", "coach_strategy", "coach_state"):
             companion = BACKUP_DIR / f"{prefix}-{stamp_part}.json"
             if companion.exists():
                 companion.unlink()
