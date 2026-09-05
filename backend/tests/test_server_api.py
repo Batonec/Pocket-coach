@@ -476,3 +476,15 @@ class RoutingTest(unittest.TestCase):
             # GET has no per-id endpoints, and PUT covers workouts and events only.
             self.assertEqual(client.request_json("GET", "/api/workouts/1").status, 404)
             self.assertEqual(client.request_json("PUT", "/api/waists/1", {}).status, 404)
+
+    def test_exercise_catalog_is_served_on_the_legacy_url(self) -> None:
+        """Файл переехал в resources/, адрес остался: он зашит в iOS-клиент. Другой
+        статики сервер больше не отдаёт — веб-версии нет с июня 2026."""
+        with running_miniapp_server(allow_debug_user=True) as app:
+            client = JsonHttpClient(app.base_url)
+
+            catalog = client.request_json("GET", "/data/exercises.json")
+
+            self.assertEqual(catalog.status, 200)
+            self.assertTrue(catalog.payload["exercises"])
+            self.assertEqual(client.request_json("GET", "/index.html").status, 404)

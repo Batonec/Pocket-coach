@@ -27,7 +27,9 @@ from trainer.coach import coach_state, recommender
 
 BASE_DIR = Path(__file__).resolve().parents[2]  # backend/: там data/ и resources/
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
-STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "resources" / "static")))
+CATALOG_PATH = Path(
+    os.getenv("EXERCISE_CATALOG_PATH", str(BASE_DIR / "resources" / "exercises.json"))
+)
 STATE_PATH = coach_state.default_state_path(DB_PATH)
 PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
 STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))
@@ -56,7 +58,7 @@ def run(
             store.list_workouts(user_id),
             store.list_body_weights(user_id),
             store.list_waists(user_id),
-            recommender.load_catalog(STATIC_DIR),
+            recommender.load_catalog(CATALOG_PATH),
             profile=recommender.load_profile(PROFILE_PATH),
             strategy=recommender.load_strategy(STRATEGY_PATH),
             state=coach_state.load_state(STATE_PATH),

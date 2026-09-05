@@ -4,7 +4,7 @@ import pathlib
 import unittest
 
 import support
-from support import STATIC_DIR
+from support import CATALOG_PATH
 
 from trainer.coach import coach_prompts, prompt_builder, recommender
 
@@ -144,7 +144,7 @@ class PromptTemplateTests(unittest.TestCase):
 
 class BuiltPromptTests(unittest.TestCase):
     def test_built_system_prompt_has_no_unfilled_slots(self):
-        catalog = recommender.load_catalog(STATIC_DIR)
+        catalog = recommender.load_catalog(CATALOG_PATH)
         prompt = prompt_builder._build_system_prompt(catalog)
         self.assertNotIn("{{", prompt)
         self.assertIn("=== ТРЕНАЖЁРЫ (каталог) ===", prompt)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 import support  # noqa: F401 — adds backend to sys.path
-from support import STATIC_DIR
+from support import CATALOG_PATH
 
 from trainer.coach import anthropic_client, plan_validator, prompt_builder, recommender
 
@@ -15,8 +15,8 @@ CATALOG = [
 
 
 class RecommenderTests(unittest.TestCase):
-    def test_load_catalog_reads_web_data(self) -> None:
-        catalog = recommender.load_catalog(STATIC_DIR)
+    def test_load_catalog_reads_the_resources_file(self) -> None:
+        catalog = recommender.load_catalog(CATALOG_PATH)
         self.assertTrue(catalog)
         self.assertTrue(all("id" in item and "name" in item for item in catalog))
 

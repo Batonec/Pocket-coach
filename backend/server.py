@@ -17,11 +17,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from trainer import RESOURCES_DIR
 from trainer.backend_store import MiniAppStore
 from trainer.coach import coach_signals, coach_state, recommender
 
 BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "resources" / "static"))).resolve()
+# Каталог упражнений едет с кодом; путь переопределяется только ради тестов и
+# нестандартных стендов.
+CATALOG_PATH = Path(os.getenv("EXERCISE_CATALOG_PATH", str(RESOURCES_DIR / "exercises.json")))
 DATA_DIR = BASE_DIR / "data"
 HOST = os.getenv("MINIAPP_HOST", "127.0.0.1")
 PORT = int(os.getenv("MINIAPP_PORT", "8080"))
@@ -50,7 +53,7 @@ WATCHED_EXTENSIONS = {".py", ".html", ".css", ".js", ".json", ".md"}
 STORE = MiniAppStore(DB_PATH)
 
 try:
-    EXERCISE_CATALOG: list[dict[str, Any]] | None = recommender.load_catalog(STATIC_DIR)
+    EXERCISE_CATALOG: list[dict[str, Any]] | None = recommender.load_catalog(CATALOG_PATH)
 except Exception as exc:  # noqa: BLE001
     EXERCISE_CATALOG = None
     print(f"[miniapp] WARNING: exercise catalog not loaded, recommendations disabled: {exc}")
@@ -291,8 +294,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
     def _dispatch(self, method: str) -> None:
         """Один эндпоинт — один метод класса; какой именно, решает ROUTES (точный
-        путь) или ID_ROUTES (/api/<коллекция>/<id>). GET без совпадения уходит в
-        статику, всё остальное — 404."""
+        путь) или ID_ROUTES (/api/<коллекция>/<id>); всё остальное — 404."""
         path = urlparse(self.path).path
         handler = ROUTES.get((method, path))
         if handler is not None:
@@ -304,11 +306,6 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             entity_id = _path_id(path, prefix)
             if entity_id is not None:
                 id_handler(self, entity_id)
-                return
-        if method == "GET":
-            static_path = self._resolve_static_path(path)
-            if static_path is not None:
-                self._send_file(static_path)
                 return
         self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Not found"})
 
@@ -326,6 +323,10 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 
     def _get_dev_version(self) -> None:
         self._send_json(HTTPStatus.OK, build_dev_version())
+
+    def _get_exercise_catalog(self) -> None:
+        # URL остался от веб-версии и зашит в iOS-клиент: файл переехал, адрес нет.
+        self._send_file(CATALOG_PATH)
 
     def _get_workouts(self) -> None:
         session = self._require_user()
@@ -934,20 +935,6 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _resolve_static_path(self, raw_path: str) -> Path | None:
-        requested_path = "index.html" if raw_path == "/" else raw_path.lstrip("/")
-        candidate = (STATIC_DIR / requested_path).resolve()
-
-        try:
-            candidate.relative_to(STATIC_DIR.resolve())
-        except ValueError:
-            return None
-
-        if candidate.is_file():
-            return candidate
-
-        return None
-
     def _build_session_cookie(self, user_id: int) -> str:
         parts = [
             f"{SESSION_COOKIE_NAME}={make_session_value(user_id)}",
@@ -1020,6 +1007,7 @@ class MiniAppHandler(BaseHTTPRequestHandler):
 ROUTES: dict[tuple[str, str], Callable[[MiniAppHandler], None]] = {
     ("GET", "/api/health"): MiniAppHandler._get_health,
     ("GET", "/api/dev/version"): MiniAppHandler._get_dev_version,
+    ("GET", "/data/exercises.json"): MiniAppHandler._get_exercise_catalog,
     ("GET", "/api/workouts"): MiniAppHandler._get_workouts,
     ("GET", "/api/body-weights"): MiniAppHandler._get_body_weights,
     ("GET", "/api/recommendations/next"): MiniAppHandler._get_recommendation_next,

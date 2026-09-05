@@ -21,7 +21,7 @@ from urllib.parse import urlencode
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 MINIAPP_DIR = ROOT_DIR / "backend"
-STATIC_DIR = MINIAPP_DIR / "resources" / "static"
+CATALOG_PATH = MINIAPP_DIR / "resources" / "exercises.json"
 
 if str(MINIAPP_DIR) not in sys.path:
     sys.path.insert(0, str(MINIAPP_DIR))
@@ -130,14 +130,14 @@ def temporary_env(values: dict[str, str]) -> Iterator[None]:
 def load_server_module(
     *,
     db_path: Path,
-    static_dir: Path = STATIC_DIR,
+    catalog_path: Path = CATALOG_PATH,
     allow_debug_user: bool = True,
     dev_mode: bool = False,
     bot_token: str = "",
     session_secret: str = "trainer-test-session-secret",
 ) -> Any:
     env = {
-        "MINIAPP_STATIC_DIR": str(static_dir),
+        "EXERCISE_CATALOG_PATH": str(catalog_path),
         "MINIAPP_HOST": "127.0.0.1",
         "MINIAPP_PORT": "0",
         "MINIAPP_DB_PATH": str(db_path),
@@ -175,7 +175,7 @@ class RunningMiniApp:
 @contextmanager
 def running_miniapp_server(
     *,
-    static_dir: Path = STATIC_DIR,
+    catalog_path: Path = CATALOG_PATH,
     allow_debug_user: bool = True,
     dev_mode: bool = False,
     bot_token: str = "",
@@ -185,7 +185,7 @@ def running_miniapp_server(
     db_path = Path(temp_dir.name) / "trainer.db"
     module = load_server_module(
         db_path=db_path,
-        static_dir=static_dir,
+        catalog_path=catalog_path,
         allow_debug_user=allow_debug_user,
         dev_mode=dev_mode,
         bot_token=bot_token,

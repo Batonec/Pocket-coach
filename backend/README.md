@@ -17,7 +17,7 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 - [backend/trainer/coach/coach_state.py](./trainer/coach/coach_state.py) — машина фаз подготовки (cut_recomp / lean_bulk / maintenance), volume ramp по неделям блока
 - [backend/trainer/coach/coach_features.py](./trainer/coach/coach_features.py) — вычисляемые фичи истории: per-exercise сводки (пики, e1RM, ПР), детектор застоя, ступени разгона после перерыва, эффективные недельные объёмы, тренды веса/талии и матрица питания
 - [backend/trainer/coach/coach_signals.py](./trainer/coach/coach_signals.py) — детерминированные баннеры коуча; каноническая спецификация — [docs/COACH_SIGNALS.md](../docs/COACH_SIGNALS.md)
-- [backend/resources/static/data/exercises.json](./resources/static/data/exercises.json) — каталог упражнений (отдаётся клиенту по `/data/exercises.json`)
+- [backend/resources](./resources) — два файла, которые читает клиент, а не модель: `exercises.json` (каталог упражнений, отдаётся по `/data/exercises.json`) и `signals.md` (тексты баннеров)
 - [backend/infra/jobs](./infra/jobs) — скрипты systemd-таймеров: авто-свежесть совета, недельный отчёт, бэкап базы
 - [backend/infra/deploy](./infra/deploy) — деплой на VPS и systemd-юниты
 - [backend/tests](./tests) — тесты backend
@@ -39,8 +39,9 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 - `GET /api/recommendations/next` · `POST /api/recommendations/refresh`
 - `GET /api/reports/weekly` — кэшированный недельный отчёт тренера (без генерации; отчёт пишет ночной таймер понедельника или Coach MCP)
 
-Каталог упражнений отдаётся как статика по `GET /data/exercises.json` (его читает и iOS-клиент,
-и `recommender.py`).
+Каталог упражнений лежит в `resources/exercises.json` и отдаётся по `GET /data/exercises.json` (URL
+остался от веб-версии и зашит в iOS-клиент; другой статики сервер не отдаёт). Его читают и
+iOS-клиент, и `recommender.py`.
 
 ### Сессии
 
@@ -245,7 +246,7 @@ API поднимается на `http://127.0.0.1:8080/`, SQLite — локал�
 
 - `MINIAPP_HOST` — по умолчанию `127.0.0.1`
 - `MINIAPP_PORT` — по умолчанию `8080`
-- `MINIAPP_STATIC_DIR` — каталог со статикой (`static/`), откуда отдаётся `/data/exercises.json`
+- `EXERCISE_CATALOG_PATH` — путь к каталогу упражнений, по умолчанию `resources/exercises.json`; отдаётся по `/data/exercises.json`
 - `MINIAPP_DB_PATH` — путь к SQLite
 - `MINIAPP_SESSION_SECRET` — секрет для подписи cookie `trainer_session`
 - `MINIAPP_SESSION_MAX_AGE` · `MINIAPP_COOKIE_SECURE`
@@ -305,7 +306,7 @@ Backend деплоится через CI ([../.github/workflows/deploy-backend.y
 Backend workflow предполагает существование `/etc/trainer-miniapp/backend.env` на VPS
 (там же лежит `ANTHROPIC_API_KEY`).
 
-Код едет каталогами: `server.py` поимённо, `trainer/`, `infra/jobs/`, `prompts/`, `resources/copy/`
+Код едет каталогами: `server.py` поимённо, `trainer/`, `infra/jobs/`, `prompts/`, `resources/`
 целиком и вместе с ними все юниты и таймеры из `infra/deploy/`. Таймеры деплой не включает: новый таймер один
 раз `systemctl enable --now` руками.
 

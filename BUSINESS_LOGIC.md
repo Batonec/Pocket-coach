@@ -184,7 +184,7 @@
 
 Источник:
 
-- [backend/resources/static/data/exercises.json](./backend/resources/static/data/exercises.json)
+- [backend/resources/exercises.json](./backend/resources/exercises.json)
 
 Используется для:
 

@@ -50,10 +50,10 @@ MAX_PLAUSIBLE_BODY_WEIGHT = coach_features.MAX_PLAUSIBLE_BODY_WEIGHT
 # --------------------------------------------------------------------------- #
 # Catalog
 # --------------------------------------------------------------------------- #
-def load_catalog(static_dir: Path) -> list[dict[str, Any]]:
-    """Load the exercise catalog the iOS app uses (www/data/exercises.json)."""
-    catalog_path = Path(static_dir) / "data" / "exercises.json"
-    raw = json.loads(catalog_path.read_text("utf-8"))
+def load_catalog(path: Path | str) -> list[dict[str, Any]]:
+    """Load the exercise catalog (resources/exercises.json — the same file the iOS
+    app downloads from /data/exercises.json and keeps a fallback copy of)."""
+    raw = json.loads(Path(path).read_text("utf-8"))
     exercises = raw.get("exercises", [])
     catalog: list[dict[str, Any]] = []
     for item in exercises:
