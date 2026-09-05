@@ -9,7 +9,7 @@ import unittest
 
 import support  # noqa: F401 — кладёт backend в sys.path
 
-from trainer.data import coach_prompts
+from trainer.data import coach_prompts, rule_engine
 from trainer.domain import limits, plan_validator, prompt_builder, rules
 
 CATALOG = [
@@ -568,41 +568,37 @@ class ReturnCeilingTests(unittest.TestCase):
 
 
 class RulesTableTests(unittest.TestCase):
-    """Таблица правил и её тексты: ровно три записи, у каждой — предложение для
-    системного промпта и строка нарушения, у починяемых — пометки для rationale.
-    Правило без текста и текст без правила падают здесь, а не молча в промпте.
+    """Книга правил: ровно три блока в plan_rules.md, каждое слово словаря
+    используется, а системный промпт перечисляет ровно их формулировки. Слова
+    самих правил сверяются со словарём при импорте, здесь только то, чего движок
+    сам знать не может.
     """
 
-    def test_exactly_three_rules_in_the_prompt_order(self) -> None:
+    def test_exactly_three_rules_in_file_order(self) -> None:
         self.assertEqual(
             [rule.name for rule in plan_validator.RULES],
             ["coverage", "return_ceiling", "session_cap"],
         )
 
-    def test_every_rule_has_its_sentence_and_violation_line(self) -> None:
-        texts = coach_prompts.fragments("plan_rules")
-        names = {rule.name for rule in plan_validator.RULES}
-        for name in names:
-            self.assertIn(name, texts)
-            self.assertIn(f"{name}_violation", texts)
-        # И наоборот: фрагмент правила, которого нет в RULES, — граница, которую
-        # модель прочитает, а сервер не проверит.
-        described = {
-            name
-            for name in texts
-            if name not in ("catalog_only", "reprompt") and not name.endswith("_violation")
-        }
-        self.assertEqual(described, names)
+    def test_rule_blocks_are_exactly_the_rules(self) -> None:
+        fragments = coach_prompts.fragments("plan_rules")
+        self.assertEqual(
+            set(fragments) - {"catalog_only", "reprompt"},
+            {rule.name for rule in plan_validator.RULES},
+        )
 
-    def test_fixable_rules_have_their_notes(self) -> None:
-        notes = coach_prompts.fragments("plan_notes", directory=coach_prompts.COPY_DIR)
-        for rule in plan_validator.RULES:
-            with self.subTest(rule=rule.name):
-                if rule.fix is None:
-                    self.assertNotIn(f"{rule.name}_fixed", notes)
-                else:
-                    self.assertIn(f"{rule.name}_fixed", notes)
-                    self.assertIn(f"{rule.name}_change", notes)
+    def test_every_dictionary_word_is_used_by_a_rule(self) -> None:
+        # Слово без правила — мёртвый код: область или процедура, которую никто
+        # не зовёт, но которая выглядит как проверка.
+        self.assertEqual({rule.scope for rule in plan_validator.RULES}, set(plan_validator.SCOPES))
+        self.assertEqual(
+            {
+                rule.fix.procedure
+                for rule in plan_validator.RULES
+                if isinstance(rule.fix, rule_engine.Call)
+            },
+            set(plan_validator.PROCEDURES),
+        )
 
     def test_system_prompt_lists_exactly_the_rules_the_server_checks(self) -> None:
         texts = coach_prompts.fragments("plan_rules")
@@ -611,7 +607,7 @@ class RulesTableTests(unittest.TestCase):
         block = block.split("\n===", 1)[0]
         self.assertIn(f"1) {texts['catalog_only']};", block)
         for number, rule in enumerate(plan_validator.RULES, start=2):
-            self.assertIn(f"{number}) {texts[rule.name]}", block)
+            self.assertIn(f"{number}) {rule.sentence}", block)
         self.assertNotIn("5)", block)
         self.assertTrue(block.rstrip().endswith("."))
 

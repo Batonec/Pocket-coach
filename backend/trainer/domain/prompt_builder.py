@@ -399,8 +399,8 @@ def _days_since_last(workouts: list[dict[str, Any]], today: date) -> int | None:
 _BLOCKS = coach_prompts.fragments("user_blocks")
 _PHASE_POLICY_TEMPLATE = coach_prompts.load("phase_policy")
 _PHASE_POLICY_SLOTS = coach_prompts.slots(_PHASE_POLICY_TEMPLATE)
-# Формулировки жёстких границ — тот же файл, из которого plan_validator берёт
-# строки нарушений: модель читает ровно то, что сервер проверяет.
+# Текст исправляющего сообщения и первый пункт списка границ — из того же файла,
+# из которого plan_validator читает сами правила.
 _RULES = coach_prompts.fragments("plan_rules")
 
 
@@ -476,11 +476,11 @@ def _render_phase_policy(state: dict[str, Any] | None = None) -> str:
 def _render_hard_rules() -> str:
     """Блок «ЖЁСТКИЕ ГРАНИЦЫ» системного промпта: нумерованный список формулировок
     из ``plan_rules.md``. Первым — ``catalog_only`` (свойство JSON-схемы, а не
-    правило валидатора), дальше ``plan_validator.RULES`` в их порядке: список для
-    модели строится из той же таблицы, что проверяет сервер, и добавить проверку,
-    не сказав о ней модели, нельзя.
+    правило валидатора), дальше формулировки правил ``plan_validator.RULES`` в
+    порядке файла: модель читает те же блоки, которые сервер исполняет, и добавить
+    проверку, не сказав о ней модели, нельзя.
     """
-    sentences = [_RULES["catalog_only"], *(_RULES[rule.name] for rule in plan_validator.RULES)]
+    sentences = [_RULES["catalog_only"], *(rule.sentence for rule in plan_validator.RULES)]
     last = len(sentences)
     return "\n".join(
         f"{index}) {sentence}{'.' if index == last else ';'}"
@@ -493,7 +493,7 @@ def _build_reprompt(violations: list[str]) -> str:
     списком внутри текста ``reprompt`` из ``plan_rules.md``. Зовёт
     ``recommender.generate_with_trace`` один раз, в том же разговоре.
     """
-    return coach_prompts.render(_RULES["reprompt"], violations="- " + "\n- ".join(violations))
+    return coach_prompts.render(_RULES["reprompt"], нарушения="- " + "\n- ".join(violations))
 
 
 def _build_system_prompt(
