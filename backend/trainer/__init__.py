@@ -1,6 +1,7 @@
 """Backend «Pocket Coach»: всё, что импортируется.
 
-Пакет держит хранилище (``backend_store``) и слой коуча (``coach/``). Точка
+Пакет держит хранилище (``backend_store``) и слой коуча (``coach_*``,
+``prompt_builder``, ``plan_validator``, ``anthropic_client``, ``recommender``). Точка
 входа HTTP-сервера — ``backend/server.py`` рядом с пакетом, скрипты таймеров —
 в ``infra/jobs/``, проза для модели — в ``prompts/``, тексты баннеров — в
 ``resources/``; где всё это лежит, пакет знает через ``BACKEND_DIR``.

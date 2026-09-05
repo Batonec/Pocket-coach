@@ -128,7 +128,7 @@ rationale тренера. Нужен **информационный баннер
 
 ## 6. Техническая реализация (для исполнителя, не для макетов)
 
-### Backend (новый модуль `backend/trainer/coach/coach_signals.py`)
+### Backend (новый модуль `backend/trainer/coach_signals.py`)
 
 - `GET /api/coach/signals` → `{ok, generated_at, signals: [...]}` — список собирается
   **на лету** из SQLite + coach_state + кэшированного статуса рекомендации (без нового

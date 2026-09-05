@@ -39,7 +39,7 @@ class WaistNormalizationTests(unittest.TestCase):
             normalize_waist_payload({"entry_date": "2026-08-14", "waist": "мало"})
 
     def test_write_bounds_match_the_coach_plausibility_filter(self) -> None:
-        from trainer.coach import coach_features
+        from trainer import coach_features
 
         self.assertEqual(MIN_WAIST_CM, coach_features.MIN_PLAUSIBLE_WAIST_CM)
         self.assertEqual(MAX_WAIST_CM, coach_features.MAX_PLAUSIBLE_WAIST_CM)

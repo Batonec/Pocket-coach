@@ -49,7 +49,7 @@ printf '%s\n' "$paths" \
   && add_reason "тронуты места ручного синхрона (CI / deploy.sh / project.pbxproj)"
 
 printf '%s\n' "$paths" \
-  | grep -qE '^backend/trainer/coach/(recommender|anthropic_client|plan_validator|prompt_builder|coach_signals)\.py$' \
+  | grep -qE '^backend/trainer/(recommender|anthropic_client|plan_validator|prompt_builder|coach_signals)\.py$' \
   && add_reason "тронута граница «алгоритм / LLM»"
 
 [ -n "$reasons" ] || exit 0

@@ -23,14 +23,14 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from trainer.coach import (
+from trainer import (
     anthropic_client,
     coach_features,
     coach_state,
     plan_validator,
     prompt_builder,
 )
-from trainer.coach.anthropic_client import (
+from trainer.anthropic_client import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
