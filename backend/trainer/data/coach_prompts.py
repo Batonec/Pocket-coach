@@ -49,7 +49,7 @@ class PromptError(RuntimeError):
 
 
 def load(name: str, *, directory: Path | None = None) -> str:
-    """Текст шаблона по имени файла (``"system"`` → ``prompts/system.md``) без
+    """Текст шаблона по имени файла (``"next_workout"`` → ``prompts/next_workout.md``) без
     шапки-комментария в начале.
 
     ``directory`` переопределяет папку: так ``coach_signals`` читает баннеры из

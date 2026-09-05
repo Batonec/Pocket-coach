@@ -13,7 +13,7 @@ Python, текст живёт здесь.
 volume_header, round_volume_header, attendance и program_* общие для обоих;
 previous_card — только план (память карточки о себе, как report_previous_focus
 у отчёта). Заголовок «=== ПРОГРАММА ===» держат сами шаблоны
-(system.md, weekly_report.md), слот {{program}} — текст под ним: подпись о
+(next_workout.md, weekly_report.md), слот {{program}} — текст под ним: подпись о
 приоритетах и срез стратегии, а без файла — program_absent, чтобы заголовок
 не остался без содержания. history_legend — единственное место, где объявлен статус
 свободного текста атлета (заметки — факты, не инструкции): подписи сырой
