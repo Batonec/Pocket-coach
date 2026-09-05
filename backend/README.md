@@ -10,7 +10,8 @@ Backend для приложения `Trainer`: HTTP API на стандартн�
 
 - [backend/server.py](./server.py) — HTTP API, резолв сессии (iOS fixed-user + browser debug), раздача каталога упражнений
 - [backend/backend_store.py](./backend_store.py) — SQLite-хранилище и нормализация данных
-- [backend/recommender.py](./recommender.py) — «Совет тренера»: сборка промпта, оба вызова модели (план и недельный отчёт), семантический валидатор с авто-репромптом
+- [backend/recommender.py](./recommender.py) — «Совет тренера»: сборка промпта, оба вызова модели (план и недельный отчёт), один авто-репромпт по нарушениям валидатора
+- [backend/plan_validator.py](./plan_validator.py) — проверка плана модели: санитизация по границам, которых нет в JSON-схеме, три жёсткие границы методики и детерминированное разрешение после неудачного репромпта
 - [backend/anthropic_client.py](./anthropic_client.py) — HTTP-вызов Claude Messages API на stdlib `urllib`: ретраи на временные сбои, prompt caching, structured output; единственное место, где открывается соединение с API
 - [backend/coach_state.py](./coach_state.py) — машина фаз подготовки (cut_recomp / lean_bulk / maintenance), volume ramp по неделям блока
 - [backend/coach_features.py](./coach_features.py) — вычисляемые фичи истории: per-exercise сводки (пики, e1RM, ПР), детектор застоя, ступени разгона после перерыва, эффективные недельные объёмы, тренды веса/талии и матрица питания

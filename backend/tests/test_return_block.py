@@ -13,6 +13,7 @@ import support  # noqa: F401 — adds backend to sys.path
 
 import coach_features
 import coach_state
+import plan_validator
 import recommender
 
 
@@ -135,7 +136,7 @@ class SessionCapTests(unittest.TestCase):
 
     def _plan(self, per_exercise: list[int]) -> dict:
         ids = [18, 9, 8, 13, 11, 12, 17, 15, 16, 19]
-        return recommender._validate(
+        return plan_validator._validate(
             {
                 "focus": "f",
                 "load_type": "medium",
@@ -154,10 +155,10 @@ class SessionCapTests(unittest.TestCase):
         )
 
     def test_twenty_two_sets_violate_the_phase_cap(self) -> None:
-        cap = recommender._session_cap(coach_state.phase_params(fx.STATE))
+        cap = plan_validator._session_cap(coach_state.phase_params(fx.STATE))
         self.assertEqual(cap, 20)
         plan = self._plan([4, 4, 4, 3, 3, 2, 2])  # 22 sets, like the card of 24.08
-        violations = recommender._semantic_violations(
+        violations = plan_validator._semantic_violations(
             plan, fx.CATALOG, fx.workouts(), fx.TODAY, session_cap=cap
         )
         self.assertEqual(len(violations), 1)
@@ -165,8 +166,8 @@ class SessionCapTests(unittest.TestCase):
 
     def test_trim_cuts_from_the_tail_and_keeps_every_exercise(self) -> None:
         plan = self._plan([4, 4, 4, 3, 3, 2, 2])
-        removed = recommender._trim_to_cap(plan, 20)
-        self.assertEqual(recommender._planned_sets(plan), 20)
+        removed = plan_validator._trim_to_cap(plan, 20)
+        self.assertEqual(plan_validator._planned_sets(plan), 20)
         # Tail first, one set per exercise per pass: the two last (isolation)
         # movements each lose a set; the compounds at the front are untouched.
         self.assertEqual([len(e["sets"]) for e in plan["exercises"]], [4, 4, 4, 3, 3, 1, 1])
