@@ -275,6 +275,8 @@ def generate_weekly_report(
     strategy: str | None = None,
     state: dict[str, Any] | None = None,
     events: list[dict[str, Any]] | None = None,
+    measurements: list[dict[str, Any]] | None = None,
+    previous_report: str | None = None,
     today: date | None = None,
     days: int = 7,
     model: str = DEFAULT_MODEL,
@@ -285,8 +287,11 @@ def generate_weekly_report(
     """Недельная ретроспектива в стиле тренера: Markdown без схемы.
 
     Возвращает ``(текст, usage, model)``. Период и окно данных задаёт ``today``
-    (воскресенье закрытой недели, см. :func:`weekly_report_period`) и ``days``.
-    Зовут скрипт таймера ``weekly_report.py`` и Coach MCP.
+    (воскресенье закрытой недели, см. :func:`weekly_report_period`) и ``days``;
+    ``measurements`` — обхваты кроме талии (метрики цели, план их не читает);
+    ``previous_report`` — текст отчёта за предыдущий период из кэша, из него в
+    промпт уходит блок «Фокус следующей недели». Зовут скрипт таймера
+    ``weekly_report.py`` и Coach MCP.
     """
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
@@ -295,10 +300,19 @@ def generate_weekly_report(
     today = today or date.today()
     state = state if state is not None else coach_state.default_state()
     user = prompt_builder._build_report_prompt(
-        workouts, body_weights, waists, catalog, state, today, max(1, int(days)), events=events
+        workouts,
+        body_weights,
+        waists,
+        catalog,
+        state,
+        today,
+        max(1, int(days)),
+        events=events,
+        measurements=measurements,
+        previous_report=previous_report,
     )
     text, usage = anthropic_client._request_model(
-        prompt_builder._build_report_system_prompt(profile, strategy),
+        prompt_builder._build_report_system_prompt(profile, strategy, state),
         user,
         schema=None,
         model=model,
@@ -324,8 +338,9 @@ def is_stale(rec: dict[str, Any] | None, latest_workout_id: int | None) -> bool:
 
 # Что обесценивает готовый совет: любая правка данных, из которых он собран —
 # тренировки, замеры веса и талии, события (они уезжают в промпт текстом).
-# Ровно одно исключение: повтор POST /api/workouts с тем же client_id — это
-# ретрай, а не новая тренировка, и он ничего не меняет.
+# Обхваты (measurement) сюда не входят: план их не читает, это вход недельного
+# отчёта. Ровно одно исключение среди входов: повтор POST /api/workouts с тем
+# же client_id — это ретрай, а не новая тренировка, и он ничего не меняет.
 ADVICE_INPUTS = frozenset({"workout", "body_weight", "waist", "event"})
 
 

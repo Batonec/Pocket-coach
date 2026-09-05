@@ -123,6 +123,24 @@ class MiniAppStore:
                 CREATE INDEX IF NOT EXISTS idx_waists_user_date
                 ON waists(user_id, entry_date ASC, id ASC);
 
+                -- Обхваты кроме талии (см): рука, плечи, грудь и т.д. по протоколу
+                -- стратегии — метрики цели; читает недельный отчёт, план — нет.
+                -- Один замер вида в день; kind — ключ limits.MEASUREMENT_KINDS.
+                CREATE TABLE IF NOT EXISTS measurements (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    entry_date TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    value_cm REAL NOT NULL,
+                    notes TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    UNIQUE(user_id, entry_date, kind)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_measurements_user_kind_date
+                ON measurements(user_id, kind, entry_date ASC, id ASC);
+
                 -- Периоды без тренировок с причиной («болел», «командировка»):
                 -- текст для промпта тренера, из событий сознательно не строится
                 -- ни одного числа. end_date NULL = событие идёт прямо сейчас.
@@ -926,6 +944,108 @@ class MiniAppStore:
 
         return self._deserialize_waist(row)
 
+    # --- обхваты тела кроме талии ------------------------------------------ #
+    def list_measurements(self, user_id: int, kind: str | None = None) -> list[dict[str, Any]]:
+        """Обхваты от старых к новым, все виды или один ``kind``."""
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, user_id, entry_date, kind, value_cm, notes, created_at, updated_at
+                FROM measurements
+                WHERE user_id = ? AND (? IS NULL OR kind = ?)
+                ORDER BY entry_date ASC, kind ASC, id ASC
+                """,
+                (user_id, kind, kind),
+            ).fetchall()
+        return [self._deserialize_measurement(row) for row in rows]
+
+    def save_measurement(
+        self, user_id: int, payload: dict[str, Any]
+    ) -> tuple[dict[str, Any], bool]:
+        """Обхват вида за дату: один на день, как вес и талия. ``(запись, создана ли)``.
+        Зовут server.py и Coach MCP."""
+        normalized_payload = rules.normalize_measurement_payload(payload)
+        timestamp = utc_now()
+
+        with self._connection() as connection:
+            existing = connection.execute(
+                """
+                SELECT id FROM measurements
+                WHERE user_id = ? AND entry_date = ? AND kind = ?
+                """,
+                (user_id, normalized_payload["entry_date"], normalized_payload["kind"]),
+            ).fetchone()
+
+            if existing is None:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO measurements (
+                        user_id, entry_date, kind, value_cm, notes, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        normalized_payload["entry_date"],
+                        normalized_payload["kind"],
+                        normalized_payload["value_cm"],
+                        normalized_payload["notes"],
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                row_id, created = cursor.lastrowid, True
+            else:
+                connection.execute(
+                    """
+                    UPDATE measurements
+                    SET value_cm = ?, notes = ?, updated_at = ?
+                    WHERE id = ? AND user_id = ?
+                    """,
+                    (
+                        normalized_payload["value_cm"],
+                        normalized_payload["notes"],
+                        timestamp,
+                        existing["id"],
+                        user_id,
+                    ),
+                )
+                row_id, created = existing["id"], False
+
+            row = connection.execute(
+                """
+                SELECT id, user_id, entry_date, kind, value_cm, notes, created_at, updated_at
+                FROM measurements
+                WHERE id = ?
+                """,
+                (row_id,),
+            ).fetchone()
+
+        if row is None:
+            raise RuntimeError("Failed to persist measurement entry")
+        return self._deserialize_measurement(row), created
+
+    def delete_measurement(self, user_id: int, entry_id: int) -> dict[str, Any] | None:
+        """Удалить обхват по id и вернуть его, или ``None``."""
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT id, user_id, entry_date, kind, value_cm, notes, created_at, updated_at
+                FROM measurements
+                WHERE id = ? AND user_id = ?
+                """,
+                (entry_id, user_id),
+            ).fetchone()
+            if row is None:
+                return None
+
+            connection.execute(
+                "DELETE FROM measurements WHERE id = ? AND user_id = ?",
+                (entry_id, user_id),
+            )
+
+        return self._deserialize_measurement(row)
+
     # --- события: перерывы в тренировках с причиной ------------------------ #
     def list_events(self, user_id: int) -> list[dict[str, Any]]:
         """Новые сверху — событие читают рядом с дыркой, которую оно объясняет."""
@@ -1318,6 +1438,18 @@ class MiniAppStore:
             "id": row["id"],
             "entry_date": row["entry_date"],
             "waist": float(row["waist"]),
+            "notes": row["notes"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _deserialize_measurement(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Строка обхвата в словарь API."""
+        return {
+            "id": row["id"],
+            "entry_date": row["entry_date"],
+            "kind": row["kind"],
+            "value_cm": float(row["value_cm"]),
             "notes": row["notes"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],

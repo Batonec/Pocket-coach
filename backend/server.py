@@ -34,7 +34,7 @@ from urllib.parse import urlparse
 from trainer import RESOURCES_DIR
 from trainer.data import files
 from trainer.data.backend_store import MiniAppStore
-from trainer.domain import coach_signals, recommender, rules
+from trainer.domain import coach_signals, limits, recommender, rules
 
 BASE_DIR = Path(__file__).resolve().parent
 # Каталог упражнений едет с кодом; путь переопределяется только ради тестов и
@@ -437,6 +437,24 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             extra_headers=headers,
         )
 
+    def _get_measurements(self) -> None:
+        """``GET /api/measurements``: обхваты кроме талии от старых к новым, все виды."""
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "user": user,
+                "kinds": limits.MEASUREMENT_KINDS,
+                "entries": STORE.list_measurements(int(user["id"])),
+            },
+            extra_headers=headers,
+        )
+
     def _get_waists(self) -> None:
         """``GET /api/waists``: все замеры талии от старых к новым."""
         session = self._require_user()
@@ -635,6 +653,31 @@ class MiniAppHandler(BaseHTTPRequestHandler):
             return
 
         self._advice_changed(int(user["id"]), "body_weight")
+        self._send_json(
+            HTTPStatus.CREATED if created else HTTPStatus.OK,
+            {"ok": True, "created": created, "user": user, "entry": entry},
+            extra_headers=headers,
+        )
+
+    def _post_measurement(self) -> None:
+        """``POST /api/measurements``: обхват вида за дату, один на день. Совет не
+        пересобирается: план обхваты не читает, это вход недельного отчёта."""
+        payload = self._read_json_body()
+        if payload is None:
+            return
+
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        try:
+            entry, created = STORE.save_measurement(int(user["id"]), payload)
+        except ValueError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "reason": str(exc)})
+            return
+
+        self._advice_changed(int(user["id"]), "measurement")
         self._send_json(
             HTTPStatus.CREATED if created else HTTPStatus.OK,
             {"ok": True, "created": created, "user": user, "entry": entry},
@@ -886,6 +929,27 @@ class MiniAppHandler(BaseHTTPRequestHandler):
         self._advice_changed(int(user["id"]), "workout")
 
     # --- DELETE --------------------------------------------------------------------
+    def _delete_measurement(self, entry_id: int) -> None:
+        """``DELETE /api/measurements/<id>``: удалить обхват; 404, если его нет."""
+        session = self._require_user()
+        if session is None:
+            return
+        user, headers = session
+
+        entry = STORE.delete_measurement(int(user["id"]), entry_id)
+        if entry is None:
+            self._send_json(
+                HTTPStatus.NOT_FOUND, {"ok": False, "reason": "Measurement entry not found"}
+            )
+            return
+
+        self._advice_changed(int(user["id"]), "measurement", created=False)
+        self._send_json(
+            HTTPStatus.OK,
+            {"ok": True, "user": user, "entry": entry, "deleted": True},
+            extra_headers=headers,
+        )
+
     def _delete_waist(self, waist_id: int) -> None:
         """``DELETE /api/waists/<id>``: удалить замер талии; 404, если его нет; совет пересобирается."""
         session = self._require_user()
@@ -1144,6 +1208,7 @@ ROUTES: dict[tuple[str, str], Callable[[MiniAppHandler], None]] = {
     ("GET", "/api/recommendations/next"): MiniAppHandler._get_recommendation_next,
     ("GET", "/api/reports/weekly"): MiniAppHandler._get_weekly_report,
     ("GET", "/api/waists"): MiniAppHandler._get_waists,
+    ("GET", "/api/measurements"): MiniAppHandler._get_measurements,
     ("GET", "/api/events"): MiniAppHandler._get_events,
     ("GET", "/api/coach/signals"): MiniAppHandler._get_coach_signals,
     ("POST", "/api/session/logout"): MiniAppHandler._post_session_logout,
@@ -1151,6 +1216,7 @@ ROUTES: dict[tuple[str, str], Callable[[MiniAppHandler], None]] = {
     ("POST", "/api/workouts"): MiniAppHandler._post_workout,
     ("POST", "/api/body-weights"): MiniAppHandler._post_body_weight,
     ("POST", "/api/waists"): MiniAppHandler._post_waist,
+    ("POST", "/api/measurements"): MiniAppHandler._post_measurement,
     ("POST", "/api/events"): MiniAppHandler._post_event,
     ("POST", "/api/coach/signals/dismiss"): MiniAppHandler._post_signal_dismiss,
     ("POST", "/api/reports/weekly/read"): MiniAppHandler._post_weekly_report_read,
@@ -1162,6 +1228,7 @@ ID_ROUTES: dict[tuple[str, str], Callable[[MiniAppHandler, int], None]] = {
     ("PUT", "/api/events/"): MiniAppHandler._put_event,
     ("PUT", "/api/workouts/"): MiniAppHandler._put_workout,
     ("DELETE", "/api/waists/"): MiniAppHandler._delete_waist,
+    ("DELETE", "/api/measurements/"): MiniAppHandler._delete_measurement,
     ("DELETE", "/api/body-weights/"): MiniAppHandler._delete_body_weight,
     ("DELETE", "/api/events/"): MiniAppHandler._delete_event,
     ("DELETE", "/api/workouts/"): MiniAppHandler._delete_workout,

@@ -79,6 +79,8 @@ GET    /api/body-weights             POST   /api/body-weights
 DELETE /api/body-weights/{id}
 GET    /api/waists                   POST   /api/waists
 DELETE /api/waists/{id}
+GET    /api/measurements             POST   /api/measurements     (обхваты кроме талии;
+DELETE /api/measurements/{id}                                       клиент пока не зовёт)
 GET    /api/events                   POST   /api/events
 PUT    /api/events/{id}              DELETE /api/events/{id}
 GET    /api/coach/signals            POST   /api/coach/signals/dismiss

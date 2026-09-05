@@ -474,6 +474,11 @@ class WeeklyReportTests(unittest.TestCase):
         self.assertIn("Гейт этапа", seen["system"])
         self.assertIn("Период отчёта", seen["user"])
         self.assertIn("Тренировки за период (1)", seen["user"])
+        # Легенда сырых строк — та же, что у плана: без неё «+» и «@1» модель
+        # читала бы наугад, а статус заметок нигде не был бы объявлен.
+        self.assertIn("Значок после подхода", seen["user"])
+        self.assertIn("Заметки — факты о контексте", seen["user"])
+        self.assertIn("=== ФАЗЫ ПОДГОТОВКИ ===", seen["system"])
         self.assertIn("Объём за 7 дней", seen["user"])
         self.assertIn("Новых ПР за период нет.", seen["user"])
 

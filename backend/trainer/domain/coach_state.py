@@ -103,6 +103,11 @@ DEFAULT_STATE: dict[str, Any] = {
     "phase_history": [],  # закрытые фазы: [{phase, started, ended}]
     "waist_limit_cm": None,  # жёсткий эстетический лимит; задаёт атлет
     "waist_base_cm": None,  # первый замер текущей фазы
+    # Недели поддержки внутри дефицита (стратегия: 4 недели дефицита → неделя на
+    # уровне TDEE, либо по стоп-сигналу). Понедельники недель, ISO; отмечает
+    # атлет руками через Coach MCP. Матрица питания исключает их замеры и
+    # молчит на них и две недели после; план и отчёт видят флаг в контексте.
+    "support_weeks": [],
 }
 
 
@@ -153,6 +158,14 @@ def normalize_state(raw: object) -> dict[str, Any]:
             and WAIST_CM_RANGE[0] <= value <= WAIST_CM_RANGE[1]
         ):
             state[key] = float(value)
+    if isinstance(raw.get("support_weeks"), list):
+        # Любая дата недели приводится к понедельнику: файл могли править руками.
+        mondays = {
+            _week_start(date.fromisoformat(item)).isoformat()
+            for item in raw["support_weeks"]
+            if _valid_iso_date(item)
+        }
+        state["support_weeks"] = sorted(mondays)
     # Старые файлы могут нести injection_day — игнорируется: планирование больше
     # не подстраивается под цикл инъекций.
     return state
@@ -313,6 +326,68 @@ def update_waist_limits(
     return changed
 
 
+# --------------------------------------------------------------------------- #
+# Недели поддержки
+# --------------------------------------------------------------------------- #
+def _week_start(day: date) -> date:
+    """Понедельник календарной недели, в которую попадает день."""
+    return day - timedelta(days=day.weekday())
+
+
+def support_week_bounds(state: dict[str, Any], day: date) -> tuple[date, date] | None:
+    """``(понедельник, воскресенье)`` недели поддержки, в которую попадает ``day``,
+    или ``None``. Зовут ``prompt_builder`` (флаг в контексте плана и отчёта) и
+    ``coach_features.nutrition_matrix``.
+    """
+    monday = _week_start(day)
+    if monday.isoformat() not in (state.get("support_weeks") or []):
+        return None
+    return monday, monday + timedelta(days=6)
+
+
+def is_support_week(state: dict[str, Any], day: date) -> bool:
+    """Попадает ли день в отмеченную неделю поддержки."""
+    return support_week_bounds(state, day) is not None
+
+
+def days_since_support_week(state: dict[str, Any], today: date) -> int | None:
+    """Дней от воскресенья последней ЗАКОНЧИВШЕЙСЯ недели поддержки до ``today``
+    или ``None``, если такой нет. Идущая неделя сюда не попадает — её ловит
+    ``support_week_bounds``. Зовёт ``nutrition_matrix``: окно подтверждения после
+    недели поддержки набирается заново.
+    """
+    ended = [
+        _week_start(date.fromisoformat(item)) + timedelta(days=6)
+        for item in state.get("support_weeks") or []
+        if _valid_iso_date(item)
+    ]
+    past = [sunday for sunday in ended if sunday < today]
+    if not past:
+        return None
+    return (today - max(past)).days
+
+
+def mark_support_week(
+    state: dict[str, Any], day: date, *, active: bool = True
+) -> tuple[date, date, bool]:
+    """Отметить (``active``) или снять неделю поддержки, в которую попадает ``day``.
+    Возвращает границы недели и изменилось ли что-то. Зовёт Coach MCP
+    (``coach_mark_support_week``); чтение и запись файла — у вызывающего.
+    """
+    monday = _week_start(day)
+    key = monday.isoformat()
+    weeks = list(state.get("support_weeks") or [])
+    changed = False
+    if active and key not in weeks:
+        weeks.append(key)
+        changed = True
+    elif not active and key in weeks:
+        weeks.remove(key)
+        changed = True
+    state["support_weeks"] = sorted(weeks)
+    return monday, monday + timedelta(days=6), changed
+
+
 def phase_params(state: dict[str, Any]) -> dict[str, Any]:
     """Параметры текущей фазы: дефолты ``PHASE_DEFAULTS`` поверх переопределений
     атлета из ``state["phase_params"]``; в результат добавлен ключ ``phase``.
@@ -377,6 +452,20 @@ def is_return_from_break(workouts: list[dict[str, Any]], today: date) -> bool:
     if not dates:
         return False
     return (today - dates[-1]).days >= BREAK_DAYS
+
+
+def phase_start(state: dict[str, Any]) -> date | None:
+    """Дата старта текущей фазы или ``None``: поле не задано или битое. Зовут
+    ``prompt_builder`` (траектория фазы в отчёте) и ``coach_features`` (оценка
+    TDEE — окно калибровки отсчитывается от старта фазы).
+    """
+    started = state.get("phase_started")
+    if not isinstance(started, str):
+        return None
+    try:
+        return date.fromisoformat(started)
+    except ValueError:
+        return None
 
 
 def _block_anchor(

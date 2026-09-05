@@ -477,8 +477,60 @@ class NutritionMatrixTests(unittest.TestCase):
         self.assertFalse(any("ккал" in line for line in result["lines"] if "−100" in line))
 
 
+class SupportWeekMatrixTests(unittest.TestCase):
+    """Недели поддержки: матрица молчит на них и две недели после, их точки не в тренде."""
+
+    def _state(self, *mondays: date) -> dict:
+        """Срез по умолчанию с отмеченными неделями поддержки."""
+        return coach_state.normalize_state(
+            dict(coach_state.DEFAULT_STATE, support_weeks=[m.isoformat() for m in mondays])
+        )
+
+    def _daily(self, per_week: float, days: int = 28, bump: tuple[date, date] | None = None):
+        """Ежедневные взвешивания с темпом ``per_week`` и, по желанию, +1 кг в ``bump``."""
+        points = []
+        for offset in range(days, -1, -1):
+            when = TODAY - timedelta(days=offset)
+            weight = 80.0 + per_week * (days - offset) / 7
+            if bump and bump[0] <= when <= bump[1]:
+                weight += 1.0
+            points.append({"entry_date": when.isoformat(), "weight": round(weight, 2)})
+        return points
+
+    def _lines(self, state: dict, weights: list[dict]) -> list[str]:
+        return coach_features.nutrition_matrix(
+            state, coach_state.phase_params(state), weights, [], TODAY
+        )["lines"]
+
+    def test_current_support_week_silences_calorie_advice(self) -> None:
+        monday = coach_state._week_start(TODAY)
+        lines = self._lines(self._state(monday), self._daily(0.0))  # вес стоит
+        self.assertTrue(any("НЕДЕЛЯ ПОДДЕРЖКИ" in line for line in lines))
+        self.assertFalse(any("ккал" in line for line in lines))
+        # Без отметки та же неделя стоячего веса на срезе — повод резать калории.
+        plain = self._lines(coach_state.default_state(), self._daily(0.0))
+        self.assertTrue(any("−100–150 ккал" in line for line in plain))
+
+    def test_confirmation_window_restarts_after_a_support_week(self) -> None:
+        last_week = coach_state._week_start(TODAY) - timedelta(days=7)
+        lines = self._lines(self._state(last_week), self._daily(0.0))
+        self.assertTrue(any("окно коррекции набирается заново" in line for line in lines))
+        self.assertFalse(any("ккал" in line for line in lines))
+
+    def test_support_week_points_do_not_bend_the_trend(self) -> None:
+        """Три недели назад — неделя поддержки с +1 кг: без исключения её точек
+        тренд выглядел бы обвалом темпа, с ним — темп в коридоре фазы."""
+        monday = coach_state._week_start(TODAY) - timedelta(days=21)
+        bump = (monday, monday + timedelta(days=6))
+        weights = self._daily(-0.3, bump=bump)  # коридор среза −0.35…−0.25
+        lines = self._lines(self._state(monday), weights)
+        self.assertTrue(any("в коридоре фазы" in line for line in lines), lines)
+        plain = self._lines(coach_state.default_state(), weights)
+        self.assertFalse(any("в коридоре фазы" in line for line in plain), plain)
+
+
 class MeasurementRenderTests(unittest.TestCase):
-    """Рендер замеров: мусор отбрасывается, талия перечисляется."""
+    """Рендер замеров: мусор отбрасывается, талия перечисляется, средняя названа."""
 
     def test_drops_garbage_and_lists_waist(self) -> None:
         weights = [
@@ -492,6 +544,79 @@ class MeasurementRenderTests(unittest.TestCase):
         self.assertNotIn("22кг", text)
         self.assertIn("отброшено неправдоподобных записей: 1", text)
         self.assertIn("Талия: 2026-08-10: 84см", text)
+        self.assertNotIn("Средняя за 7 дней", text)  # одной точки для средней мало
+
+    def test_weekly_mean_is_named_when_points_suffice(self) -> None:
+        """Стратегия управляет 7-дневной средней: она названа числом, рядом
+        средняя неделей раньше — «стоит / движется» без пересчёта моделью."""
+        weights = [
+            {"entry_date": (TODAY - timedelta(days=offset)).isoformat(), "weight": weight}
+            for offset, weight in ((13, 80.0), (11, 80.0), (9, 80.0), (8, 80.0), (7, 80.0))
+        ] + [
+            {"entry_date": (TODAY - timedelta(days=offset)).isoformat(), "weight": weight}
+            for offset, weight in ((5, 79.6), (3, 79.4), (1, 79.2), (0, 79.0))
+        ]
+        text = "\n".join(prompt_builder.render_measurements(weights, [], TODAY))
+        self.assertIn("Средняя за 7 дней: 79.3 кг (неделей раньше 80.0, -0.7).", text)
+
+
+class SetsInWindowTests(unittest.TestCase):
+    """Итог подходов за окно: те же подходы, что weekly_volume раскладывает по группам."""
+
+    def test_counts_only_the_window(self) -> None:
+        workouts = [
+            _workout(TODAY.isoformat(), [(8, [(100, 10)] * 3), (11, [(10, 12)] * 2)]),
+            _workout((TODAY - timedelta(days=6)).isoformat(), [(9, [(60, 10)] * 4)]),
+            _workout((TODAY - timedelta(days=7)).isoformat(), [(9, [(60, 10)] * 4)]),
+        ]
+        self.assertEqual(coach_features.sets_in_window(workouts, TODAY), 9)
+        self.assertEqual(coach_features.sets_in_window(workouts, TODAY - timedelta(days=7)), 4)
+        self.assertEqual(coach_features.sets_in_window([], TODAY), 0)
+
+
+class TdeeEstimateTests(unittest.TestCase):
+    """Калибровка TDEE по темпу веса за 4 недели при ориентире фазы."""
+
+    def _weights(self, start: date, days: int, per_week: float, first: float = 80.0):
+        """Ежедневные взвешивания с линейным темпом ``per_week`` от ``start``."""
+        return [
+            (start + timedelta(days=offset), first + per_week * offset / 7)
+            for offset in range(days + 1)
+        ]
+
+    def test_deficit_rate_raises_the_estimate_above_intake(self) -> None:
+        state = dict(coach_state.DEFAULT_STATE)  # cut_recomp, 2100–2200 ккал
+        params = coach_state.phase_params(state)
+        started = TODAY - timedelta(days=42)
+        estimate = coach_features.tdee_estimate(
+            params, self._weights(started, 42, -0.5), TODAY, phase_start=started
+        )
+        assert estimate is not None
+        self.assertEqual(estimate["intake"], 2150.0)
+        self.assertAlmostEqual(estimate["trend_per_week"], -0.5, places=2)
+        self.assertEqual(estimate["tdee"], 2700)  # 2150 + 0.5 × 7700 / 7
+
+    def test_young_phase_and_holding_phase_give_nothing(self) -> None:
+        state = dict(coach_state.DEFAULT_STATE)
+        params = coach_state.phase_params(state)
+        started = TODAY - timedelta(days=20)  # первые две недели — вода, окна ещё нет
+        self.assertIsNone(
+            coach_features.tdee_estimate(
+                params, self._weights(started, 20, -0.5), TODAY, phase_start=started
+            )
+        )
+        holding = coach_state.phase_params(dict(coach_state.DEFAULT_STATE, phase="maintenance"))
+        started = TODAY - timedelta(days=42)
+        self.assertIsNone(
+            coach_features.tdee_estimate(
+                holding, self._weights(started, 42, -0.5), TODAY, phase_start=started
+            )
+        )
+        self.assertIsNone(
+            coach_features.tdee_estimate(
+                params, self._weights(started, 42, -0.5), TODAY, phase_start=None
+            )
+        )
 
 
 class AdherenceStatsTests(unittest.TestCase):

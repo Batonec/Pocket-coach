@@ -59,9 +59,9 @@ CATALOG_SEMANTICS: dict[int, str] = {
 # контекст, чтобы модель знала, что их ноль структурный, а не от лени.
 CATALOG_GAPS = "икры, пресс, разгибатели спины — упражнений в каталоге нет"
 
-# Разделы рабочего документа стратегии, которые уходят в системный промпт.
-# Резать по ЗАГОЛОВКУ, а не по номеру: атлет перенумеровывает разделы, правя
-# документ, и срез по «## 4.» начал бы молча отдавать не ту главу.
+# Разделы рабочего документа стратегии, которые уходят в системный промпт
+# ПЛАНА. Резать по ЗАГОЛОВКУ, а не по номеру: атлет перенумеровывает разделы,
+# правя документ, и срез по «## 4.» начал бы молча отдавать не ту главу.
 # Не берём: «Как это читать» и «С чего начинаем» (мета для человека), «Питание»
 # и «Измерения» (числа уже приходят в КОНТЕКСТЕ, протокол — прозой в профиле),
 # «Расхождения с vision» (честность для атлета, для генерации шум) и раздел
@@ -76,22 +76,43 @@ STRATEGY_SECTIONS = [
     "Если выпала неделя",
 ]
 
+# Срез для НЕДЕЛЬНОГО ОТЧЁТА — свой: блок «Вес и талия» пишется по главам
+# «Питание» (контур коррекции, калибровка TDEE, недели поддержки) и
+# «Измерения» (протокол, норматив талии, стоп набора), которых план не читает;
+# «Курс к цели» — ещё и по «Расхождениям с vision»: без честного прогноза курс
+# мерился бы по недостижимому. «Пробел каталога» отчёту не нужен — он про
+# состав сессии, а сессию отчёт не собирает. Оба списка сверяются с заголовками
+# документа руками (см. CLAUDE.md); ненайденный заголовок попадает в промпт
+# предупреждением.
+REPORT_STRATEGY_SECTIONS = [
+    "Скелет: семь фаз",
+    "Ф0 — возврат (недели 1–4)",
+    "Ф1 — рекомпозиция (недели 5–17, около 12–14)",
+    "Тренировочные дни",
+    "Прогрессия",
+    "Питание",
+    "Измерения",
+    "Если выпала неделя",
+    "Два расхождения с vision — честно",
+]
 
-def _render_program(strategy: str | None) -> str:
-    """Слот {{program}}: срез стратегии либо пустая строка.
 
-    Пустая строка намеренно: секция появляется целиком или не появляется
-    вовсе — иначе в промпте остался бы заголовок без содержания.
+def _render_program(strategy: str | None, sections: list[str] = STRATEGY_SECTIONS) -> str:
+    """Слот {{program}}: текст под заголовком «=== ПРОГРАММА ===», который держат
+    сами шаблоны, — подпись о приоритетах и срез стратегии по ``sections``.
+
+    Без файла стратегии — строка-предупреждение, а не пустота: заголовок держит
+    шаблон, и секция без содержания читалась бы моделью как пропуск данных.
     """
     if not strategy:
-        return ""
-    body, missing = coach_prompts.document_sections(strategy, STRATEGY_SECTIONS)
+        return _block("program_absent")
+    body, missing = coach_prompts.document_sections(strategy, sections)
     parts = [_block("program_header")]
     if missing:
         parts.append(_block("program_missing", sections=", ".join(missing)))
     if body:
         parts.append(body)
-    return "\n\n".join(parts) + "\n\n"
+    return "\n\n".join(parts)
 
 
 def _render_profile(profile: dict[str, Any] | None) -> str:
@@ -341,6 +362,16 @@ def _serialize_history(
     return "\n".join(row[2] for row in rows)
 
 
+def _support_week_label(state: dict[str, Any], today: date) -> str:
+    """Флаг недели поддержки для подписи недели блока (план и отчёт) либо пустая
+    строка: калории на уровне TDEE, тренировки в обычном режиме, это не разгрузка.
+    """
+    bounds = coach_state.support_week_bounds(state, today)
+    if bounds is None:
+        return ""
+    return _block("support_week_label", start=bounds[0].isoformat(), end=bounds[1].isoformat())
+
+
 def _render_attendance(workouts: list[dict[str, Any]], today: date) -> str:
     """Блок явки: тренировочные дни по календарным неделям и серии из ≥3 и ≥4 —
     факт, который стоит и за переключением сплита («каркас включается, когда атлет
@@ -566,6 +597,7 @@ def _build_user_prompt(
     week_label = f"неделя блока {week}"
     if position["deload_week"]:
         week_label += _block("deload_week_label", weeks=str(params.get("deload_every_weeks")))
+    week_label += _support_week_label(state, today)
     context_lines = [
         _block(
             "context_today",
@@ -662,7 +694,7 @@ def _build_user_prompt(
 
     raw_count = min(history_limit, RAW_HISTORY_COUNT)
     shown_events, dropped_events = _clip_events(events)
-    header = [_block("raw_history_header", count=str(raw_count))]
+    header = [_block("raw_history_header", count=str(raw_count), legend=_block("history_legend"))]
     if shown_events:
         header.append(_block("raw_history_events"))
     if dropped_events:
@@ -767,25 +799,79 @@ def _build_schema(catalog: list[dict[str, Any]]) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Недельный отчёт тренера
 # --------------------------------------------------------------------------- #
-_REPORT_TEMPLATE = coach_prompts.load("report")
+_REPORT_TEMPLATE = coach_prompts.load("weekly_report")
 
 
 def _build_report_system_prompt(
     profile: dict[str, Any] | None = None,
     strategy: str | None = None,
+    state: dict[str, Any] | None = None,
 ) -> str:
-    """Системный промпт недельного отчёта.
+    """Системный промпт недельного отчёта: профиль, политика фаз, срез программы.
 
     До этого он был константой: отчёт не получал ни профиля, ни программы, то
     есть писался про абстрактного атлета. Гейту этапа при этом негде было
     прозвучать — а гейт жёсткий, и должно существовать место, где его статус
-    называют вслух.
+    называют вслух. Политика фаз — та же, что у плана, и рендерится из
+    параметров атлета: без неё блок «без ПР — и почему это ок» писался бы, не
+    зная, что на срезе плато по весам не проблема, а на удержании объём не растёт.
     """
     return coach_prompts.render(
         _REPORT_TEMPLATE,
         profile=_render_profile(profile),
-        program=_render_program(strategy),
+        phase_policy=_render_phase_policy(state),
+        program=_render_program(strategy, REPORT_STRATEGY_SECTIONS),
     )
+
+
+# Заголовки блоков отчёта в том виде, в каком их пишет модель: по ним из
+# прошлого отчёта вырезается «Фокус следующей недели». Формат задаёт
+# weekly_report.md; новый блок там — новое имя здесь, иначе фокус прошлого
+# отчёта захватит его целиком.
+_REPORT_BLOCKS = (
+    "итоги недели",
+    "прогресс",
+    "вес и талия",
+    "дисциплина",
+    "курс к цели",
+    "гейт этапа",
+    "фокус следующей недели",
+)
+_FOCUS_BLOCK = "фокус следующей недели"
+# Фокус — 2–3 пункта; длиннее — модель ушла в эссе, и в промпт едет только начало.
+MAX_PREVIOUS_FOCUS_CHARS = 1200
+
+
+def _report_block_name(line: str) -> str | None:
+    """Имя блока отчёта, если строка — его заголовок («**Прогресс** — …», «### Прогресс»)."""
+    bare = line.strip().lstrip("#*").strip().lower()
+    return next((name for name in _REPORT_BLOCKS if bare.startswith(name)), None)
+
+
+def previous_focus(report: str | None) -> str | None:
+    """Блок «Фокус следующей недели» из текста прошлого отчёта — от его заголовка
+    до следующего заголовка блока — или ``None``, если отчёта нет или блока в нём
+    не нашлось. Живой тренер на созвоне начинает с «договаривались о X — как
+    вышло?», и это единственная память отчёта о самом себе. Зовут
+    ``_build_report_prompt`` и тесты.
+    """
+    if not report:
+        return None
+    lines = report.splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if _report_block_name(line) == _FOCUS_BLOCK), None
+    )
+    if start is None:
+        return None
+    picked = [lines[start]]
+    for line in lines[start + 1 :]:
+        if _report_block_name(line):
+            break
+        picked.append(line)
+    text = "\n".join(picked).strip()
+    if len(text) > MAX_PREVIOUS_FOCUS_CHARS:
+        text = text[:MAX_PREVIOUS_FOCUS_CHARS].rstrip() + "…"
+    return text or None
 
 
 def _build_report_prompt(
@@ -797,14 +883,20 @@ def _build_report_prompt(
     today: date,
     days: int,
     events: list[dict[str, Any]] | None = None,
+    measurements: list[dict[str, Any]] | None = None,
+    previous_report: str | None = None,
 ) -> str:
     """User-промпт недельного отчёта за ``days`` дней до ``today`` включительно.
 
-    Период и фаза → тренировки периода хроникой → события периода (пустой блок
-    тоже нужен: «событий нет» значит, что пропуски ничем не объяснены) → объём →
-    явка → ПР периода → предусловия и застой → замеры и матрица питания →
-    дисциплина → что дальше (разгрузка сейчас, скоро или цель следующей недели)
-    → задача. Зовёт ``recommender.generate_weekly_report``.
+    Период и фаза → траектория фазы с её старта (вес, талия, темп, ПР, цель
+    по весу) → фокус из прошлого отчёта, если он передан → тренировки периода
+    хроникой (с той же легендой, что у плана) →
+    события периода (пустой блок тоже нужен: «событий нет» значит, что пропуски
+    ничем не объяснены) → объём с итогом за период и за неделю до него → явка →
+    ПР периода → сводки по тренажёрам → предусловия и застой → замеры (с
+    7-дневной средней), обхваты, матрица питания и оценка TDEE → дисциплина → что дальше
+    (разгрузка сейчас, скоро или цель следующей недели) → задача. Зовёт
+    ``recommender.generate_weekly_report``.
     """
     params = coach_state.phase_params(state)
     position = coach_state.cycle_position(state, workouts, today)
@@ -828,16 +920,52 @@ def _build_report_prompt(
             phase=params["phase"],
             title=str(params["title"]),
             week=str(position["block_week"]),
-            deload=_block("report_deload_yes" if position["deload_week"] else "report_deload_no"),
+            flags=(_block("report_deload_label") if position["deload_week"] else "")
+            + _support_week_label(state, today),
             calories=_format_range(params["calories"]),
             rate=str(params["rate_text"]),
             protein=_format_range(params["protein_g"]),
         ),
     ]
 
+    # Траектория фазы: отчёт живёт в семи днях, а гейт и цели — в месяцах.
+    # Без старта фазы, веса и талии на старте и темпа за фазу модели нечем
+    # сказать, где атлет на пути к критерию.
+    started = coach_state.phase_start(state)
+    if started is not None and started <= today:
+        summary = coach_features.phase_summary(
+            workouts,
+            body_weights,
+            waists,
+            catalog,
+            phase=params["phase"],
+            started=started,
+            ended=today,
+        )
+        progress = [_block("report_phase_progress_header"), render_phase_summary(summary)]
+        if params.get("target_weight_kg"):
+            progress.append(
+                _block("report_phase_target", target=_format_number(params["target_weight_kg"]))
+            )
+        if params.get("ceiling_weight_kg"):
+            progress.append(
+                _block("report_phase_ceiling", ceiling=_format_number(params["ceiling_weight_kg"]))
+            )
+        chunks.append("\n".join(progress))
+
+    # Память о прошлом отчёте: его «Фокус следующей недели» — то, с чего живой
+    # тренер начинает созвон. Без ``previous_report`` блока просто нет.
+    focus = previous_focus(previous_report)
+    if focus:
+        chunks.append(_block("report_previous_focus") + "\n" + focus)
+
     if week_workouts:
         chunks.append(
-            _block("report_workouts_header", count=str(len(week_workouts)))
+            _block(
+                "report_workouts_header",
+                count=str(len(week_workouts)),
+                legend=_block("history_legend"),
+            )
             + "\n"
             + _serialize_history(week_workouts, len(week_workouts), catalog)
         )
@@ -872,7 +1000,11 @@ def _build_report_prompt(
     )
     maintenance_sets = params.get("sets_per_group") if params["phase"] == "maintenance" else None
     chunks.append(
-        _block("report_volume_header")
+        _block(
+            "report_volume_header",
+            total=str(coach_features.sets_in_window(workouts, today)),
+            previous=str(coach_features.sets_in_window(workouts, today - timedelta(days=7))),
+        )
         + "\n"
         + render_weekly_volume(
             coach_features.weekly_volume(workouts, today),
@@ -892,16 +1024,47 @@ def _build_report_prompt(
     chunks.append(
         _block("report_prs_header") + "\n" + "\n".join(prs) if prs else _block("report_no_prs")
     )
+    # Сводки по тренажёрам — те же, что читает план: без них отчёт видел одну
+    # неделю сырых подходов без прошлой, и «движение весов» с силовым гейтом
+    # ему было нечем подтвердить.
+    if summaries:
+        chunks.append(_block("summaries_header") + "\n" + render_exercise_summaries(summaries))
 
     matrix = coach_features.nutrition_matrix(state, params, body_weights, waists, today)
     chunks.append(_render_stall(workouts, summaries, matrix, params, state, today))
 
-    measurements = render_measurements(body_weights, waists, today)
-    nutrition = list(measurements)
+    nutrition = render_measurements(body_weights, waists, today)
+    # Обхваты — метрики цели из vision (рука, плечи, грудь): без них отчёт про
+    # главные цели сказать не мог ничего. Пустой блок тоже говорит вслух.
+    overview = coach_features.measurement_overview(measurements or [], today)
+    if overview:
+        nutrition.append(
+            _block("report_measurements_header") + "\n" + render_measurement_overview(overview)
+        )
+    else:
+        nutrition.append(_block("report_measurements_none"))
     if matrix["lines"]:
         nutrition.append(_block("nutrition_matrix", lines="; ".join(matrix["lines"])))
     if matrix["goal"]:
         nutrition.append(_block("nutrition_goal", goal=matrix["goal"]))
+    # Недели поддержки в калибровку не входят, как и в матрицу: их точки
+    # объявили бы расход ниже на пустом месте.
+    calibration_points = [
+        point
+        for point in coach_features.weight_points(body_weights)
+        if not coach_state.is_support_week(state, point[0])
+    ]
+    estimate = coach_features.tdee_estimate(params, calibration_points, today, phase_start=started)
+    if estimate:
+        nutrition.append(
+            _block(
+                "report_tdee",
+                intake=f"{estimate['intake']:g}",
+                trend=f"{estimate['trend_per_week']:+.2f}",
+                weeks=str(estimate["window_days"] // 7),
+                tdee=str(estimate["tdee"]),
+            )
+        )
     if nutrition:
         chunks.append("\n".join(nutrition))
 
@@ -1142,6 +1305,21 @@ def render_measurements(
         )
         if dropped:
             line += f" (отброшено неправдоподобных записей: {dropped})"
+        # Стратегия управляет 7-дневной средней, а не точками: она названа числом,
+        # когда точек хватает, и рядом средняя недели раньше — это и есть «вес
+        # стоит / движется» без пересчёта моделью.
+        mean_now = coach_features.moving_average(weights, today)
+        if count >= coach_features.WEEKLY_MEAN_MIN_POINTS and mean_now is not None:
+            line += f" Средняя за 7 дней: {mean_now:.1f} кг"
+            week_ago = today - timedelta(days=7)
+            mean_before = coach_features.moving_average(weights, week_ago)
+            enough_before = (
+                coach_features.weigh_ins_in_window(weights, week_ago)
+                >= coach_features.WEEKLY_MEAN_MIN_POINTS
+            )
+            if enough_before and mean_before is not None:
+                line += f" (неделей раньше {mean_before:.1f}, {mean_now - mean_before:+.1f})"
+            line += "."
         lines.append(line)
     waist = coach_features.waist_points(waists)
     if waist:
@@ -1149,6 +1327,21 @@ def render_measurements(
         age = (today - waist[-1][0]).days
         lines.append(f"Талия: {tail}. Дней с последнего замера: {age}.")
     return lines
+
+
+def render_measurement_overview(rows: list[dict[str, Any]]) -> str:
+    """Обхваты строками: «подпись: последний (дата, N дн. назад; раньше X от даты)»."""
+    lines: list[str] = []
+    for row in rows:
+        line = (
+            f"  {row['label']}: {row['last_value']:g} см ({row['last_date']}, "
+            f"{row['days_since']} дн. назад"
+        )
+        if row["previous_value"] is not None:
+            delta = row["last_value"] - row["previous_value"]
+            line += f"; раньше {row['previous_value']:g} от {row['previous_date']}, {delta:+.1f}"
+        lines.append(line + ")")
+    return "\n".join(lines)
 
 
 def render_phase_summary(summary: dict[str, Any]) -> str:
