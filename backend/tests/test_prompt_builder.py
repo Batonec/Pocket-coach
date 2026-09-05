@@ -13,6 +13,61 @@ from trainer.data import files
 from trainer.domain import coach_state, prompt_builder, rules
 
 
+class VolumeBlocksTests(unittest.TestCase):
+    """Два блока объёма в промпте: 7 дней — темп без целей, КРУГ из четырёх
+    тренировок — с целями по группам; явка несёт темп за 14 дней и интервалы."""
+
+    def _workout(self, when: str, exercise_id: int = 18, sets: int = 3) -> dict:
+        return {
+            "workout_date": when,
+            "data": {
+                "load_type": "medium",
+                "exercises": [
+                    {
+                        "exercise_id": exercise_id,
+                        "name": "X",
+                        "sets": [{"reps": 10, "weight": 50} for _ in range(sets)],
+                    }
+                ],
+            },
+        }
+
+    def _prompt(self, state: dict, days: list[str]) -> str:
+        # Стор отдаёт от новых к старым — так же передаём и здесь.
+        workouts = [self._workout(day) for day in reversed(days)]
+        return prompt_builder._build_user_prompt(workouts, [], date(2026, 6, 10), 10, state=state)
+
+    def test_targets_live_on_the_round_block_only(self) -> None:
+        state = coach_state.default_state()
+        state["phase_params"] = {"cut_recomp": {"group_targets": {"грудь": [12, 14]}}}
+        prompt = self._prompt(
+            state, ["2026-06-01", "2026-06-03", "2026-06-05", "2026-06-07", "2026-06-09"]
+        )
+        weekly, round_block = prompt.split("Объём за КРУГ", 1)
+        self.assertIn("Объём за последние 7 дней — темп календарной недели", weekly)
+        self.assertIn("грудь: 9 прямых / 9 эффективных", weekly)  # три сессии за 7 дней
+        self.assertNotIn("(цель ", weekly)
+        self.assertIn("последние 4 тренировки (2026-06-03 – 2026-06-09)", round_block)
+        self.assertIn("грудь: 12 прямых (цель 12–14)", round_block)
+        self.assertIn("Цели — в ПРЯМЫХ сетах на круг из четырёх тренировок", round_block)
+
+    def test_maintenance_keeps_targets_on_the_week_and_has_no_round(self) -> None:
+        state = coach_state.default_state()
+        state["phase"] = "maintenance"
+        prompt = self._prompt(state, ["2026-06-02", "2026-06-09"])
+        self.assertIn("Режим поддержания", prompt)
+        self.assertNotIn("Объём за КРУГ", prompt)
+
+    def test_attendance_names_tempo_and_intervals(self) -> None:
+        prompt = self._prompt(
+            coach_state.default_state(),
+            ["2026-05-28", "2026-05-30", "2026-06-01", "2026-06-03", "2026-06-06", "2026-06-09"],
+        )
+        self.assertIn("Темп: 6 тренировок за последние 14 дней", prompt)  # с 28 мая включительно
+        self.assertIn("интервалы между последними сессиями, дней: 2, 2, 2, 3, 3.", prompt)
+        self.assertNotIn("с ≥4", prompt)
+
+
 class CoachContextTests(unittest.TestCase):
     """Отчёт дисциплины по снапшотам."""
 

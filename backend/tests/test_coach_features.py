@@ -367,7 +367,7 @@ class TrendValidityTests(unittest.TestCase):
         result = coach_features.nutrition_matrix(state, params, weights, [], TODAY)
         self.assertIsNone(result["trend_per_week"])
         self.assertTrue(any("недостаточно" in line for line in result["lines"]))
-        self.assertFalse(any("−100–150" in line for line in result["lines"]))
+        self.assertFalse(any("−150" in line for line in result["lines"]))
         self.assertFalse(any("тренд веса" in line for line in result["lines"]))
 
 
@@ -422,14 +422,14 @@ class NutritionMatrixTests(unittest.TestCase):
             state, self._params(state), self._weights(79.0), waists, TODAY
         )
         self.assertTrue(any("рекомп-бонус" in line for line in result["lines"]))
-        self.assertFalse(any("−100–150" in line for line in result["lines"]))
+        self.assertFalse(any("−150" in line for line in result["lines"]))
 
     def test_cut_stall_without_waist_drop_cuts_calories(self) -> None:
         state = self._state()
         result = coach_features.nutrition_matrix(
             state, self._params(state), self._weights(79.0), [], TODAY
         )
-        self.assertTrue(any("−100–150 ккал" in line for line in result["lines"]))
+        self.assertTrue(any("−150 ккал" in line for line in result["lines"]))
         self.assertTrue(any("талии" in line for line in result["lines"]))  # просит замерить
 
     def test_cut_goal_reached_suggests_lean_bulk(self) -> None:
@@ -509,7 +509,7 @@ class SupportWeekMatrixTests(unittest.TestCase):
         self.assertFalse(any("ккал" in line for line in lines))
         # Без отметки та же неделя стоячего веса на срезе — повод резать калории.
         plain = self._lines(coach_state.default_state(), self._daily(0.0))
-        self.assertTrue(any("−100–150 ккал" in line for line in plain))
+        self.assertTrue(any("−150 ккал" in line for line in plain))
 
     def test_confirmation_window_restarts_after_a_support_week(self) -> None:
         last_week = coach_state._week_start(TODAY) - timedelta(days=7)
@@ -807,11 +807,11 @@ class HoldingPhaseMatrixTests(unittest.TestCase):
     def test_holding_phase_does_not_ask_to_cut_calories(self):
         lines = " ".join(self._matrix((-0.10, 0.10))["lines"])
         self.assertIn("это и есть задача этапа", lines)
-        self.assertNotIn("−100–150 ккал", lines)
+        self.assertNotIn("−100 ккал", lines)
 
     def test_cutting_phase_still_asks_to_cut_on_a_stall(self):
         lines = " ".join(self._matrix((-0.35, -0.25))["lines"])
-        self.assertIn("−100–150 ккал", lines)
+        self.assertIn("−150 ккал", lines)
 
     def test_goal_reached_is_not_announced_while_holding(self):
         """target_weight_kg остаётся дефолтным на этапе удержания — объявлять
@@ -852,10 +852,12 @@ class ActiveWindowStallTests(unittest.TestCase):
         self.assertNotIn("НЕ выполнены", text)
 
     def test_group_targets_set_the_volume_threshold(self) -> None:
-        # 15 сессий × 5 сетов жима за 42 дня = 12.5 сетов груди в неделю: хватает
-        # против плоских 10, но не против программы, которая просит 14–16.
+        # 15 сессий × 3 сета жима через день = 12 сетов груди за КРУГ из четырёх
+        # тренировок: хватает против плоских 10, но не против программы, которая
+        # просит 14–16 за круг. Календарная неделя тут ни при чём: атлет через
+        # день делает 10.5 сета в неделю и по ней «недобирал» бы всегда.
         workouts = [
-            _workout((TODAY - timedelta(days=index * 2)).isoformat(), [(18, [(60, 10)] * 5)])
+            _workout((TODAY - timedelta(days=index * 2)).isoformat(), [(18, [(60, 10)] * 3)])
             for index in range(15)
         ]
         loose = coach_features.stall_report(workouts, [], 0.0, "lean_bulk", None, TODAY)
@@ -863,8 +865,9 @@ class ActiveWindowStallTests(unittest.TestCase):
         strict = coach_features.stall_report(
             workouts, [], 0.0, "lean_bulk", None, TODAY, group_targets={"грудь": (14, 16)}
         )
-        self.assertTrue(any("грудь 12.5 < 14" in reason for reason in strict["reasons"]))
-        self.assertIn("грудь 12.5 (порог 14)", prompt_builder.render_stall_report(strict))
+        self.assertTrue(any("грудь 12.0 < 14" in reason for reason in strict["reasons"]))
+        self.assertIn("грудь 12.0 (порог 14)", prompt_builder.render_stall_report(strict))
+        self.assertIn("за круг из 4 тренировок", prompt_builder.render_stall_report(strict))
 
     def test_stall_clock_runs_inside_the_window_not_from_the_all_time_pr(self) -> None:
         # Пик 70 поставлен 100 дней назад, потом перерыв, потом пять недель подъёма
@@ -973,6 +976,41 @@ class AttendanceTests(unittest.TestCase):
         self.assertEqual(rows[-1]["sessions"], 1)
 
 
+class RoundAndTempoTests(unittest.TestCase):
+    """Объём за круг из четырёх тренировок, темп за 14 дней и интервалы между
+    сессиями — факты, по которым каркас идёт ротацией, а не календарной неделей."""
+
+    def test_round_volume_takes_the_last_four_training_days(self) -> None:
+        days = ["2026-08-04", "2026-08-06", "2026-08-08", "2026-08-10", "2026-08-12"]
+        workouts = [_workout(day, [(18, [(60, 10)] * 3)]) for day in days]
+        volume, picked = coach_features.round_volume(workouts, TODAY)
+        self.assertEqual([day.isoformat() for day in picked], days[1:])
+        self.assertEqual(volume["грудь"]["direct"], 12)  # 4 × 3, первая сессия за кругом
+        # Две сессии в один день — один тренировочный день круга.
+        doubled = [*workouts, _workout("2026-08-12", [(17, [(25, 12)] * 2)])]
+        volume, picked = coach_features.round_volume(doubled, TODAY)
+        self.assertEqual(len(picked), 4)
+        self.assertEqual(volume["грудь"]["direct"], 14)
+
+    def test_round_volume_ignores_workouts_after_today_and_empty_history(self) -> None:
+        workouts = [
+            _workout("2026-08-12", [(18, [(60, 10)])]),
+            _workout("2026-08-20", [(18, [(60, 10)] * 5)]),
+        ]
+        volume, picked = coach_features.round_volume(workouts, TODAY)
+        self.assertEqual([day.isoformat() for day in picked], ["2026-08-12"])
+        self.assertEqual(volume["грудь"]["direct"], 1)
+        self.assertEqual(coach_features.round_volume([], TODAY)[1], [])
+
+    def test_tempo_and_intervals(self) -> None:
+        days = ["2026-07-30", "2026-08-01", "2026-08-03", "2026-08-05"]
+        days += ["2026-08-08", "2026-08-10", "2026-08-12", "2026-08-14"]
+        workouts = [_workout(day, [(8, [(100, 10)])]) for day in days]
+        self.assertEqual(coach_features.sessions_in_window(workouts, TODAY, 14), 7)  # с 1 августа
+        self.assertEqual(coach_features.recent_intervals(workouts, TODAY), [2, 3, 2, 2, 2])
+        self.assertEqual(coach_features.recent_intervals(workouts[:1], TODAY), [])
+
+
 class TrendSlopeTests(unittest.TestCase):
     """МНК-наклон тренда и счётчик взвешиваний."""
 
@@ -1043,13 +1081,13 @@ class RateMatrixTests(unittest.TestCase):
         line = " ".join(result["lines"])
         self.assertIn("выше коридора фазы (-0.10…+0.10 кг/нед", line)
         self.assertIn("по средним двух недель тоже", line)
-        self.assertIn("−100–150 ккал", line)
+        self.assertIn("−100 ккал", line)
         self.assertNotIn("паузу набора", line)
 
     def test_gaining_phase_adds_the_pause_option(self) -> None:
-        result = self._matrix("lean_bulk", (0.1, 0.2), self._daily(78.0, 0.1))
+        result = self._matrix("lean_bulk", (0.1, 0.2), self._daily(78.0, 0.1, days=35))
         line = " ".join(result["lines"])
-        self.assertIn("−100–150 ккал или паузу набора", line)
+        self.assertIn("−75 ккал или паузу набора", line)
 
     def test_deviation_without_a_two_week_witness_is_not_acted_on(self) -> None:
         # Только десять дней данных: наклон валиден, средние с интервалом две недели — нет.
@@ -1058,19 +1096,19 @@ class RateMatrixTests(unittest.TestCase):
         line = " ".join(result["lines"])
         self.assertIn("выше коридора фазы", line)
         self.assertIn("ещё не подтверждают", line)
-        self.assertNotIn("−100–150", line)
+        self.assertNotIn("−100 ккал", line)
 
     def test_falling_weight_on_a_cut_offers_a_maintenance_week(self) -> None:
         result = self._matrix("cut_recomp", (-0.35, -0.25), self._daily(80.0, -0.1))
         line = " ".join(result["lines"])
         self.assertIn("ниже коридора фазы", line)
-        self.assertIn("+100–150 ккал или неделю поддержки", line)
+        self.assertIn("+150 ккал или неделю поддержки", line)
 
     def test_stalled_weight_on_a_gain_asks_for_more_food(self) -> None:
-        result = self._matrix("lean_bulk", (0.1, 0.2), self._daily(80.0, 0.0))
+        result = self._matrix("lean_bulk", (0.1, 0.2), self._daily(80.0, 0.0, days=35))
         line = " ".join(result["lines"])
         self.assertIn("при плане набора", line)
-        self.assertIn("+100–150 ккал", line)
+        self.assertIn("+75 ккал", line)
 
     def test_in_corridor_says_so_for_any_phase(self) -> None:
         gain = " ".join(self._matrix("lean_bulk", (0.1, 0.2), self._daily(80.0, 0.02))["lines"])
@@ -1088,7 +1126,7 @@ class RateMatrixTests(unittest.TestCase):
         result = self._matrix("maintenance", (0.0, 0.0), self._daily(80.0, 0.06))
         line = " ".join(result["lines"])
         self.assertIn("выше коридора фазы (+0.00…+0.00 кг/нед", line)
-        self.assertIn("−100–150 ккал", line)
+        self.assertIn("−100 ккал", line)
 
 
 class PositionTagTests(unittest.TestCase):

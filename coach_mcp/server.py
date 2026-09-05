@@ -767,6 +767,7 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
             state=state,
             waists=waists,
             events=events,
+            previous=STORE.get_recommendation(uid),
         )
         schema = prompt_builder._build_schema(catalog)
         return _result(
@@ -819,6 +820,7 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
             state=state,
             waists=waists,
             events=events,
+            previous=STORE.get_recommendation(uid),
         )
 
         validated = None
@@ -835,6 +837,7 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
                 state=state,
                 waists=waists,
                 events=events,
+                previous=STORE.get_recommendation(uid),
                 today=today,
                 history_limit=limit,
             )
@@ -1059,6 +1062,7 @@ def coach_generate_recommendation(
             state=files.load_state(_STATE_PATH),
             waists=STORE.list_waists(uid),
             events=STORE.list_events(uid),
+            previous=STORE.get_recommendation(uid),
             history_limit=limit,
         )
         stored = None
