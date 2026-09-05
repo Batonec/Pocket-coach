@@ -111,6 +111,9 @@ def _generate_and_store_recommendation(user_id: int) -> dict[str, Any] | None:
     workouts = STORE.list_workouts(user_id)
     based_on_workout_id = STORE.get_latest_workout_id(user_id)
     body_weights = STORE.list_body_weights(user_id)
+    # Строка кэша к этому моменту уже pending, но прошлый payload в ней цел:
+    # это память карточки о себе для нового промпта.
+    previous = STORE.get_recommendation(user_id)
     try:
         recommendation, usage, model = recommender.generate(
             workouts,
@@ -121,6 +124,7 @@ def _generate_and_store_recommendation(user_id: int) -> dict[str, Any] | None:
             state=files.load_state(COACH_STATE_PATH),
             waists=STORE.list_waists(user_id),
             events=STORE.list_events(user_id),
+            previous=previous,
         )
     except recommender.RecommendationError as exc:
         STORE.fail_recommendation(user_id, str(exc))

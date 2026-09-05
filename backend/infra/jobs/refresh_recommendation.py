@@ -75,6 +75,7 @@ def run(store: backend_store.MiniAppStore, user_id: int, force: bool = False) ->
             state=files.load_state(STATE_PATH),
             waists=store.list_waists(user_id),
             events=store.list_events(user_id),
+            previous=rec,
         )
     except recommender.RecommendationError as exc:
         store.fail_recommendation(user_id, str(exc))

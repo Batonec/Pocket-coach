@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import math
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from trainer.data import coach_prompts
@@ -45,12 +45,14 @@ CATALOG_SEMANTICS: dict[int, str] = {
     17: "пек-дек «бабочка» — изоляция груди",
     9: "РЫЧАЖНАЯ вертикальная тяга (хаммер) с двумя сходящимися ручками, имитация "
     "подтягиваний — широчайшие, вторично бицепс",
-    10: "рычажная горизонтальная тяга (хаммер) — толщина спины (середина трапеции, ромбовидные), вторично бицепс",
+    10: "рычажная горизонтальная тяга (хаммер) — толщина спины (середина трапеции, ромбовидные), "
+    "вторично бицепс. Нагружается блинами: практичный шаг 10 кг, 2.5 накинуть неудобно",
     13: "махи в тренажёре с упором в локти, сидя — средняя дельта",
     19: "тренажёр обратных махов (сидя, разведение рук назад) — задняя дельта. Шаг стека 2.5 кг",
     11: "тренажёр на сгибание рук — бицепс",
     12: "трицепс на блоке вниз (ручка варьируется: прямая/канат) — трицепс",
-    8: "жим ногами в платформе 45° — квадрицепс + ягодичные",
+    8: "жим ногами в платформе 45° — квадрицепс + ягодичные. Нагружается блинами: практичный шаг "
+    "10 кг, часто 20 — какие блины есть на стойке",
     16: "разгибания ног сидя — квадрицепс (изоляция)",
     15: "сгибания ног лёжа — бицепс бедра",
 }
@@ -373,16 +375,121 @@ def _support_week_label(state: dict[str, Any], today: date) -> str:
 
 
 def _render_attendance(workouts: list[dict[str, Any]], today: date) -> str:
-    """Блок явки: тренировочные дни по календарным неделям и серии из ≥3 и ≥4 —
-    факт, который стоит и за переключением сплита («каркас включается, когда атлет
-    держит частоту»), и за гейтом программы. Общий для плана и недельного отчёта.
+    """Блок явки: тренировочные дни по календарным неделям и серия закрытых недель
+    с ≥3 (гейт программы), плюс темп — тренировок за 14 дней и интервалы между
+    последними сессиями: по темпу program_header держит ротацию каркаса, а не по
+    «неделям по четыре», которых у атлета через день не бывает. Общий для плана и
+    недельного отчёта.
     """
     rows = coach_features.weekly_attendance(workouts, today)
+    intervals = coach_features.recent_intervals(workouts, today)
     return _block(
         "attendance",
         weeks=render_weekly_attendance(rows, today),
         streak_three=str(coach_features.attendance_streak(rows, 3)),
-        streak_four=str(coach_features.attendance_streak(rows, 4)),
+        fortnight=str(coach_features.sessions_in_window(workouts, today, 14)),
+        intervals=", ".join(str(days) for days in intervals) if intervals else "мало данных",
+    )
+
+
+def _render_volume(
+    workouts: list[dict[str, Any]],
+    today: date,
+    week_target: tuple[int, int] | None,
+    maintenance_sets: tuple[int, int] | None,
+    params: dict[str, Any],
+) -> list[str]:
+    """Два блока объёма: за 7 дней — темп календарной недели, и за КРУГ из
+    последних четырёх тренировок — с целями по группам: цели программы описывают
+    один проход каркаса, и атлет через день по календарю вечно «недобирал» бы. В
+    режиме поддержания круга нет (одна сессия в неделю), цели остаются у недельного
+    блока. Общий для плана и отчёта.
+    """
+    weekly = coach_features.weekly_volume(workouts, today)
+    if maintenance_sets:
+        return [
+            _block("volume_header") + "\n" + render_weekly_volume(weekly, None, maintenance_sets)
+        ]
+    chunks = [_block("volume_header") + "\n" + render_weekly_volume(weekly, None)]
+    volume, days = coach_features.round_volume(workouts, today)
+    if days:
+        chunks.append(
+            _block(
+                "round_volume_header",
+                count=str(len(days)),
+                start=days[0].isoformat(),
+                end=days[-1].isoformat(),
+            )
+            + "\n"
+            + render_weekly_volume(volume, week_target, None, params.get("group_targets"))
+        )
+    return chunks
+
+
+def previous_advice(rationale: str | None) -> str | None:
+    """Пункт «Совет» из rationale прошлой карточки — то, что она обещала следующей
+    сессии («следующая — ноги и спина, жим ногами первым»). Без такого пункта —
+    ``None``. Зовёт ``_render_previous_card``.
+    """
+    for line in (rationale or "").splitlines():
+        bare = line.strip().lstrip("*-• ").strip()
+        if not bare.lower().startswith("совет"):
+            continue
+        text = bare.split(":", 1)[1] if ":" in bare else bare[len("совет") :]
+        text = " ".join(text.strip(" *").split())
+        return text or None
+    return None
+
+
+def _render_previous_card(
+    previous: dict[str, Any] | None, workouts: list[dict[str, Any]]
+) -> str | None:
+    """Блок памяти карточки о себе: фокус, нагрузка, состав и обещание прошлого
+    совета, плюс была ли по нему тренировка (по ``based_on_workout_id`` против id в
+    истории). Без прошлой карточки или без payload у неё — ``None``: канал
+    включает вызывающий, передав строку кэша ``previous=``.
+    """
+    if not isinstance(previous, dict):
+        return None
+    payload = previous.get("recommendation")
+    if not isinstance(payload, dict) or not payload.get("exercises"):
+        return None
+    stamp = previous.get("updated_at") or previous.get("created_at")
+    built = (
+        datetime.fromtimestamp(int(stamp), tz=timezone.utc).date().isoformat()
+        if isinstance(stamp, (int, float)) and not isinstance(stamp, bool)
+        else "?"
+    )
+    based_on = previous.get("based_on_workout_id")
+    newer = (
+        sum(
+            1
+            for workout in workouts
+            if isinstance(workout.get("id"), int) and workout["id"] > based_on
+        )
+        if isinstance(based_on, int)
+        else 0
+    )
+    status = (
+        f"после неё записано тренировок: {newer} — она уже отработана"
+        if newer
+        else "тренировок по ней ещё не было — ты пересобираешь ту же сессию"
+    )
+    exercises = ", ".join(
+        f"{exercise.get('name') or exercise.get('exercise_id')} ×{len(exercise.get('sets') or [])}"
+        for exercise in payload["exercises"]
+        if isinstance(exercise, dict)
+    )
+    advice = previous_advice(payload.get("rationale"))
+    return _block(
+        "previous_card",
+        built=built,
+        planned=str(payload.get("next_workout_date") or "?"),
+        status=status,
+        focus=" ".join(str(payload.get("focus") or "").split()) or "—",
+        load=str(payload.get("load_type") or "?"),
+        exercises=exercises or "—",
+        advice=f" Обещание на следующую сессию из её rationale: «{advice}»." if advice else "",
     )
 
 
@@ -566,16 +673,19 @@ def _build_user_prompt(
     state: dict[str, Any] | None = None,
     waists: list[dict[str, Any]] | None = None,
     events: list[dict[str, Any]] | None = None,
+    previous: dict[str, Any] | None = None,
 ) -> str:
     """User-промпт плана: блоки в порядке, в котором их читает модель.
 
     КОНТЕКСТ (дата, фаза с параметрами, неделя блока, дней с последней
-    тренировки, идущее событие) → недельный объём по группам с целями → явка →
-    замеры и матрица питания → сводки по упражнениям → предусловия и застой →
-    на возврате доперерывные веса и ступени разгона → дисциплина (факт против
-    плана) → сырая история последних тренировок вперемешку с событиями → задача.
-    Без ``events=`` хроника и открытое событие молча выключаются, поэтому каждый
-    живой вызыватель проверяется отдельным тестом. Зовут
+    тренировки, идущее событие) → объём за 7 дней (темп) и за круг из четырёх
+    тренировок с целями по группам → явка с темпом за 14 дней → замеры и матрица
+    питания → сводки по упражнениям → предусловия и застой → на возврате
+    доперерывные веса и ступени разгона → дисциплина (факт против плана) →
+    прошлая карточка тренера (``previous`` — строка кэша совета) → сырая история
+    последних тренировок вперемешку с событиями → задача. Без ``events=`` хроника
+    и открытое событие молча выключаются, без ``previous=`` — память карточки,
+    поэтому каждый живой вызыватель проверяется отдельным тестом. Зовут
     ``recommender.generate_with_trace`` и Coach MCP.
     """
     state = state if state is not None else coach_state.default_state()
@@ -636,13 +746,8 @@ def _build_user_prompt(
         )
     chunks = ["=== КОНТЕКСТ ===\n" + "\n".join(context_lines)]
 
-    volume = coach_features.weekly_volume(workouts, today)
     maintenance_sets = params.get("sets_per_group") if phase == "maintenance" else None
-    chunks.append(
-        _block("volume_header")
-        + "\n"
-        + render_weekly_volume(volume, week_target, maintenance_sets, params.get("group_targets"))
-    )
+    chunks.extend(_render_volume(workouts, today, week_target, maintenance_sets, params))
     chunks.append(_render_attendance(workouts, today))
 
     measurement_lines = render_measurements(body_weights, waists, today)
@@ -691,6 +796,12 @@ def _build_user_prompt(
         discipline_lines.append(adherence)
     if discipline_lines:
         chunks.append("\n".join(discipline_lines))
+
+    # Память карточки о себе: обещание прошлого совета следующая карточка обязана
+    # прочитать, иначе «связная система» распадается на сессии в вакууме.
+    card = _render_previous_card(previous, workouts)
+    if card:
+        chunks.append(card)
 
     raw_count = min(history_limit, RAW_HISTORY_COUNT)
     shown_events, dropped_events = _clip_events(events)
@@ -892,7 +1003,8 @@ def _build_report_prompt(
     по весу) → фокус из прошлого отчёта, если он передан → тренировки периода
     хроникой (с той же легендой, что у плана) →
     события периода (пустой блок тоже нужен: «событий нет» значит, что пропуски
-    ничем не объяснены) → объём с итогом за период и за неделю до него → явка →
+    ничем не объяснены) → объём за 7 дней с итогом за период и за неделю до него
+    и объём за круг из четырёх тренировок с целями → явка с темпом →
     ПР периода → сводки по тренажёрам → предусловия и застой → замеры (с
     7-дневной средней), обхваты, матрица питания и оценка TDEE → дисциплина → что дальше
     (разгрузка сейчас, скоро или цель следующей недели) → задача. Зовёт
@@ -999,20 +1111,17 @@ def _build_report_prompt(
         else coach_state.weekly_volume_target(state, position["cycle_week"])
     )
     maintenance_sets = params.get("sets_per_group") if params["phase"] == "maintenance" else None
-    chunks.append(
+    volume_chunks = _render_volume(workouts, today, week_target, maintenance_sets, params)
+    volume_chunks[0] = volume_chunks[0].replace(
+        _block("volume_header"),
         _block(
             "report_volume_header",
             total=str(coach_features.sets_in_window(workouts, today)),
             previous=str(coach_features.sets_in_window(workouts, today - timedelta(days=7))),
-        )
-        + "\n"
-        + render_weekly_volume(
-            coach_features.weekly_volume(workouts, today),
-            week_target,
-            maintenance_sets,
-            params.get("group_targets"),
-        )
+        ),
+        1,
     )
+    chunks.extend(volume_chunks)
     chunks.append(_render_attendance(workouts, today))
 
     summaries = coach_features.exercise_summaries(workouts, catalog, today)
@@ -1172,10 +1281,10 @@ def render_weekly_volume(
         lines.append(line)
     if group_targets:
         lines.append(
-            "  Цели — в ПРЯМЫХ сетах и на объём ЗРЕЛОГО блока по программе; на неделях "
-            "разгона идём к ним снизу, ориентир недели — в разделе ПРОГРАММА. Эффективные "
-            "сеты справочные: показывают, сколько косвенной работы группа уже получила, "
-            "но цель не закрывают."
+            "  Цели — в ПРЯМЫХ сетах на круг из четырёх тренировок (один проход каркаса; по "
+            "программе это неделя четырёхдневки) и на объём ЗРЕЛОГО блока; на неделях разгона "
+            "идём к ним снизу, ориентир — в разделе ПРОГРАММА. Эффективные сеты справочные: "
+            "показывают, сколько косвенной работы группа уже получила, но цель не закрывают."
         )
     elif week_target:
         small = ", ".join(
@@ -1183,7 +1292,7 @@ def render_weekly_volume(
             for group, (low, high) in coach_features.SMALL_GROUP_TARGETS.items()
         )
         lines.append(
-            f"  Цель этой недели блока для крупных групп: {week_target[0]}–{week_target[1]} "
+            f"  Цель круга (недели блока) для крупных групп: {week_target[0]}–{week_target[1]} "
             f"эффективных сетов; ориентиры малых групп (прямых): {small}."
         )
     elif maintenance_sets:
@@ -1201,12 +1310,13 @@ def render_stall_report(report: dict[str, Any]) -> str:
     """
     volume = ", ".join(
         f"{group} {value:.1f} (порог {threshold:g})"
-        for group, (value, threshold) in report["volume_per_week"].items()
+        for group, (value, threshold) in report["volume_per_round"].items()
     )
     facts = (
         f"Активное окно {report['window_days']} дн. (с {report['window_start'].isoformat()}; "
         "перерыв ≥14 дней и прошлая фаза в него не входят): "
-        f"частота {report['frequency']:.1f}/нед; прямых сетов/нед: {volume}."
+        f"частота {report['frequency']:.1f}/нед; прямых сетов за круг из "
+        f"{coach_features.ROUND_SESSIONS} тренировок: {volume}."
     )
     if report["too_short"]:
         verdict = (

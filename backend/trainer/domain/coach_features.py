@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
+from collections.abc import Callable
 from datetime import date, timedelta
 from itertools import pairwise
 from typing import Any
@@ -85,6 +86,12 @@ EFFECTIVE_SETS: dict[int, dict[str, float]] = {
 
 BIG_GROUPS = ("грудь", "спина", "квадрицепс/ягодичные")
 
+# Круг каркаса. Программа написана под четыре тренировки в неделю, и её цели по
+# группам — объём одного прохода Д1–Д4. Атлет ходит через день, календарные
+# недели чередуются 4/3, поэтому объём против целей судится за КРУГ из четырёх
+# последних тренировок, а не за семь дней (стратегия §4, program_header).
+ROUND_SESSIONS = 4
+
 # Недельные ориентиры прямых сетов для малых групп (политика из системного
 # промпта); крупные группы вместо этого идут по ramp недели блока.
 SMALL_GROUP_TARGETS: dict[str, tuple[int, int]] = {
@@ -143,17 +150,29 @@ STALE_MEASUREMENT_DAYS = 14
 # которого нет.
 STALL_WINDOW_DAYS = 42  # 6 недель
 STALL_MIN_WEEKLY_FREQUENCY = 2.5  # сессий в неделю по активному окну
-STALL_MIN_WEEKLY_SETS = 10.0  # на КРУПНУЮ группу, если фаза не задала цель по группам
+STALL_MIN_ROUND_SETS = 10.0  # на КРУПНУЮ группу за круг, если фаза не задала цель по группам
 STALL_MIN_WINDOW_DAYS = 21  # меньше трёх недель — судить ещё не о чем
 STALL_NO_PR_DAYS = 28  # ≥4 недели без улучшения ВНУТРИ окна
 STALL_MIN_EXERCISE_SESSIONS = 3  # не застоится движение, которое почти не делают
-# Допуск темпа веса вокруг коридора фазы (кг/нед), общий для предусловий и
-# матрицы питания.
-RATE_TOLERANCE = 0.15
+# Контур коррекции калорий — стратегия, глава «Питание». Полоса
+# нечувствительности вокруг коридора темпа фазы: ±0.12 кг/нед, абсолютная, а не
+# процент от темпа (при дневном разбросе веса ~0.5 кг процентная полоса
+# срабатывала бы ложно в трёх проверках из четырёх). Общая для предусловий
+# застоя и матрицы питания.
+RATE_TOLERANCE = 0.12
+# Окно подтверждения отклонения — разница 7-дневных средних с таким интервалом:
+# две недели в дефиците и на удержании, четыре в наборах (набор медленнее и
+# шумнее, две недели там путают воду с профицитом).
+CONFIRM_WINDOW_DAYS = 14
+CONFIRM_WINDOW_DAYS_GAINING = 28
+# Шаг калорий по режиму: ±150 в дефиците, ±75 в наборах («не больше половины
+# текущего профицита»); на удержании стратегия шага не задаёт — 100, середина.
+CALORIE_STEP_KCAL = {"cutting": 150, "gaining": 75, "holding": 100}
+_WEEKS_WORD = {2: "двух", 4: "четырёх"}
 # Сколько дней после недели поддержки матрица ещё молчит: ровно окно её
-# подтверждения — разница 7-дневных средних с интервалом две недели — иначе
+# подтверждения в дефиците (недели поддержки бывают только там) — иначе
 # «вторым свидетелем» отклонения оказалась бы сама неделя поддержки.
-SUPPORT_WEEK_SETTLE_DAYS = 14
+SUPPORT_WEEK_SETTLE_DAYS = CONFIRM_WINDOW_DAYS
 
 _EFFORT_MARK = {"easy": "-", "ok": "", "hard": "+"}
 
@@ -447,13 +466,12 @@ def exercise_summaries(
 # --------------------------------------------------------------------------- #
 # Недельный объём в прямых и эффективных сетах (4.4)
 # --------------------------------------------------------------------------- #
-def weekly_volume(
-    workouts: list[dict[str, Any]], today: date, days: int = 7
+def _volume_over(
+    workouts: list[dict[str, Any]], keep: Callable[[date], bool]
 ) -> dict[str, dict[str, float]]:
-    """Объём за последние ``days`` дней по группам: ``{группа: {"direct": прямые
-    сеты, "effective": эффективные с долями косвенной нагрузки}}``. Зовут
-    ``prompt_builder``, ``stall_report`` и ``plan_validator`` (покрытие групп).
-    """
+    """Объём по группам за тренировки, чью дату пропускает ``keep``: ``{группа:
+    {"direct": прямые сеты, "effective": эффективные с долями косвенной нагрузки}}``.
+    Один обход для недели и для круга."""
     volume = {group: {"direct": 0, "effective": 0.0} for group in MUSCLE_GROUPS}
     group_of: dict[int, str] = {}
     for group, ids in MUSCLE_GROUPS.items():
@@ -462,7 +480,7 @@ def weekly_volume(
 
     for workout in workouts:
         when = _workout_date(workout)
-        if when is None or when > today or (today - when).days > days - 1:
+        if when is None or not keep(when):
             continue
         for exercise in (workout.get("data", {}) or {}).get("exercises", []) or []:
             exercise_id = canonical_exercise_id(exercise.get("exercise_id"))
@@ -477,6 +495,53 @@ def weekly_volume(
             for group, weight in (EFFECTIVE_SETS.get(exercise_id) or {}).items():
                 volume[group]["effective"] += set_count * weight
     return volume
+
+
+def weekly_volume(
+    workouts: list[dict[str, Any]], today: date, days: int = 7
+) -> dict[str, dict[str, float]]:
+    """Объём за последние ``days`` дней по группам — темп календарной недели.
+    Зовут ``prompt_builder``, ``stall_report`` и ``plan_validator`` (покрытие групп).
+    """
+    return _volume_over(workouts, lambda when: 0 <= (today - when).days <= days - 1)
+
+
+def training_days(workouts: list[dict[str, Any]], today: date) -> list[date]:
+    """Даты тренировок не позже ``today`` без дублей, от старых к новым."""
+    days = {
+        when
+        for when in (_workout_date(workout) for workout in workouts)
+        if when is not None and when <= today
+    }
+    return sorted(days)
+
+
+def round_volume(
+    workouts: list[dict[str, Any]], today: date, sessions: int = ROUND_SESSIONS
+) -> tuple[dict[str, dict[str, float]], list[date]]:
+    """Объём по группам за КРУГ — последние ``sessions`` тренировочных дней не
+    позже ``today`` — и сами эти дни от старых к новым (пусто без тренировок).
+
+    Цели по группам сравниваются с ним, а не с календарной неделей: у атлета,
+    который ходит через день, круг каркаса Д1–Д4 занимает восемь дней, и неделя из
+    трёх сессий читалась бы как недобор. Зовёт ``prompt_builder`` (план и отчёт).
+    """
+    days = training_days(workouts, today)[-sessions:] if sessions > 0 else []
+    chosen = set(days)
+    return _volume_over(workouts, lambda when: when in chosen), days
+
+
+def sessions_in_window(workouts: list[dict[str, Any]], today: date, days: int = 14) -> int:
+    """Тренировочных дней за последние ``days`` дней до ``today`` включительно —
+    темп, по которому program_header держит ротацию каркаса включённой."""
+    return sum(1 for when in training_days(workouts, today) if (today - when).days < days)
+
+
+def recent_intervals(workouts: list[dict[str, Any]], today: date, count: int = 5) -> list[int]:
+    """Интервалы в днях между последними ``count + 1`` тренировочными днями, от
+    старых к новым: «2, 2, 2» — атлет ходит через день. Меньше двух дней — пусто."""
+    days = training_days(workouts, today)[-(count + 1) :]
+    return [(later - earlier).days for earlier, later in pairwise(days)]
 
 
 def sets_in_window(workouts: list[dict[str, Any]], today: date, days: int = 7) -> int:
@@ -559,10 +624,13 @@ def stall_report(
     не «потолком».
 
     ``since`` — старт текущего блока (начало фазы или первая сессия после перерыва
-    ≥14 дней): окно через него не переходит, и отпуск не разбавляет частоту. Пороги
-    объёма — нижние границы целей по группам самой фазы, если она их называет: цель
-    квадрицепса 8–10 нельзя судить по плоским 10. Возвращает факты окна, причины и
-    список застоявшихся упражнений. Зовёт ``prompt_builder._render_stall``.
+    ≥14 дней): окно через него не переходит, и отпуск не разбавляет частоту. Объём
+    считается за КРУГ из ``ROUND_SESSIONS`` тренировок (сеты окна, делённые на число
+    кругов в нём), а не за календарную неделю: цели программы — объём одного прохода
+    каркаса, и атлет через день иначе вечно «недобирал» бы. Пороги — нижние границы
+    целей по группам самой фазы, если она их называет: цель квадрицепса 8–10 нельзя
+    судить по плоским 10. Возвращает факты окна, причины и список застоявшихся
+    упражнений. Зовёт ``prompt_builder._render_stall``.
     """
     window_start = today - timedelta(days=STALL_WINDOW_DAYS - 1)
     if since is not None and window_start < since <= today:
@@ -578,24 +646,26 @@ def stall_report(
     frequency = len(window_dates) / weeks
 
     volume = weekly_volume(workouts, today, days=window_days)
-    volume_per_week: dict[str, tuple[float, float]] = {}
+    rounds = len(window_dates) / ROUND_SESSIONS
+    volume_per_round: dict[str, tuple[float, float]] = {}
     for group in BIG_GROUPS:
-        threshold = STALL_MIN_WEEKLY_SETS
+        threshold = STALL_MIN_ROUND_SETS
         target = (group_targets or {}).get(group)
         if isinstance(target, (list, tuple)) and len(target) == 2:
             threshold = float(target[0])
-        volume_per_week[group] = (volume[group]["direct"] / weeks, threshold)
+        per_round = volume[group]["direct"] / rounds if rounds else 0.0
+        volume_per_round[group] = (per_round, threshold)
 
     reasons: list[str] = []
     if frequency < STALL_MIN_WEEKLY_FREQUENCY:
         reasons.append(f"частота {frequency:.1f}/нед (нужно ≥{STALL_MIN_WEEKLY_FREQUENCY:g})")
     low_groups = [
         f"{group} {value:.1f} < {threshold:g}"
-        for group, (value, threshold) in volume_per_week.items()
+        for group, (value, threshold) in volume_per_round.items()
         if value < threshold
     ]
     if low_groups:
-        reasons.append("объём/нед ниже порога: " + ", ".join(low_groups))
+        reasons.append("объём за круг ниже порога: " + ", ".join(low_groups))
 
     if trend is None:
         reasons.append("нет свежего тренда веса")
@@ -639,7 +709,7 @@ def stall_report(
         "window_start": window_start,
         "window_days": window_days,
         "frequency": frequency,
-        "volume_per_week": volume_per_week,
+        "volume_per_round": volume_per_round,
         "too_short": too_short,
         "preconditions_ok": ok,
         "reasons": reasons,
@@ -1093,12 +1163,27 @@ def nutrition_matrix(
             "замера талии за последние 14 дней нет — попроси замерить (утром натощак, по пупку)"
         )
 
-    trend = weight_trend_per_week(weights, today, since=phase_start)
+    # Ветки привязаны к недельному КОРИДОРУ веса фазы, никогда к её имени:
+    # «Ф0 · возврат» — это cut_recomp, который просит ДЕРЖАТЬ вес, и матрица,
+    # читающая имя, срезала бы калории за правильное поведение.
+    rate_low, rate_high = _rate_bounds(params.get("rate_kg_per_week"), phase)
+    holding = rate_low <= 0.0 <= rate_high
+    cutting = rate_high < 0.0
+    gaining = rate_low > 0.0
+    step = CALORIE_STEP_KCAL["gaining" if gaining else "cutting" if cutting else "holding"]
+    # Окно подтверждения — по режиму: набор ждёт четыре недели, остальные две.
+    window = CONFIRM_WINDOW_DAYS_GAINING if gaining else CONFIRM_WINDOW_DAYS
+    weeks = window // 7
+    corridor = f"{rate_low:+.2f}…{rate_high:+.2f} кг/нед, допуск ±{RATE_TOLERANCE:.2f}"
 
-    # Вес: текущая 7-дневная средняя против средней две недели назад → «стоит / движется».
+    trend = weight_trend_per_week(
+        weights, today, since=phase_start, window_days=max(TREND_WINDOW_DAYS, window)
+    )
+
+    # Вес: текущая 7-дневная средняя против средней окно назад → «стоит / движется».
     ma_now = moving_average(weights, today)
-    ma_before = moving_average(weights, today - timedelta(days=14))
-    stalled_2w = (
+    ma_before = moving_average(weights, today - timedelta(days=window))
+    stalled = (
         trend is not None
         and ma_now is not None
         and ma_before is not None
@@ -1113,15 +1198,6 @@ def nutrition_matrix(
     waist_base = state.get("waist_base_cm")
     waist_limit = state.get("waist_limit_cm")
     last_waist = waist[-1][1] if waist else None
-
-    # Ветки привязаны к недельному КОРИДОРУ веса фазы, никогда к её имени:
-    # «Ф0 · возврат» — это cut_recomp, который просит ДЕРЖАТЬ вес, и матрица,
-    # читающая имя, срезала бы калории за правильное поведение.
-    rate_low, rate_high = _rate_bounds(params.get("rate_kg_per_week"), phase)
-    holding = rate_low <= 0.0 <= rate_high
-    cutting = rate_high < 0.0
-    gaining = rate_low > 0.0
-    corridor = f"{rate_low:+.2f}…{rate_high:+.2f} кг/нед, допуск ±{RATE_TOLERANCE:.2f}"
 
     if fresh_weight:
         trend_missing_line = (
@@ -1161,13 +1237,13 @@ def nutrition_matrix(
             ):
                 lines.append(
                     f"талия +1 см от базовой ({waist_base:g} см) два замера подряд — "
-                    "посоветуй −100–150 ккал или паузу набора"
+                    f"посоветуй −{CALORIE_STEP_KCAL['gaining']} ккал или паузу набора"
                 )
                 weight_line_due = False
 
         # Неделя поддержки (стратегия §3/§7): пока она идёт и пока окно
-        # подтверждения матрицы (две недели) захватывает её, советов по
-        # калориям нет — остановка или рост веса тут запланированы.
+        # подтверждения матрицы захватывает её, советов по калориям нет —
+        # остановка или рост веса тут запланированы.
         if weight_line_due and support is not None:
             lines.append(
                 f"НЕДЕЛЯ ПОДДЕРЖКИ по плану ({support[0].isoformat()} – "
@@ -1187,16 +1263,19 @@ def nutrition_matrix(
         if weight_line_due:
             if trend is None:
                 lines.append(trend_missing_line)
-            elif stalled_2w and holding:
-                lines.append("вес стоит ≥2 недель — это и есть задача этапа, калории НЕ трогай")
-            elif stalled_2w and cutting and fresh_waist and waist_down:
+            elif stalled and holding:
                 lines.append(
-                    "вес стоит ≥2 недель, но талия идёт вниз — это рекомп-бонус, калории НЕ снижай"
+                    f"вес стоит ≥{weeks} недель — это и есть задача этапа, калории НЕ трогай"
                 )
-            elif stalled_2w and cutting:
-                lines.append("вес стоит ≥2 недель — посоветуй −100–150 ккал")
-            elif stalled_2w:
-                lines.append("вес стоит ≥2 недель при плане набора — посоветуй +100–150 ккал")
+            elif stalled and cutting and fresh_waist and waist_down:
+                lines.append(
+                    f"вес стоит ≥{weeks} недель, но талия идёт вниз — это рекомп-бонус, "
+                    "калории НЕ снижай"
+                )
+            elif stalled and cutting:
+                lines.append(f"вес стоит ≥{weeks} недель — посоветуй −{step} ккал")
+            elif stalled:
+                lines.append(f"вес стоит ≥{weeks} недель при плане набора — посоветуй +{step} ккал")
             else:
                 lines.append(
                     _rate_line(
@@ -1208,6 +1287,8 @@ def nutrition_matrix(
                         ma_before,
                         cutting=cutting,
                         gaining=gaining,
+                        weeks=weeks,
+                        step=step,
                     )
                 )
 
@@ -1224,35 +1305,41 @@ def _rate_line(
     *,
     cutting: bool,
     gaining: bool,
+    weeks: int,
+    step: int,
 ) -> str:
     """Ветка тренда веса относительно коридора фазы.
 
     Смена калорий требует отклонения, подтверждённого двумя независимыми
-    показаниями — наклоном за 3 недели И разницей 7-дневных средних с интервалом в
-    две недели, — это и значит «две недели подряд» без хранения сервером истории
-    своих вердиктов. Без подтверждения строка называет отклонение и просит
-    взвешиваться ежедневно вместо числа.
+    показаниями — наклоном за окно И разницей 7-дневных средних с интервалом в
+    ``weeks`` недель (две в дефиците и на удержании, четыре в наборе), — это и
+    значит «два выхода за полосу подряд» без хранения сервером истории своих
+    вердиктов. Без подтверждения строка называет отклонение и просит взвешиваться
+    ежедневно вместо числа; ``step`` — шаг калорий режима из стратегии.
     """
     if rate_low - RATE_TOLERANCE <= trend <= rate_high + RATE_TOLERANCE:
         return f"тренд веса {trend:+.2f} кг/нед — в коридоре фазы ({corridor}), калории не трогай"
     above = trend > rate_high + RATE_TOLERANCE
-    two_week = (ma_now - ma_before) / 2 if ma_now is not None and ma_before is not None else None
-    confirmed = two_week is not None and (
-        two_week > rate_high + RATE_TOLERANCE if above else two_week < rate_low - RATE_TOLERANCE
+    per_week = (
+        (ma_now - ma_before) / weeks if ma_now is not None and ma_before is not None else None
+    )
+    confirmed = per_week is not None and (
+        per_week > rate_high + RATE_TOLERANCE if above else per_week < rate_low - RATE_TOLERANCE
     )
     side = "выше" if above else "ниже"
+    word = _WEEKS_WORD.get(weeks, str(weeks))
     if not confirmed:
         return (
             f"тренд веса {trend:+.2f} кг/нед {side} коридора фазы ({corridor}), но средние "
-            "двух недель этого ещё не подтверждают — калории не трогай, взвешиваться ежедневно"
+            f"{word} недель этого ещё не подтверждают — калории не трогай, взвешиваться ежедневно"
         )
     if above:
-        advice = "−100–150 ккал" + (" или паузу набора" if gaining else "")
+        advice = f"−{step} ккал" + (" или паузу набора" if gaining else "")
     else:
-        advice = "+100–150 ккал" + (" или неделю поддержки" if cutting else "")
+        advice = f"+{step} ккал" + (" или неделю поддержки" if cutting else "")
     return (
         f"тренд веса {trend:+.2f} кг/нед {side} коридора фазы ({corridor}) и по средним "
-        f"двух недель тоже — посоветуй {advice}"
+        f"{word} недель тоже — посоветуй {advice}"
     )
 
 

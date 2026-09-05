@@ -65,6 +65,7 @@ def generate_with_trace(
     strategy: str | None = None,
     waists: list[dict[str, Any]] | None = None,
     events: list[dict[str, Any]] | None = None,
+    previous: dict[str, Any] | None = None,
     today: date | None = None,
     model: str = DEFAULT_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -81,7 +82,9 @@ def generate_with_trace(
     (``plan_validator.violations``) → при нарушениях один исправляющий репромпт в
     том же разговоре → если модель промахнулась снова, детерминированное разрешение
     (``plan_validator.resolve``) с пометкой в rationale → дата следующей тренировки и
-    ``coach_context`` для клиента. Семантические нарушения никогда не роняют
+    ``coach_context`` для клиента. ``previous`` — строка кэша прошлого совета
+    (``store.get_recommendation``): из неё в промпт уходит память карточки о себе,
+    без неё блок молча выключен. Семантические нарушения никогда не роняют
     генерацию: ``RecommendationError`` только для API и структурных сбоев.
     Зовут :func:`generate` и ``coach_debug_recommendation`` в Coach MCP.
     """
@@ -110,6 +113,7 @@ def generate_with_trace(
         state=state,
         waists=waists,
         events=events,
+        previous=previous,
     )
     schema = prompt_builder._build_schema(catalog)
 
@@ -228,6 +232,7 @@ def generate(
     strategy: str | None = None,
     waists: list[dict[str, Any]] | None = None,
     events: list[dict[str, Any]] | None = None,
+    previous: dict[str, Any] | None = None,
     today: date | None = None,
     model: str = DEFAULT_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -252,6 +257,7 @@ def generate(
         strategy=strategy,
         waists=waists,
         events=events,
+        previous=previous,
         today=today,
         model=model,
         max_tokens=max_tokens,

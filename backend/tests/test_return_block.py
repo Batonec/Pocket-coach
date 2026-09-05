@@ -45,13 +45,14 @@ class ActiveWindowTests(unittest.TestCase):
         self.assertFalse(any("частота" in reason for reason in self.report["reasons"]))
 
     def test_volume_is_judged_against_the_phase_targets(self) -> None:
-        per_week = self.report["volume_per_week"]
-        self.assertEqual(per_week["квадрицепс/ягодичные"][1], 8)  # не плоские 10
-        self.assertEqual(per_week["грудь"][1], 12)
+        per_round = self.report["volume_per_round"]
+        self.assertEqual(per_round["квадрицепс/ягодичные"][1], 8)  # не плоские 10
+        self.assertEqual(per_round["грудь"][1], 12)
         text = prompt_builder.render_stall_report(self.report)
         self.assertIn("Активное окно 23 дн. (с 2026-08-14", text)
         self.assertIn("частота 2.7/нед", text)
-        self.assertIn("грудь 10.7 (порог 12)", text)
+        self.assertIn("прямых сетов за круг из 4 тренировок", text)
+        self.assertIn("грудь 15.6 (порог 12)", text)  # 9 сессий = 2.25 круга
         self.assertNotIn("за 6 недель", text)
         self.assertNotIn("среза", text)
 
@@ -94,7 +95,7 @@ class NutritionByRateTests(unittest.TestCase):
         )
         line = " ".join(result["lines"])
         self.assertIn("выше коридора фазы", line)
-        self.assertIn("−100–150 ккал", line)
+        self.assertIn("−100 ккал", line)  # шаг удержания
         self.assertNotIn("сверь с целевым темпом", line)
         self.assertGreater(result["trend_per_week"], 0.25)
 
@@ -190,7 +191,11 @@ class AssembledPromptTests(unittest.TestCase):
         )
         self.assertIn("Тренировки по календарным неделям", prompt)
         self.assertIn("Активное окно 23 дн.", prompt)
-        self.assertIn("бицепс: 5 прямых (цель 10–12) / 10.5 эффективных (справочно)", prompt)
+        # Неделя — темп без целей; цели стоят у круга из четырёх последних тренировок.
+        self.assertIn("бицепс: 5 прямых / 10.5 эффективных\n", prompt)
+        self.assertIn("Объём за КРУГ — последние 4 тренировки (2026-08-28 – 2026-09-03)", prompt)
+        self.assertIn("бицепс: 9 прямых (цель 10–12) / 17 эффективных (справочно)", prompt)
+        self.assertIn("Темп: 6 тренировок за последние 14 дней", prompt)
         self.assertIn("выше коридора фазы", prompt)
         self.assertIn("[#6/6] 40×12", prompt)
         self.assertIn("2026-08-24 [без плана]", prompt)

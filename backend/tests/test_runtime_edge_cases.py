@@ -245,6 +245,8 @@ class ServerPureHelperTests(unittest.TestCase):
         store.list_body_weights.return_value = weights
         store.list_waists.return_value = waists
         store.list_events.return_value = events
+        previous = {"status": "pending", "recommendation": {"focus": "прошлая"}}
+        store.get_recommendation.return_value = previous
         store.save_recommendation.return_value = {"status": "ready"}
         generated = ({"focus": "test"}, {"input_tokens": 11, "output_tokens": 7}, "model")
 
@@ -268,6 +270,7 @@ class ServerPureHelperTests(unittest.TestCase):
             state={"phase": "x"},
             waists=waists,
             events=events,
+            previous=previous,
         )
         store.save_recommendation.assert_called_once_with(
             12, 8, 1, "model", {"focus": "test"}, 11, 7
@@ -919,6 +922,7 @@ class CoachMcpBoundaryTests(unittest.TestCase):
         store.list_body_weights.return_value = [{"weight": 80}]
         store.list_waists.return_value = [{"waist": 84}]
         store.list_events.return_value = [{"text": "break"}]
+        store.get_recommendation.return_value = {"status": "none", "recommendation": None}
         self.module.STORE = store
         generated = (
             {"focus": "next"},
@@ -946,6 +950,7 @@ class CoachMcpBoundaryTests(unittest.TestCase):
             state={},
             waists=[{"waist": 84}],
             events=[{"text": "break"}],
+            previous={"status": "none", "recommendation": None},
             history_limit=6,
         )
 
