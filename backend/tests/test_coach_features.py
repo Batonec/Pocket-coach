@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 import support  # noqa: F401 — adds backend to sys.path
 
-from trainer.coach import coach_features, coach_state
+from trainer import coach_features, coach_state
 
 CATALOG = [
     {"id": 18, "name": "Жим в тренажере"},

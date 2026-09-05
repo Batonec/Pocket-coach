@@ -4,7 +4,7 @@ import unittest
 
 import support  # noqa: F401 — adds backend to sys.path
 
-from trainer.coach import plan_validator
+from trainer import plan_validator
 
 CATALOG = [
     {"id": 8, "name": "Жим ногами"},
@@ -229,7 +229,7 @@ class CoverageAndDeloadValidatorTests(unittest.TestCase):
         from datetime import date as _date
         from datetime import timedelta as _timedelta
 
-        from trainer.coach import coach_state
+        from trainer import coach_state
 
         start = _date(2026, 5, 1)
         state = dict(coach_state.DEFAULT_STATE, phase_started=start.isoformat())
@@ -524,7 +524,7 @@ class ReturnCeilingTests(unittest.TestCase):
         self.assertFalse(any("не место для прибавки" in v for v in violations))
 
     def test_prompt_states_facts_without_prescribing_numbers(self) -> None:
-        from trainer.coach import coach_features
+        from trainer import coach_features
 
         text = coach_features.render_pre_break_weights(
             coach_features.pre_break_working_weights(self._history(), self.CATALOG), 21

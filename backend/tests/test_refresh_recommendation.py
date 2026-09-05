@@ -9,8 +9,10 @@ import support  # noqa: F401
 from support import sample_workout_payload
 
 from infra.jobs import refresh_recommendation as refresh
-from trainer import backend_store  # support puts backend/ on sys.path
-from trainer.coach import recommender
+from trainer import (
+    backend_store,  # support puts backend/ on sys.path
+    recommender,
+)
 
 NOW = int(time.time())
 HOUR = 3600
