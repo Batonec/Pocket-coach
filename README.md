@@ -9,7 +9,7 @@
 
 <sub><i>Pocket AI strength coach — a SwiftUI app, a self-hosted stdlib-Python backend and next-workout plans written by Claude.</i></sub>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/Batonec/Pocket-coach/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/Batonec/Pocket-coach/actions/workflows/ci.yml) ![iOS](https://img.shields.io/badge/iOS-SwiftUI-FF4D1F?style=flat-square) ![Backend](https://img.shields.io/badge/Python_3.13-stdlib_only-2E3138?style=flat-square) ![DB](https://img.shields.io/badge/SQLite-one_file-2E3138?style=flat-square) ![LLM](https://img.shields.io/badge/Claude-Opus_5-FF4D1F?style=flat-square) ![MCP](https://img.shields.io/badge/MCP-coach__mcp-2E3138?style=flat-square)
+[![CI](https://img.shields.io/github/actions/workflow/status/Batonec/Pocket-coach/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/Batonec/Pocket-coach/actions/workflows/ci.yml) ![iOS](https://img.shields.io/badge/iOS-SwiftUI-FF4D1F?style=flat-square) ![Backend](https://img.shields.io/badge/Python_3.10+-stdlib_only-2E3138?style=flat-square) ![DB](https://img.shields.io/badge/SQLite-one_file-2E3138?style=flat-square) ![LLM](https://img.shields.io/badge/Claude-Opus_5-FF4D1F?style=flat-square) ![MCP](https://img.shields.io/badge/MCP-coach__mcp-2E3138?style=flat-square)
 
 <img src="docs/assets/hero.webp" width="880" alt="Совет тренера, активная тренировка и экран прогресса">
 
@@ -135,7 +135,7 @@ Claude Desktop ──MCP──►  coach_mcp/server.py  ────────
 
 Валидатор проверяет **ровно три жёсткие границы**: покрытие мышечных групп, возвратный потолок весов после перерыва и потолок размера сессии фазы. Диапазоны повторов, нижняя граница сессии и чередование нагрузок сознательно не проверяются — это суждение модели, направляемое промптом, а не константы в коде.
 
-**Backend — чистый stdlib Python 3.13**: ни зависимостей, ни venv, ни фреймворка; Claude API вызывается через `urllib`. Тестов — **363 на backend и 146 на iOS**, и это единственный автоматический гейт перед деплоем.
+**Backend — чистый stdlib Python 3.10+**: ни зависимостей, ни venv, ни фреймворка; Claude API вызывается через `urllib`. Тестов — **363 на backend и 146 на iOS**, и это единственный автоматический гейт перед деплоем.
 
 ## Документация
 

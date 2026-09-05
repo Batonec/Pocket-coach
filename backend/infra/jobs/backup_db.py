@@ -21,7 +21,7 @@ import os
 import shutil
 import sqlite3
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[2]  # backend/: там data/ и resources/
@@ -75,7 +75,9 @@ def main() -> None:
         print(f"[backup] база не найдена: {DB_PATH}", file=sys.stderr)
         sys.exit(1)
 
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    # timezone.utc, а не datetime.UTC: на VPS системный Python 3.10, где UTC ещё
+    # нет, и таймер падал бы на импорте (так и было три недели в августе 2026).
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     gz_path = make_backup(DB_PATH, BACKUP_DIR, stamp)
     size_kb = gz_path.stat().st_size / 1024
     print(f"[backup] создан {gz_path.name} ({size_kb:.0f} КБ)")
