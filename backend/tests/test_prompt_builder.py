@@ -48,6 +48,7 @@ class CoachContextTests(unittest.TestCase):
     def test_plan_adherence_report_compares_fact_vs_plan(self) -> None:
         workouts = [self._workout("2026-06-10", 18, 3, with_snapshot=True)]
         report = prompt_builder._plan_adherence_report(workouts)
+        assert report is not None
         self.assertIn("3/5", report)  # 3 из 5 плановых сетов выполнены
         self.assertIn("пропущено", report)  # сгибания ног пропущены
 

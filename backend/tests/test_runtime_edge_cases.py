@@ -17,10 +17,12 @@ import threading
 import types
 import unittest
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import support
@@ -71,7 +73,7 @@ class _FakeFastMCP:
 
 
 @contextmanager
-def loaded_coach_mcp(temp_dir: Path):
+def loaded_coach_mcp(temp_dir: Path) -> Iterator[Any]:
     """Импортировать coach_mcp/server.py с крошечными stdlib-стабами типов mcp.
 
     Боевая зависимость намеренно не установлена в тестовом окружении backend.
@@ -89,9 +91,9 @@ def loaded_coach_mcp(temp_dir: Path):
 
     mcp_package = types.ModuleType("mcp")
     mcp_server_package = types.ModuleType("mcp.server")
-    fastmcp_module = types.ModuleType("mcp.server.fastmcp")
-    security_module = types.ModuleType("mcp.server.transport_security")
-    types_module = types.ModuleType("mcp.types")
+    fastmcp_module: Any = types.ModuleType("mcp.server.fastmcp")
+    security_module: Any = types.ModuleType("mcp.server.transport_security")
+    types_module: Any = types.ModuleType("mcp.types")
     fastmcp_module.FastMCP = _FakeFastMCP
     security_module.TransportSecuritySettings = _Record
     types_module.CallToolResult = _Record

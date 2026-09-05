@@ -1,0 +1,17 @@
+{
+  // Проверяются backend и coach_mcp; ios/ и design/ — не Python.
+  "include": ["backend", "coach_mcp"],
+  "exclude": ["**/__pycache__", "backend/data"],
+  // 3.10 — версия системного Python на VPS: 3.11+ API должен падать здесь, а не там.
+  "pythonVersion": "3.10",
+  "pythonPlatform": "Linux",
+  "typeCheckingMode": "standard",
+  // Тесты импортируют support из своей папки и backend-модули из backend/;
+  // скрипты таймеров и coach_mcp кладут backend/ в sys.path сами.
+  "executionEnvironments": [
+    { "root": "backend/tests", "extraPaths": ["backend", "backend/tests"] },
+    { "root": "backend/infra/jobs", "extraPaths": ["backend"] },
+    { "root": "backend", "extraPaths": ["backend"] },
+    { "root": "coach_mcp", "extraPaths": ["backend"] }
+  ]
+}

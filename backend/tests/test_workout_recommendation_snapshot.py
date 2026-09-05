@@ -52,6 +52,7 @@ class NormalizeSnapshotTests(unittest.TestCase):
 
     def test_valid_snapshot_passes_with_defaults(self) -> None:
         out = rules.normalize_recommendation_snapshot(sample_snapshot())
+        assert out is not None
         self.assertIsNotNone(out)
         self.assertEqual(out["schema"], 1)
         self.assertEqual(out["source"], "coach")
@@ -62,6 +63,7 @@ class NormalizeSnapshotTests(unittest.TestCase):
         out = rules.normalize_recommendation_snapshot(
             {"exercises": [{"exercise_id": 2, "name": "X", "sets": [{"reps": 10, "weight": 50}]}]}
         )
+        assert out is not None
         self.assertEqual(out["schema"], 1)
         self.assertEqual(out["source"], "coach")
         self.assertIsNone(out["model"])
@@ -86,6 +88,7 @@ class NormalizeSnapshotTests(unittest.TestCase):
         out = rules.normalize_recommendation_snapshot(
             sample_snapshot(load_type="insane", focus="ф" * 500)
         )
+        assert out is not None
         self.assertIsNone(out["load_type"])
         self.assertEqual(len(out["focus"]), 200)
 

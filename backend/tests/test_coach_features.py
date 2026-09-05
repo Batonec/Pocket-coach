@@ -352,6 +352,7 @@ class TrendValidityTests(unittest.TestCase):
             (TODAY, 79.0),
         ]
         trend = coach_features.weight_trend_per_week(points, TODAY)
+        assert trend is not None
         self.assertAlmostEqual(trend, -0.4, places=1)
 
     def test_matrix_asks_for_measurements_instead_of_advising(self) -> None:
@@ -547,6 +548,7 @@ class AdherenceStatsTests(unittest.TestCase):
             self._planned_workout((TODAY - timedelta(days=60)).isoformat()),  # вне окна
         ]
         stats = coach_features.adherence_stats(workouts, TODAY)
+        assert stats is not None
         self.assertEqual(stats["sessions"], 2)
         self.assertEqual(stats["planned_sets"], 10)
         # 3 + min(4, 3) + 2 = 8; лишние сеты никогда не поднимают выше плана.
@@ -555,6 +557,7 @@ class AdherenceStatsTests(unittest.TestCase):
         self.assertEqual(stats["skipped"], [("Сгибания ног", 1)])
 
         line = prompt_builder.render_adherence_stats(stats)
+        assert line is not None
         self.assertIn("8 из 10", line)
         self.assertIn("Сгибания ног ×1", line)
 
@@ -859,12 +862,15 @@ class TrendSlopeTests(unittest.TestCase):
             (TODAY, 80.0),
         ]
         trend = coach_features.weight_trend_per_week(points, TODAY)
+        assert trend is not None
         self.assertLess(trend, 0.45)
         self.assertGreater(trend, 0.3)
 
     def test_two_points_are_still_the_plain_slope(self) -> None:
         points = [(TODAY - timedelta(days=7), 80.0), (TODAY, 79.5)]
-        self.assertAlmostEqual(coach_features.weight_trend_per_week(points, TODAY), -0.5, places=6)
+        trend = coach_features.weight_trend_per_week(points, TODAY)
+        assert trend is not None
+        self.assertAlmostEqual(trend, -0.5, places=6)
 
     def test_weigh_in_count_is_reported_with_the_protocol_minimum(self) -> None:
         weights = [

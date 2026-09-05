@@ -123,6 +123,7 @@ class SnapshotRuleEdgeCaseTests(unittest.TestCase):
         )
 
         normalized = rules.normalize_recommendation_snapshot(snapshot)
+        assert normalized is not None
 
         self.assertIsNotNone(normalized)
         self.assertEqual(normalized["exercises"][0]["sets"], [{"reps": 9, "weight": 52.5}])

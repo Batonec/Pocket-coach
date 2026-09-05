@@ -54,6 +54,7 @@ xcodebuild -project TrainerIOS.xcodeproj -scheme TrainerIOS -destination 'platfo
 ```bash
 ruff check .            # Python: линт          (brew install ruff)
 ruff format .           # Python: формат
+pyright                 # Python: типы          (brew install pyright или pip install pyright)
 git ls-files -z '*.swift' | xargs -0 xcrun swift-format lint --strict --parallel
 git ls-files -z '*.swift' | xargs -0 xcrun swift-format format --in-place --parallel
 shellcheck backend/infra/deploy/deploy.sh .claude/hooks/claude-md-reminder.sh
@@ -65,12 +66,19 @@ actionlint              # .github/workflows/*.yml (brew install actionlint)
 в шапке `ruff.toml`. Новый ruff умеет находить новые замечания, поэтому его подъём — отдельный
 осознанный коммит, а не сюрприз на чужом PR.
 
+**pyright — второй гейт по Python, конфиг в `pyrightconfig.json`.** Режим `standard`, `pythonVersion`
+там 3.10 по той же причине, что `target-version` в ruff: обращение к API стандартной библиотеки из 3.11+
+должно падать в CI, а не на VPS. Версия закреплена строкой `pip install pyright==X` в `ci.yml`. Для
+`coach_mcp` в CI ставятся его зависимости, чтобы типы `mcp` разрешались; локально нужен тот же venv.
+Функции, которые возвращают `None` «когда нечего вернуть», в тестах сужаются через `assert x is not None`
+(в `ruff.toml` для тестов выключен `S101`), а не через `assertIsNotNone`: второй pyright не понимает.
+
 Два порога длины строки не совпадают намеренно: форматтер укладывает **код** в 100 символов сам,
 а `E501` включается только со 120 — это ловушка для того, что форматтер разбить не может
 (семантика каталога в `prompt_builder.py`, описания MCP-инструментов, SQL). Рвать такие тексты
 руками ровно по сотне вредно: их читают модель и человек.
 
-Автоматических гейта четыре: `lint` (всегда, ubuntu — ruff + shellcheck + actionlint),
+Автоматических гейта четыре: `lint` (всегда, ubuntu — ruff + pyright + shellcheck + actionlint),
 unittest-suite (всегда), `swift-format lint --strict` и iOS-тесты (оба в macOS-джобе, только
 когда тронут `ios/`). Swift-линт стоит **до** тестов: он занимает секунды, и незачем держать
 дорогой macOS-раннер 15 минут, если человек просто забыл прогнать форматтер. Имя симулятора

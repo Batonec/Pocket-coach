@@ -242,7 +242,7 @@ def build_dev_version() -> dict[str, object]:
     }
 
 
-def positive_int(value: object) -> int | None:
+def positive_int(value: Any) -> int | None:
     """Значение как положительный ``int`` или ``None`` (мусор, ноль, отрицательное)."""
     try:
         parsed = int(value) if value is not None else None

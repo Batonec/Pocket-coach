@@ -60,8 +60,9 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
     if load_type not in ALLOWED_LOAD_TYPES:
         load_type = "medium"
 
+    raw_rest_days = raw.get("rest_days")
     try:
-        rest_days = int(raw.get("rest_days"))
+        rest_days = int(raw_rest_days) if raw_rest_days is not None else 1
     except (TypeError, ValueError, OverflowError):
         rest_days = 1
     rest_days = min(max(rest_days, 0), MAX_REST_DAYS)
@@ -74,7 +75,7 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
         if not isinstance(exercise, dict):
             continue
         raw_exercise_id = exercise.get("exercise_id")
-        if isinstance(raw_exercise_id, bool):
+        if raw_exercise_id is None or isinstance(raw_exercise_id, bool):
             continue
         try:
             exercise_id = int(raw_exercise_id)
@@ -94,13 +95,16 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
             if not isinstance(workout_set, dict):
                 continue
             raw_reps = workout_set.get("reps")
-            if isinstance(raw_reps, bool) or isinstance(workout_set.get("weight"), bool):
+            raw_weight = workout_set.get("weight")
+            if raw_reps is None or raw_weight is None:
+                continue
+            if isinstance(raw_reps, bool) or isinstance(raw_weight, bool):
                 continue
             if isinstance(raw_reps, float) and not raw_reps.is_integer():
                 continue
             try:
                 reps = int(raw_reps)
-                weight = float(workout_set.get("weight"))
+                weight = float(raw_weight)
             except (TypeError, ValueError, OverflowError):
                 continue
             if reps < 1 or not math.isfinite(weight):

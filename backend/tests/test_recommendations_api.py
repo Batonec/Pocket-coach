@@ -198,7 +198,7 @@ class RecommendationsAPITests(unittest.TestCase):
                     break
                 time.sleep(0.05)
 
-            self.assertIsNotNone(result)
+            assert result is not None
             self.assertEqual(result["recommendation"]["focus"], "workouts=1")
             self.assertFalse(result["stale"])
 
@@ -287,6 +287,7 @@ class RecommendationStoreTests(unittest.TestCase):
 
     def test_recommendation_lifecycle(self) -> None:
         store, uid = self._store()
+        assert store is not None
         self.assertIsNone(store.get_latest_workout_id(uid))
         self.assertIsNone(store.get_recommendation(uid))
 
@@ -295,7 +296,9 @@ class RecommendationStoreTests(unittest.TestCase):
         self.assertIsNotNone(workout_id)
 
         store.set_recommendation_pending(uid)
-        self.assertEqual(store.get_recommendation(uid)["status"], "pending")
+        pending = store.get_recommendation(uid)
+        assert pending is not None
+        self.assertEqual(pending["status"], "pending")
 
         row = store.save_recommendation(uid, workout_id, 1, "model-x", FAKE_REC, 10, 5)
         self.assertEqual(row["status"], "ready")
@@ -305,6 +308,7 @@ class RecommendationStoreTests(unittest.TestCase):
 
         store.fail_recommendation(uid, "boom")
         failed = store.get_recommendation(uid)
+        assert failed is not None
         self.assertEqual(failed["status"], "failed")
         self.assertEqual(failed["error"], "boom")
 

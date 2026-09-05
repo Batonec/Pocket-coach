@@ -140,7 +140,7 @@ class ProfileTests(unittest.TestCase):
             path = Path(tmp) / "coach_profile.json"
             path.write_text('{"schema":1,"blocks":{"Цель":"lean bulk до 84"}}', "utf-8")
             profile = files.load_profile(path)
-            self.assertIsNotNone(profile)
+            assert profile is not None
             self.assertIn("Цель", profile["blocks"])
 
     def test_load_profile_tolerates_missing_or_garbage(self) -> None:
@@ -169,6 +169,7 @@ class ProfileTests(unittest.TestCase):
             updated = files.update_profile_block(path, "Цель", "новый текст")
             self.assertEqual(updated["blocks"]["Цель"], "новый текст")
             reloaded = files.load_profile(path)
+            assert reloaded is not None
             self.assertEqual(reloaded["blocks"]["Цель"], "новый текст")
             self.assertEqual(reloaded["blocks"]["Атлет"], "а")  # не тронут
             backups = list(Path(tmp).glob("coach_profile.json.bak-*"))
@@ -177,7 +178,9 @@ class ProfileTests(unittest.TestCase):
 
             # Пустой текст удаляет блок.
             files.update_profile_block(path, "Атлет", "")
-            self.assertNotIn("Атлет", files.load_profile(path)["blocks"])
+            after_delete = files.load_profile(path)
+            assert after_delete is not None
+            self.assertNotIn("Атлет", after_delete["blocks"])
 
     def test_update_profile_block_rejects_missing_file_and_unknown_delete(self) -> None:
         import tempfile

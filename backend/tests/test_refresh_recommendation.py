@@ -83,15 +83,19 @@ class RunTests(unittest.TestCase):
         did = refresh.run(self.store, self.uid)
         self.assertTrue(did)
         rec = self.store.get_recommendation(self.uid)
+        assert rec is not None
         self.assertEqual(rec["status"], "ready")
         self.assertEqual(rec["recommendation"]["focus"], "Авто-свежесть")
 
     def test_run_skips_fresh_recommendation(self) -> None:
         refresh.run(self.store, self.uid)
-        first = self.store.get_recommendation(self.uid)["updated_at"]
+        first_rec = self.store.get_recommendation(self.uid)
+        assert first_rec is not None
         did = refresh.run(self.store, self.uid)
         self.assertFalse(did)
-        self.assertEqual(self.store.get_recommendation(self.uid)["updated_at"], first)
+        second_rec = self.store.get_recommendation(self.uid)
+        assert second_rec is not None
+        self.assertEqual(second_rec["updated_at"], first_rec["updated_at"])
 
     def test_run_force_regenerates(self) -> None:
         refresh.run(self.store, self.uid)
@@ -106,6 +110,7 @@ class RunTests(unittest.TestCase):
         did = refresh.run(self.store, self.uid)
         self.assertTrue(did)
         rec = self.store.get_recommendation(self.uid)
+        assert rec is not None
         self.assertEqual(rec["status"], "failed")
         self.assertIn("ключа", rec["error"])
 

@@ -549,6 +549,7 @@ class ReturnCeilingTests(unittest.TestCase):
         text = prompt_builder.render_pre_break_weights(
             coach_features.pre_break_working_weights(self._history(), self.CATALOG), 21
         )
+        assert text is not None
         self.assertIn("21 дн.", text)
         self.assertIn("Жим ногами: 100", text)
         # Сервер называет данные и оставляет суждение модели: ни процентов, ни

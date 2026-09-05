@@ -115,7 +115,7 @@ def group_volume_targets(
     Зовут ``prompt_builder`` и ``recommender._coach_context``.
     """
     override = {
-        group: tuple(bounds)
+        group: (bounds[0], bounds[1])
         for group, bounds in (group_targets or {}).items()
         if group in MUSCLE_GROUPS and isinstance(bounds, (list, tuple)) and len(bounds) == 2
     }
@@ -124,9 +124,9 @@ def group_volume_targets(
         if group in override:
             targets[group] = override[group]
         elif maintenance_sets:
-            targets[group] = tuple(maintenance_sets)
+            targets[group] = (maintenance_sets[0], maintenance_sets[1])
         elif group in BIG_GROUPS:
-            targets[group] = tuple(week_target) if week_target else (10, 16)
+            targets[group] = (week_target[0], week_target[1]) if week_target else (10, 16)
         else:
             targets[group] = SMALL_GROUP_TARGETS[group]
     return targets
@@ -255,23 +255,6 @@ def _beats(top: dict[str, Any], best: dict[str, Any], *, inverted: bool) -> bool
             top["weight"] == best["weight"] and top["reps"] > best["reps"]
         )
     return epley_e1rm(top["weight"], top["reps"]) > epley_e1rm(best["weight"], best["reps"]) + 1e-9
-
-
-def _best_set(
-    sessions: list[tuple[date, list[dict[str, Any]]]], *, inverted: bool
-) -> tuple[dict[str, Any], date]:
-    """Единственный источник правды о пике упражнения: тот же РЕАЛЬНЫЙ подход
-    (вес и повторы вместе), который показывает сводка, — лучший e1RM или наименьший
-    противовес для гравитрона. Никогда не смешивать максимальный вес одного подхода
-    с повторами другого.
-    """
-    best: dict[str, Any] | None = None
-    best_when: date | None = None
-    for when, sets in sessions:
-        top = _session_top(sets, inverted=inverted)
-        if best is None or _beats(top, best, inverted=inverted):
-            best, best_when = top, when
-    return best, best_when
 
 
 def _exercise_positions(workouts: list[dict[str, Any]]) -> dict[tuple[date, int], tuple[int, int]]:
@@ -418,6 +401,8 @@ def exercise_summaries(
             if _beats(top, best, inverted=inverted):
                 best, best_when, last_pr = top, when, when
                 pr_dates.append(when.isoformat())
+        if best is None or best_when is None or last_pr is None:
+            continue
 
         current_when, _current_sets = sessions[-1]
         # «Сейчас» — рабочий вес последних 2–3 сессий после фильтра аномалий:

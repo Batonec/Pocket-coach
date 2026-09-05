@@ -41,7 +41,7 @@ def sample_workout_payload(
     workout_date: str = "2026-03-28",
     exercise_id: int = 1,
     exercise_name: str = "Bench Press",
-    weight: float = 80.0,
+    weight: float | str = 80.0,
     reps: int = 12,
     effort: str | None = None,
     notes: str | None = None,
