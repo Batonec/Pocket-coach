@@ -754,6 +754,25 @@ class GroupTargetTests(unittest.TestCase):
         self.assertEqual(targets["бицепс бедра"], (5, 10))
         self.assertEqual(set(targets), set(coach_features.MUSCLE_GROUPS))
 
+    def test_the_eight_groups_are_the_ones_the_progress_screen_lists(self) -> None:
+        # Перечень пинится намеренно: те же восемь перечисляет docs/WEEKLY_PROGRESS.md,
+        # а iOS показывает «N из 8 групп» по muscleGroupLandmarks. Задняя дельта в
+        # августе 2026 стала восьмой без правки документа — новая группа меняет
+        # перечень здесь, в iOS-тесте и в документе одним коммитом.
+        self.assertEqual(
+            set(coach_features.MUSCLE_GROUPS),
+            {
+                "грудь",
+                "спина",
+                "квадрицепс/ягодичные",
+                "дельты",
+                "задняя дельта",
+                "бицепс",
+                "трицепс",
+                "бицепс бедра",
+            },
+        )
+
     def test_maintenance_flattens_everything(self) -> None:
         targets = coach_features.group_volume_targets(None, maintenance_sets=(2, 3))
         self.assertTrue(all(target == (2, 3) for target in targets.values()))

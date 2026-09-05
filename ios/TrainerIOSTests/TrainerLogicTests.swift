@@ -693,6 +693,20 @@ final class TrainerLogicTests: XCTestCase {
         XCTAssertEqual(vol.first { $0.name == "Бицепс бедра" }?.count, 0)
     }
 
+    // The summary card's headline reads "N из 8 групп": the 8 is the landmark
+    // count, and each key must match a backend coach_features.MUSCLE_GROUPS name
+    // one-to-one, or a server corridor silently falls back to the static landmark.
+    // docs/WEEKLY_PROGRESS.md lists the same eight; a new group changes all three.
+    func testMuscleGroupLandmarksMirrorTheBackendGroups() {
+        XCTAssertEqual(
+            TrainerLogic.muscleGroupLandmarks.map(\.key),
+            [
+                "грудь", "спина", "квадрицепс/ягодичные", "дельты", "задняя дельта",
+                "бицепс", "трицепс", "бицепс бедра",
+            ])
+        XCTAssertEqual(TrainerLogic.weeklyVolumeByGroup([], today: Date()).count, 8)
+    }
+
     func testVolumeStatusThresholds() {
         var v = MuscleGroupVolume(name: "Бицепс", count: 6, minTarget: 4, maxTarget: 8)
         XCTAssertEqual(v.status, .onTarget)

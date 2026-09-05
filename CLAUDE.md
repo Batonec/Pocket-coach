@@ -428,7 +428,11 @@ backend-модули своими и кладёт в секцию ниже, а `
 Добавление упражнения — это шесть мест: оба `exercises.json`, `CATALOG_SEMANTICS` и
 `CATALOG_GAPS` в `prompt_builder.py`, `MUSCLE_GROUPS` / `EFFECTIVE_SETS` /
 `SMALL_GROUP_TARGETS` в `coach_features.py`, `muscleGroupLandmarks` в `TrainerLogic.swift`
-и словари синонимов в `VoiceSetParser.swift`.
+и словари синонимов в `VoiceSetParser.swift`. Новая мышечная группа (а не упражнение в
+существующей) — ещё и перечень групп в `docs/WEEKLY_PROGRESS.md`: его пинят
+`GroupTargetTests` в backend и `testMuscleGroupLandmarksMirrorTheBackendGroups` в iOS, потому
+что задняя дельта в августе 2026 стала восьмой группой без правки документа, и сводка на
+экране говорила «из 8», пока текст обещал семь.
 
 ## Документация — часть кода
 
