@@ -1137,23 +1137,18 @@ def _build_report_prompt(
     next_bits: list[str] = []
     every = params.get("deload_every_weeks")
     if position["deload_week"]:
-        next_bits.append(
-            _block(
-                "report_next_deload_now",
-                ramp_start=_format_range(params.get("ramp_start")),
-            )
-        )
+        next_bits.append(_block("report_next_deload_now"))
     elif every and position["cycle_week"] >= int(every):
         next_bits.append(_block("report_next_deload_soon"))
-    else:
+    elif not params.get("group_targets"):
+        # Коридор недели блока — эффективные сеты на крупную группу по дефолтной
+        # методике. При целях по группам он спорил бы с блоком «Объём за КРУГ»
+        # (прямые сеты, за круг): отчёт однажды повторил атлету «9–15 эффективных»
+        # при целях «спина 12–14 прямых».
         next_week = coach_state.weekly_volume_target(state, position["cycle_week"] + 1)
         if next_week:
             next_bits.append(
-                _block(
-                    "report_next_target",
-                    low=str(next_week[0]),
-                    high=str(next_week[1]),
-                )
+                _block("report_next_target", low=str(next_week[0]), high=str(next_week[1]))
             )
     if next_bits:
         chunks.append("\n".join(next_bits))

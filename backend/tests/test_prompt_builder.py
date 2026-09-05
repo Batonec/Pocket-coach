@@ -242,8 +242,17 @@ class ReportPromptTests(unittest.TestCase):
         self.assertIn("С начала фазы", prompt)
         self.assertIn("Фаза «лёгкий дефицит-рекомп»: 2026-05-17 → 2026-06-14 (4.1 нед).", prompt)
         self.assertIn("Вес: 80.0 → 78.6 кг (-1.4", prompt)
-        self.assertIn("Цель фазы по весу: 75.5 кг", prompt)
         self.assertNotIn("Оценка TDEE", prompt)  # две точки за фазу — тренда нет
+        # Цель по весу — цифра стратегии атлета: дефолта у неё нет, стоковые 75.5
+        # однажды доехали до отчёта на этапе, где худеть было не нужно.
+        self.assertNotIn("Цель фазы по весу", prompt)
+        state["phase_params"] = {"cut_recomp": {"target_weight_kg": 75.5}}
+        prompt = self._report(
+            [self._workout("2026-06-12", 105), self._workout("2026-06-03", 100)],
+            state=state,
+            body_weights=weights,
+        )
+        self.assertIn("Цель фазы по весу: 75.5 кг", prompt)
 
     def test_report_phase_line_uses_athlete_overrides(self) -> None:
         """Ориентиры фазы в отчёте — из phase_params атлета и без машинного имени:
@@ -255,6 +264,15 @@ class ReportPromptTests(unittest.TestCase):
             "Фаза: «Ф0 · возврат», неделя блока 1. Ориентиры фазы: 1850–1950 ккал", prompt
         )
         self.assertNotIn("cut_recomp", prompt)
+
+    def test_next_week_corridor_only_without_group_targets(self) -> None:
+        """Коридор недели блока — эффективные сеты по дефолтной методике; при целях
+        по группам он спорил бы с блоком «Объём за КРУГ» (прямые сеты, за круг)."""
+        workouts = [self._workout("2026-06-12", 105)]
+        self.assertIn("Цель следующей недели блока", self._report(workouts))
+        state = coach_state.default_state()
+        state["phase_params"] = {"cut_recomp": {"group_targets": {"спина": [12, 14]}}}
+        self.assertNotIn("Цель следующей недели блока", self._report(workouts, state=state))
 
     def test_no_phase_start_means_no_trajectory(self) -> None:
         prompt = self._report([self._workout("2026-06-12", 105)])

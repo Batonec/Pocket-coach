@@ -1210,7 +1210,7 @@ def nutrition_matrix(
         if cutting and target and ma_now is not None and ma_now <= float(target):
             goal = (
                 f"цель фазы достигнута (средний вес {ma_now:.1f} ≤ {target:g} кг) — "
-                "предложи в rationale переход в lean_bulk; фазу переключает атлет"
+                "предложи в rationale переход к следующей фазе стратегии; фазу переключает атлет"
             )
         ceiling = params.get("ceiling_weight_kg")
         if gaining and ceiling and ma_now is not None and ma_now >= float(ceiling):

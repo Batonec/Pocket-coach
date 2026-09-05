@@ -432,13 +432,21 @@ class NutritionMatrixTests(unittest.TestCase):
         self.assertTrue(any("−150 ккал" in line for line in result["lines"]))
         self.assertTrue(any("талии" in line for line in result["lines"]))  # просит замерить
 
-    def test_cut_goal_reached_suggests_lean_bulk(self) -> None:
+    def test_cut_goal_reached_suggests_the_next_phase(self) -> None:
+        """Цель по весу — цифра стратегии атлета: без переопределения её нет вовсе,
+        а с ним достижение — повод предложить следующую фазу, не машинное имя."""
         state = self._state()
+        silent = coach_features.nutrition_matrix(
+            state, self._params(state), self._weights(75.2), [], TODAY
+        )
+        self.assertIsNone(silent["goal"])
+        state = self._state(phase_params={"cut_recomp": {"target_weight_kg": 75.5}})
         result = coach_features.nutrition_matrix(
             state, self._params(state), self._weights(75.2), [], TODAY
         )
         self.assertIsNotNone(result["goal"])
-        self.assertIn("lean_bulk", result["goal"])
+        self.assertIn("следующей фазе стратегии", result["goal"])
+        self.assertNotIn("lean_bulk", result["goal"])
 
     def test_bulk_waist_creep_pauses_the_surplus(self) -> None:
         state = self._state(phase="lean_bulk", waist_base_cm=84.0)
@@ -810,7 +818,9 @@ class HoldingPhaseMatrixTests(unittest.TestCase):
     def _matrix(self, rate):
         """Матрица для cut_recomp с заданным коридором темпа на плоском весе."""
         state = dict(coach_state.DEFAULT_STATE, phase="cut_recomp", phase_started="2026-06-01")
-        params = dict(coach_state.PHASE_DEFAULTS["cut_recomp"], rate_kg_per_week=rate)
+        params = dict(
+            coach_state.PHASE_DEFAULTS["cut_recomp"], rate_kg_per_week=rate, target_weight_kg=79.5
+        )
         params["phase"] = "cut_recomp"
         weights = self._points(
             ("2026-07-25", 79.0),
@@ -833,8 +843,8 @@ class HoldingPhaseMatrixTests(unittest.TestCase):
         self.assertIn("−150 ккал", lines)
 
     def test_goal_reached_is_not_announced_while_holding(self):
-        """target_weight_kg остаётся дефолтным на этапе удержания — объявлять
-        «цель фазы достигнута» на нём нельзя."""
+        """Цель по весу задана и по цифрам достигнута, но на этапе удержания
+        объявлять «цель фазы достигнута» нельзя: коридор темпа нулевой."""
         self.assertIsNone(self._matrix((-0.10, 0.10))["goal"])
 
 
