@@ -128,6 +128,9 @@ BACKEND_MODULES=(
   server.py
   backend_store.py
   recommender.py
+  prompt_builder.py
+  plan_validator.py
+  anthropic_client.py
   coach_state.py
   coach_features.py
   coach_signals.py

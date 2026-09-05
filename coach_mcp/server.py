@@ -58,6 +58,7 @@ from mcp.types import CallToolResult, TextContent  # noqa: E402
 import backend_store  # noqa: E402
 import coach_features  # noqa: E402
 import coach_state  # noqa: E402
+import prompt_builder  # noqa: E402
 import recommender  # noqa: E402
 
 # --- configuration ------------------------------------------------------------
@@ -189,7 +190,7 @@ def coach_list_workouts(limit: int = 20, user_id: int | None = None) -> CallTool
     try:
         uid = _uid(user_id)
         workouts = STORE.list_workouts(uid)
-        compact = recommender._serialize_history(workouts, limit, _catalog())
+        compact = prompt_builder._serialize_history(workouts, limit, _catalog())
         return _result(
             {
                 "ok": True,
@@ -625,10 +626,10 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
         today = date.today()
         # state обязателен: без него политика фаз рендерится из дефолтов, и
         # preview показывает не тот промпт, который уйдёт в модель.
-        system = recommender._build_system_prompt(
+        system = prompt_builder._build_system_prompt(
             catalog, profile, state, recommender.load_strategy(_STRATEGY_PATH)
         )
-        user = recommender._build_user_prompt(
+        user = prompt_builder._build_user_prompt(
             workouts,
             body_weights,
             today,
@@ -638,7 +639,7 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
             waists=waists,
             events=events,
         )
-        schema = recommender._build_schema(catalog)
+        schema = prompt_builder._build_schema(catalog)
         return _result(
             {
                 "ok": True,
@@ -648,7 +649,7 @@ def coach_preview_prompt(limit: int = 20, user_id: int | None = None) -> CallToo
                 "model": recommender.DEFAULT_MODEL,
                 "phase": coach_state.phase_params(state)["phase"],
                 "cycle_position": coach_state.cycle_position(state, workouts, today),
-                "history_raw": min(limit, recommender.RAW_HISTORY_COUNT, len(workouts)),
+                "history_raw": min(limit, prompt_builder.RAW_HISTORY_COUNT, len(workouts)),
                 "system_prompt": system,
                 "user_prompt": user,
                 "json_schema": schema,
@@ -680,7 +681,7 @@ def coach_debug_recommendation(limit: int = 20, user_id: int | None = None) -> C
         state = coach_state.load_state(_STATE_PATH)
         today = date.today()
         model = recommender.DEFAULT_MODEL
-        user = recommender._build_user_prompt(
+        user = prompt_builder._build_user_prompt(
             workouts,
             body_weights,
             today,
