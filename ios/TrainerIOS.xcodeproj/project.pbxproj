@@ -12,10 +12,24 @@
 		100000000000000000000103 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000003 /* APIClient.swift */; };
 		100000000000000000000104 /* TrainerLogic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000004 /* TrainerLogic.swift */; };
 		100000000000000000000105 /* TrainerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000005 /* TrainerStore.swift */; };
-		100000000000000000000106 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000006 /* Views.swift */; };
 		100000000000000000000114 /* VoiceSetParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000014 /* VoiceSetParser.swift */; };
 		100000000000000000000115 /* TrainerStoreVoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000015 /* TrainerStoreVoice.swift */; };
 		100000000000000000000116 /* VoiceIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000016 /* VoiceIntents.swift */; };
+		100000000000000000000120 /* CoachCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000020 /* CoachCard.swift */; };
+		100000000000000000000121 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* ContentView.swift */; };
+		100000000000000000000122 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000022 /* DesignSystem.swift */; };
+		100000000000000000000123 /* EventViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000023 /* EventViews.swift */; };
+		100000000000000000000124 /* ExerciseDetailScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000024 /* ExerciseDetailScreen.swift */; };
+		100000000000000000000125 /* ExerciseGlyphs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000025 /* ExerciseGlyphs.swift */; };
+		100000000000000000000126 /* HistoryScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000026 /* HistoryScreen.swift */; };
+		100000000000000000000127 /* MeasurementsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000027 /* MeasurementsScreen.swift */; };
+		100000000000000000000128 /* ProgressScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000028 /* ProgressScreen.swift */; };
+		100000000000000000000129 /* QuickAddSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000029 /* QuickAddSheet.swift */; };
+		10000000000000000000012A /* SharedPieces.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000002A /* SharedPieces.swift */; };
+		10000000000000000000012B /* SignalBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000002B /* SignalBanner.swift */; };
+		10000000000000000000012C /* SystemScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000002C /* SystemScreens.swift */; };
+		10000000000000000000012D /* TodayScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000002D /* TodayScreen.swift */; };
+		10000000000000000000012E /* WorkoutNoteSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000002E /* WorkoutNoteSheet.swift */; };
 		100000000000000000000107 /* exercises.json in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000007 /* exercises.json */; };
 		100000000000000000000108 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000000A /* Assets.xcassets */; };
 		100000000000000000000110 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000010 /* JetBrainsMono-Regular.ttf */; };
@@ -49,10 +63,24 @@
 		100000000000000000000003 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		100000000000000000000004 /* TrainerLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainerLogic.swift; sourceTree = "<group>"; };
 		100000000000000000000005 /* TrainerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainerStore.swift; sourceTree = "<group>"; };
-		100000000000000000000006 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
 		100000000000000000000014 /* VoiceSetParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSetParser.swift; sourceTree = "<group>"; };
 		100000000000000000000015 /* TrainerStoreVoice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainerStoreVoice.swift; sourceTree = "<group>"; };
 		100000000000000000000016 /* VoiceIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceIntents.swift; sourceTree = "<group>"; };
+		100000000000000000000020 /* CoachCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachCard.swift; sourceTree = "<group>"; };
+		100000000000000000000021 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		100000000000000000000022 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		100000000000000000000023 /* EventViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventViews.swift; sourceTree = "<group>"; };
+		100000000000000000000024 /* ExerciseDetailScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExerciseDetailScreen.swift; sourceTree = "<group>"; };
+		100000000000000000000025 /* ExerciseGlyphs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExerciseGlyphs.swift; sourceTree = "<group>"; };
+		100000000000000000000026 /* HistoryScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryScreen.swift; sourceTree = "<group>"; };
+		100000000000000000000027 /* MeasurementsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeasurementsScreen.swift; sourceTree = "<group>"; };
+		100000000000000000000028 /* ProgressScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressScreen.swift; sourceTree = "<group>"; };
+		100000000000000000000029 /* QuickAddSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickAddSheet.swift; sourceTree = "<group>"; };
+		10000000000000000000002A /* SharedPieces.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedPieces.swift; sourceTree = "<group>"; };
+		10000000000000000000002B /* SignalBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalBanner.swift; sourceTree = "<group>"; };
+		10000000000000000000002C /* SystemScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemScreens.swift; sourceTree = "<group>"; };
+		10000000000000000000002D /* TodayScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayScreen.swift; sourceTree = "<group>"; };
+		10000000000000000000002E /* WorkoutNoteSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutNoteSheet.swift; sourceTree = "<group>"; };
 		100000000000000000000017 /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/AppShortcuts.strings; sourceTree = "<group>"; };
 		100000000000000000000018 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/AppShortcuts.strings; sourceTree = "<group>"; };
 		100000000000000000000007 /* exercises.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = exercises.json; sourceTree = "<group>"; };
@@ -108,7 +136,7 @@
 				100000000000000000000003 /* APIClient.swift */,
 				100000000000000000000004 /* TrainerLogic.swift */,
 				100000000000000000000005 /* TrainerStore.swift */,
-				100000000000000000000006 /* Views.swift */,
+				100000000000000000000306 /* Views */,
 				100000000000000000000014 /* VoiceSetParser.swift */,
 				100000000000000000000015 /* TrainerStoreVoice.swift */,
 				100000000000000000000016 /* VoiceIntents.swift */,
@@ -139,6 +167,28 @@
 				100000000000000000000013 /* JetBrainsMono-Bold.ttf */,
 			);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		100000000000000000000306 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				100000000000000000000020 /* CoachCard.swift */,
+				100000000000000000000021 /* ContentView.swift */,
+				100000000000000000000022 /* DesignSystem.swift */,
+				100000000000000000000023 /* EventViews.swift */,
+				100000000000000000000024 /* ExerciseDetailScreen.swift */,
+				100000000000000000000025 /* ExerciseGlyphs.swift */,
+				100000000000000000000026 /* HistoryScreen.swift */,
+				100000000000000000000027 /* MeasurementsScreen.swift */,
+				100000000000000000000028 /* ProgressScreen.swift */,
+				100000000000000000000029 /* QuickAddSheet.swift */,
+				10000000000000000000002A /* SharedPieces.swift */,
+				10000000000000000000002B /* SignalBanner.swift */,
+				10000000000000000000002C /* SystemScreens.swift */,
+				10000000000000000000002D /* TodayScreen.swift */,
+				10000000000000000000002E /* WorkoutNoteSheet.swift */,
+			);
+			path = Views;
 			sourceTree = "<group>";
 		};
 		200000000000000000000304 /* TrainerIOSTests */ = {
@@ -267,7 +317,21 @@
 				100000000000000000000103 /* APIClient.swift in Sources */,
 				100000000000000000000104 /* TrainerLogic.swift in Sources */,
 				100000000000000000000105 /* TrainerStore.swift in Sources */,
-				100000000000000000000106 /* Views.swift in Sources */,
+				100000000000000000000120 /* CoachCard.swift in Sources */,
+				100000000000000000000121 /* ContentView.swift in Sources */,
+				100000000000000000000122 /* DesignSystem.swift in Sources */,
+				100000000000000000000123 /* EventViews.swift in Sources */,
+				100000000000000000000124 /* ExerciseDetailScreen.swift in Sources */,
+				100000000000000000000125 /* ExerciseGlyphs.swift in Sources */,
+				100000000000000000000126 /* HistoryScreen.swift in Sources */,
+				100000000000000000000127 /* MeasurementsScreen.swift in Sources */,
+				100000000000000000000128 /* ProgressScreen.swift in Sources */,
+				100000000000000000000129 /* QuickAddSheet.swift in Sources */,
+				10000000000000000000012A /* SharedPieces.swift in Sources */,
+				10000000000000000000012B /* SignalBanner.swift in Sources */,
+				10000000000000000000012C /* SystemScreens.swift in Sources */,
+				10000000000000000000012D /* TodayScreen.swift in Sources */,
+				10000000000000000000012E /* WorkoutNoteSheet.swift in Sources */,
 				100000000000000000000114 /* VoiceSetParser.swift in Sources */,
 				100000000000000000000115 /* TrainerStoreVoice.swift in Sources */,
 				100000000000000000000116 /* VoiceIntents.swift in Sources */,

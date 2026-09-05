@@ -4,7 +4,7 @@
 #
 # Триггеры выбраны по разделу «Поддержка этого файла» в CLAUDE.md — обычная
 # фича внутри существующих слоёв хук не будит:
-#   1) появился или исчез модуль в backend/ · coach_mcp/ · ios/TrainerIOS/;
+#   1) появился или исчез модуль в backend/ · coach_mcp/ · ios/TrainerIOS/ (и Views/);
 #   2) тронуты места, которые надо держать в синхроне руками
 #      (CI-воркфлоу, deploy.sh, project.pbxproj);
 #   3) тронута граница «алгоритм / LLM» (recommender.py и его модули prompt_builder.py,
@@ -40,7 +40,7 @@ reasons=""
 add_reason() { reasons="${reasons}${reasons:+; }$1"; }
 
 printf '%s\n' "$newgone" \
-  | grep -qE '^((backend|coach_mcp)/[^/]+\.py|ios/TrainerIOS(Tests)?/[^/]+\.swift)$' \
+  | grep -qE '^((backend|coach_mcp)/[^/]+\.py|ios/TrainerIOS(Tests)?/([^/]+/)?[^/]+\.swift)$' \
   && add_reason "появился или исчез модуль в backend/coach_mcp/ios"
 
 printf '%s\n' "$paths" \

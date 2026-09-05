@@ -16,7 +16,7 @@
 | [`TrainerLogic.swift`](./TrainerIOS/TrainerLogic.swift) | чистые статические функции: сортировки, planned sets, summary, прогресс, объёмы. Ничего не знает про сеть и состояние — на нём висит основная масса тестов |
 | [`TrainerStore.swift`](./TrainerIOS/TrainerStore.swift) | `@MainActor ObservableObject`, единственный источник состояния; persistence черновика и настроек в `UserDefaults`, все мутации через API |
 | [`APIClient.swift`](./TrainerIOS/APIClient.swift) | HTTP. Две `URLSession` намеренно: дефолтная с коротким таймаутом и `longRunningSession` под генерацию совета |
-| [`Views.swift`](./TrainerIOS/Views.swift) | экраны и дизайн-система |
+| [`Views/`](./TrainerIOS/Views) | экраны и дизайн-система, файл на экран; оболочка и вкладки — [`ContentView.swift`](./TrainerIOS/Views/ContentView.swift), палитра и общие детали — [`DesignSystem.swift`](./TrainerIOS/Views/DesignSystem.swift) |
 | [`Models.swift`](./TrainerIOS/Models.swift) | модели API, черновика и UI-состояний |
 
 Голосовой слой повторяет ту же лестницу:

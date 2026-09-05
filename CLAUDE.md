@@ -201,8 +201,12 @@ heavy/medium/light — **сознательно не проверяются**, �
 - `APIClient.swift` — HTTP. **Две URLSession намеренно**: дефолтная с таймаутом 3 с (чтобы
   сплэш не висел 60 с) и `longRunningSession` на 90 с только под `POST /api/recommendations/refresh`,
   который блокируется на генерации Claude.
-- `Views.swift` — все экраны и дизайн-система в одном файле (~5000 строк). Растёт, но
-  дробление никто не просил.
+- `Views/` — экраны и дизайн-система, файл на экран: `DesignSystem` (палитра, кнопки, фон,
+  текстовые поля), `ExerciseGlyphs`, `SharedPieces`, `ContentView` (оболочка и вкладки),
+  `CoachCard`, `TodayScreen`, `QuickAddSheet`, `SignalBanner`, `HistoryScreen`, `EventViews`,
+  `WorkoutNoteSheet`, `ProgressScreen`, `ExerciseDetailScreen`, `MeasurementsScreen`,
+  `SystemScreens` (настройки, вход, загрузка, ошибка, тост). Модуль один, поэтому экран,
+  который показывает оболочка, объявлен internal, а не `private`.
 
 Поверх них — **голосовой слой** (Siri / App Intents), тремя файлами в той же зависимости
 «чистое → состояние → фреймворк»: `VoiceSetParser.swift` (язык и грамматика фразы, чистые
@@ -265,7 +269,7 @@ backend-модули своими и кладёт в секцию ниже, а `
 `src` — это два каталога, а не перечисление файлов.
 
 **Xcode-проект держит файлы явными ссылками** (`objectVersion = 56`, без
-`PBXFileSystemSynchronizedRootGroup`). Новый `.swift` в `ios/TrainerIOS/` не попадёт в сборку,
+`PBXFileSystemSynchronizedRootGroup`). Новый `.swift` в `ios/TrainerIOS/` или `ios/TrainerIOS/Views/` не попадёт в сборку,
 пока не добавлен в `project.pbxproj` — файл просто не компилируется и не даёт ошибки.
 
 **Фразы Siri продублированы в трёх местах, и молчат тихо.** Литерал в `VoiceIntents.swift` —
