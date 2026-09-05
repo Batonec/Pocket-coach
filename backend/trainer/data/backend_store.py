@@ -1,3 +1,15 @@
+"""SQLite-хранилище: только SQL, без решений.
+
+Пользователи, тренировки (payload целиком в JSON), замеры веса и талии, события,
+кэш совета и журнал генераций, кэш недельных отчётов, отсрочки баннеров. Что
+можно записать и как слить с уже записанным, решает ``domain.rules``: стор
+спрашивает и пишет ответ. Все чтения отдают словари, готовые к выдаче в API.
+
+Одно хранилище на процесс, соединение на вызов, ``busy_timeout`` на случай
+фоновой генерации. Зовут server.py, скрипты таймеров, Coach MCP и
+``coach_signals`` (через переданный стор).
+"""
+
 from __future__ import annotations
 
 import json
@@ -11,26 +23,34 @@ from trainer.domain import rules
 
 
 def utc_now() -> int:
+    """Метка времени для created_at / updated_at: unix-секунды."""
     return int(time.time())
 
 
 class MiniAppStore:
+    """Единственный класс доступа к базе. Создание схемы при старте, ``PRAGMA
+    foreign_keys`` и ``busy_timeout`` на каждом соединении, транзакция на вызов.
+    """
+
     def __init__(self, db_path: Path):
+        """Открыть базу по пути (каталог создаётся) и применить схему."""
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize_schema()
 
     def _connect(self) -> sqlite3.Connection:
+        """Новое соединение: строки как ``sqlite3.Row``, внешние ключи, ожидание блокировки."""
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        # Recommendations are written from a background thread; wait instead of
-        # immediately failing with 'database is locked' on concurrent writes.
+        # Совет пишется из фонового потока: при одновременной записи ждём,
+        # а не падаем сразу с «database is locked».
         connection.execute("PRAGMA busy_timeout = 5000")
         return connection
 
     @contextmanager
     def _connection(self) -> sqlite3.Connection:
+        """Транзакция на вызов: commit при выходе, rollback при исключении, соединение закрыто."""
         with closing(self._connect()) as connection:
             try:
                 yield connection
@@ -40,6 +60,9 @@ class MiniAppStore:
                 raise
 
     def _initialize_schema(self) -> None:
+        """Создать таблицы и индексы, если их нет, и добавить колонки, появившиеся позже
+        (``CREATE IF NOT EXISTS`` не умеет добавлять колонку в существующую таблицу).
+        """
         with self._connection() as connection:
             connection.executescript(
                 """
@@ -83,8 +106,8 @@ class MiniAppStore:
                 CREATE INDEX IF NOT EXISTS idx_body_weights_user_date
                 ON body_weights(user_id, entry_date ASC, id ASC);
 
-                -- Weekly waist measurements (cm): the second body-composition
-                -- metric next to weight; feeds the coach nutrition matrix.
+                -- Еженедельные замеры талии (см): вторая метрика композиции тела
+                -- рядом с весом; кормит матрицу питания коуча.
                 CREATE TABLE IF NOT EXISTS waists (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -115,9 +138,9 @@ class MiniAppStore:
                 CREATE INDEX IF NOT EXISTS idx_events_user_date
                 ON events(user_id, start_date DESC, id DESC);
 
-                -- Cached coach weekly reports: generated once per closed week
-                -- (by the Monday-midnight timer or on demand), then served
-                -- instantly and token-free.
+                -- Кэш недельных отчётов тренера: генерируется раз на закрытую
+                -- неделю (таймером в ночь на понедельник или по запросу), дальше
+                -- отдаётся мгновенно и без токенов.
                 CREATE TABLE IF NOT EXISTS coach_reports (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -132,9 +155,9 @@ class MiniAppStore:
                     UNIQUE(user_id, period_end, days)
                 );
 
-                -- Snoozed coach signals (the История banner): one row per
-                -- dismissed episode. snooze_until NULL = hidden while that
-                -- exact instance_key (state episode) lasts.
+                -- Отложенные сигналы коуча (баннер «История»): строка на
+                -- отложенный эпизод. snooze_until NULL = скрыт, пока длится ровно
+                -- этот instance_key (эпизод состояния).
                 CREATE TABLE IF NOT EXISTS signal_snoozes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -160,9 +183,9 @@ class MiniAppStore:
                     UNIQUE(user_id)
                 );
 
-                -- Append-only journal of every generation (the table above keeps
-                -- only the current cached row). Feeds future stats — token spend
-                -- over time, плановая дисциплина — and gives a debugging trail.
+                -- Append-only журнал каждой генерации (таблица выше держит только
+                -- текущую строку кэша). Кормит статистику — расход токенов по
+                -- времени, плановую дисциплину — и даёт след для отладки.
                 CREATE TABLE IF NOT EXISTS recommendation_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -181,14 +204,17 @@ class MiniAppStore:
                 ON recommendation_log(user_id, id DESC);
                 """
             )
-            # Additive migration for DBs created before read_at existed
-            # (CREATE IF NOT EXISTS cannot add a column to an existing table).
+            # Аддитивная миграция для баз, созданных до появления read_at
+            # (CREATE IF NOT EXISTS не добавит колонку в существующую таблицу).
             with suppress(sqlite3.OperationalError):
                 connection.execute("ALTER TABLE coach_reports ADD COLUMN read_at INTEGER")
 
     def ensure_debug_user(
         self, alias: str, first_name: str = "Browser", last_name: str = "Debug"
     ) -> dict[str, Any]:
+        """Debug-пользователь по алиасу для локальной разработки: найти или создать.
+        Зовёт ``server._resolve_current_user``, когда включён ``MINIAPP_ALLOW_DEBUG_USER``.
+        """
         timestamp = utc_now()
         with self._connection() as connection:
             row = connection.execute(
@@ -226,6 +252,9 @@ class MiniAppStore:
         telegram_user: dict[str, Any],
         auth_source: str = "telegram",
     ) -> dict[str, Any]:
+        """Наследие Telegram-бота: создать или обновить пользователя по telegram id.
+        Бот удалён в июне 2026; метод остаётся ради существующих строк ``users``.
+        """
         telegram_user_id = telegram_user.get("id")
         if isinstance(telegram_user_id, str) and telegram_user_id.isdigit():
             telegram_user_id = int(telegram_user_id)
@@ -295,6 +324,7 @@ class MiniAppStore:
         return self._serialize_user(row)
 
     def get_user_by_id(self, user_id: int) -> dict[str, Any] | None:
+        """Пользователь по id для резолва сессии или ``None``."""
         with self._connection() as connection:
             row = connection.execute(
                 "SELECT * FROM users WHERE id = ?",
@@ -303,6 +333,7 @@ class MiniAppStore:
         return self._serialize_user(row) if row is not None else None
 
     def list_workouts(self, user_id: int) -> list[dict[str, Any]]:
+        """Все тренировки пользователя от новых к старым, с payload целиком."""
         with self._connection() as connection:
             rows = connection.execute(
                 """
@@ -316,11 +347,18 @@ class MiniAppStore:
         return [self._deserialize_workout(row) for row in rows]
 
     def get_workout_by_id(self, user_id: int, workout_id: int) -> dict[str, Any] | None:
+        """Одна тренировка по id или ``None``; зовёт Coach MCP."""
         with self._connection() as connection:
             row = self._get_workout_row(connection, user_id, workout_id)
         return self._deserialize_workout(row) if row is not None else None
 
     def save_workout(self, user_id: int, payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        """Записать тренировку из payload клиента; ``(тренировка, создана ли)``.
+
+        Повтор с тем же ``client_id`` (офлайн-ретрай) не создаёт дубль: сохранённая
+        строка остаётся, а что в неё дописать, решает ``rules.retry_backfills_snapshot``.
+        Зовёт ``server._post_workout``.
+        """
         normalized_payload, client_id = rules.normalize_workout_payload(payload)
         timestamp = utc_now()
 
@@ -400,6 +438,10 @@ class MiniAppStore:
         workout_id: int,
         payload: dict[str, Any],
     ) -> dict[str, Any] | None:
+        """Перезаписать тренировку по id; ``None``, если её нет. Снапшот совета при
+        правке без снапшота сохраняется по ``rules.edit_keeps_snapshot``. Зовёт
+        ``server._put_workout``.
+        """
         normalized_payload, normalized_client_id = rules.normalize_workout_payload(payload)
         timestamp = utc_now()
 
@@ -436,6 +478,7 @@ class MiniAppStore:
         return self._deserialize_workout(row)
 
     def delete_workout(self, user_id: int, workout_id: int) -> dict[str, Any] | None:
+        """Удалить тренировку по id и вернуть её, или ``None``, если её не было."""
         with self._connection() as connection:
             existing = self._get_workout_row(connection, user_id, workout_id)
             if existing is None:
@@ -449,6 +492,7 @@ class MiniAppStore:
         return self._deserialize_workout(existing)
 
     def get_latest_workout_id(self, user_id: int) -> int | None:
+        """Id самой свежей тренировки (по дате, потом по id) или ``None``."""
         with self._connection() as connection:
             row = connection.execute(
                 """
@@ -462,6 +506,7 @@ class MiniAppStore:
         return int(row["id"]) if row is not None else None
 
     def get_recommendation(self, user_id: int) -> dict[str, Any] | None:
+        """Текущая строка кэша совета со статусом или ``None``, если её ещё не было."""
         with self._connection() as connection:
             row = connection.execute(
                 "SELECT * FROM recommendations WHERE user_id = ?",
@@ -470,7 +515,7 @@ class MiniAppStore:
         return self._deserialize_recommendation(row) if row is not None else None
 
     def clear_recommendation(self, user_id: int) -> None:
-        """Drop the mutable next-workout cache while preserving its audit log."""
+        """Снести изменяемый кэш совета, сохранив журнал генераций."""
         with self._connection() as connection:
             connection.execute(
                 "DELETE FROM recommendations WHERE user_id = ?",
@@ -478,6 +523,8 @@ class MiniAppStore:
             )
 
     def set_recommendation_pending(self, user_id: int) -> None:
+        """Пометить совет как «генерируется», не трогая прошлый payload: карточка
+        показывает его как фолбэк, пока идёт генерация."""
         timestamp = utc_now()
         with self._connection() as connection:
             connection.execute(
@@ -501,6 +548,10 @@ class MiniAppStore:
         input_tokens: int | None,
         output_tokens: int | None,
     ) -> dict[str, Any]:
+        """Записать готовый совет в кэш (одна строка на пользователя, статус ready) и
+        ту же генерацию в append-only журнал одной транзакцией. Зовут server.py,
+        скрипт таймера и Coach MCP.
+        """
         timestamp = utc_now()
         payload_json = json.dumps(recommendation, ensure_ascii=False)
         with self._connection() as connection:
@@ -557,6 +608,8 @@ class MiniAppStore:
         return self._deserialize_recommendation(row)
 
     def fail_recommendation(self, user_id: int, error: str) -> None:
+        """Пометить совет как упавший с текстом ошибки (до 500 символов) и записать
+        попытку в журнал генераций."""
         timestamp = utc_now()
         with self._connection() as connection:
             connection.execute(
@@ -599,7 +652,7 @@ class MiniAppStore:
         output_tokens: int | None,
         timestamp: int,
     ) -> None:
-        """Append one immutable row to the generation journal (same transaction)."""
+        """Одна неизменяемая строка в журнал генераций, в той же транзакции."""
         connection.execute(
             """
             INSERT INTO recommendation_log (
@@ -623,7 +676,7 @@ class MiniAppStore:
         )
 
     def list_recommendation_log(self, user_id: int, limit: int = 50) -> list[dict[str, Any]]:
-        """Past generations for a user, newest first (append-only journal)."""
+        """Прошлые генерации пользователя от новых к старым (append-only журнал)."""
         with self._connection() as connection:
             rows = connection.execute(
                 """
@@ -637,6 +690,7 @@ class MiniAppStore:
         return [self._deserialize_recommendation(row) for row in rows]
 
     def _deserialize_recommendation(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Строка кэша или журнала в словарь API с разобранным payload."""
         payload_raw = row["payload_json"]
         recommendation = json.loads(payload_raw) if payload_raw else None
         keys = row.keys()
@@ -651,11 +705,12 @@ class MiniAppStore:
             "input_tokens": row["input_tokens"],
             "output_tokens": row["output_tokens"],
             "created_at": row["created_at"],
-            # The append-only log has no updated_at; fall back to created_at.
+            # У append-only журнала нет updated_at: подставляем created_at.
             "updated_at": row["updated_at"] if "updated_at" in keys else row["created_at"],
         }
 
     def list_body_weights(self, user_id: int) -> list[dict[str, Any]]:
+        """Все взвешивания от старых к новым."""
         with self._connection() as connection:
             rows = connection.execute(
                 """
@@ -671,6 +726,9 @@ class MiniAppStore:
     def save_body_weight(
         self, user_id: int, payload: dict[str, Any]
     ) -> tuple[dict[str, Any], bool]:
+        """Взвешивание за дату: одно на день, повторная запись за ту же дату обновляет
+        значение и заметку. ``(запись, создана ли)``. Зовёт ``server._post_body_weight``.
+        """
         normalized_payload = rules.normalize_body_weight_payload(payload)
         timestamp = utc_now()
 
@@ -745,6 +803,7 @@ class MiniAppStore:
         return self._deserialize_body_weight(row), created
 
     def delete_body_weight(self, user_id: int, entry_id: int) -> dict[str, Any] | None:
+        """Удалить взвешивание по id и вернуть его, или ``None``."""
         with self._connection() as connection:
             row = connection.execute(
                 """
@@ -767,8 +826,9 @@ class MiniAppStore:
 
         return self._deserialize_body_weight(row)
 
-    # --- waist measurements (weekly, cm) ---------------------------------- #
+    # --- замеры талии (еженедельно, см) ------------------------------------ #
     def list_waists(self, user_id: int) -> list[dict[str, Any]]:
+        """Все замеры талии от старых к новым."""
         with self._connection() as connection:
             rows = connection.execute(
                 """
@@ -782,7 +842,8 @@ class MiniAppStore:
         return [self._deserialize_waist(row) for row in rows]
 
     def save_waist(self, user_id: int, payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-        """Upsert by (user, entry_date) — one measurement per day, like weight."""
+        """Замер талии за дату: один на день, как и вес. ``(запись, создана ли)``.
+        Зовут server.py и Coach MCP."""
         normalized_payload = rules.normalize_waist_payload(payload)
         timestamp = utc_now()
 
@@ -844,6 +905,7 @@ class MiniAppStore:
         return self._deserialize_waist(row), created
 
     def delete_waist(self, user_id: int, entry_id: int) -> dict[str, Any] | None:
+        """Удалить замер талии по id и вернуть его, или ``None``."""
         with self._connection() as connection:
             row = connection.execute(
                 """
@@ -863,7 +925,7 @@ class MiniAppStore:
 
         return self._deserialize_waist(row)
 
-    # --- events: gaps in training with a reason ---------------------------- #
+    # --- события: перерывы в тренировках с причиной ------------------------ #
     def list_events(self, user_id: int) -> list[dict[str, Any]]:
         """Новые сверху — событие читают рядом с дыркой, которую оно объясняет."""
         with self._connection() as connection:
@@ -879,9 +941,11 @@ class MiniAppStore:
         return [self._deserialize_event(row) for row in rows]
 
     def save_event(self, user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-        """Всегда создаёт запись: ключа апсерта у события нет — событий подряд
-        может быть несколько (болезнь → сразу командировка), в том числе с одной
-        датой начала."""
+        """Всегда создаёт запись: ключа апсерта у события нет — событий подряд может
+        быть несколько (болезнь → сразу командировка), в том числе с одной датой
+        начала. Открытое событие может быть только одно (``rules``). Зовут server.py и
+        Coach MCP.
+        """
         normalized_payload = rules.normalize_event_payload(payload)
         timestamp = utc_now()
 
@@ -917,6 +981,8 @@ class MiniAppStore:
         event_id: int,
         payload: dict[str, Any],
     ) -> dict[str, Any] | None:
+        """Перезаписать событие по id; ``None``, если его нет. Второе открытое событие
+        отвергается (``rules``)."""
         normalized_payload = rules.normalize_event_payload(payload)
         timestamp = utc_now()
 
@@ -949,6 +1015,7 @@ class MiniAppStore:
         return self._deserialize_event(row)
 
     def delete_event(self, user_id: int, event_id: int) -> dict[str, Any] | None:
+        """Удалить событие по id и вернуть его, или ``None``."""
         with self._connection() as connection:
             row = self._get_event_row(connection, user_id, event_id)
             if row is None:
@@ -962,8 +1029,10 @@ class MiniAppStore:
         return self._deserialize_event(row)
 
     def close_open_event(self, user_id: int, end_date: str) -> dict[str, Any] | None:
-        """Закрыть текущее открытое событие; вернуть его или None, если открытых
-        нет. Идемпотентен — вызывается на каждой созданной тренировке."""
+        """Закрыть текущее открытое событие датой ``end_date`` (не раньше его начала,
+        см. ``rules.closed_event_end``); вернуть его или ``None``, если открытых нет.
+        Идемпотентен — зовётся на каждой созданной сегодняшней тренировке.
+        """
         closed_on = rules._normalize_event_date(end_date, "end_date")
         timestamp = utc_now()
 
@@ -1018,6 +1087,7 @@ class MiniAppStore:
         user_id: int,
         event_id: int,
     ) -> sqlite3.Row | None:
+        """Сырая строка события по id и пользователю или ``None``."""
         return connection.execute(
             """
             SELECT id, user_id, start_date, end_date, text, created_at, updated_at
@@ -1027,7 +1097,7 @@ class MiniAppStore:
             (event_id, user_id),
         ).fetchone()
 
-    # --- cached coach reports + token spend -------------------------------- #
+    # --- кэш недельных отчётов и расход токенов ---------------------------- #
     def save_coach_report(
         self,
         user_id: int,
@@ -1038,6 +1108,9 @@ class MiniAppStore:
         input_tokens: int | None,
         output_tokens: int | None,
     ) -> dict[str, Any]:
+        """Записать недельный отчёт в кэш по ключу (пользователь, конец периода, дней);
+        повторная запись перезаписывает. Зовут скрипт таймера и Coach MCP.
+        """
         timestamp = utc_now()
         with self._connection() as connection:
             connection.execute(
@@ -1071,7 +1144,7 @@ class MiniAppStore:
         return stored
 
     def get_latest_coach_report(self, user_id: int, days: int = 7) -> dict[str, Any] | None:
-        """The most recent cached weekly report (served by /api/reports/weekly)."""
+        """Самый свежий кэшированный отчёт (его отдаёт ``/api/reports/weekly``) или ``None``."""
         with self._connection() as connection:
             row = connection.execute(
                 """
@@ -1087,8 +1160,10 @@ class MiniAppStore:
         return dict(row) if row is not None else None
 
     def mark_coach_report_read(self, user_id: int, days: int = 7) -> bool:
-        """Server-side read receipt for the latest weekly report — it kills the
-        weekly_report_ready signal for every client (iOS, MCP chat) at once."""
+        """Серверная отметка «прочитан» у последнего отчёта: гасит сигнал
+        weekly_report_ready сразу у всех клиентов (iOS, чат MCP). ``True``, если
+        отметка поставлена только что.
+        """
         timestamp = utc_now()
         with self._connection() as connection:
             cursor = connection.execute(
@@ -1106,10 +1181,11 @@ class MiniAppStore:
             )
         return cursor.rowcount > 0
 
-    # --- coach-signal snoozes (the История banner) ------------------------- #
+    # --- отсрочки сигналов коуча (баннер «История») ------------------------ #
     def list_signal_snoozes(self, user_id: int) -> dict[str, int | None]:
-        """{instance_key: snooze_until | None} — None means an episodic dismiss
-        (hidden while that exact state episode lasts)."""
+        """``{instance_key: snooze_until | None}`` — ``None`` означает эпизодический
+        дисмисс (скрыт, пока длится ровно этот эпизод состояния). Зовёт ``coach_signals``.
+        """
         with self._connection() as connection:
             rows = connection.execute(
                 "SELECT instance_key, snooze_until FROM signal_snoozes WHERE user_id = ?",
@@ -1118,6 +1194,7 @@ class MiniAppStore:
         return {row["instance_key"]: row["snooze_until"] for row in rows}
 
     def save_signal_snooze(self, user_id: int, instance_key: str, snooze_until: int | None) -> None:
+        """Записать отсрочку баннера по ключу эпизода; повтор перезаписывает срок."""
         timestamp = utc_now()
         with self._connection() as connection:
             connection.execute(
@@ -1132,6 +1209,7 @@ class MiniAppStore:
             )
 
     def get_coach_report(self, user_id: int, period_end: str, days: int) -> dict[str, Any] | None:
+        """Кэшированный отчёт за конкретный период и число дней или ``None``."""
         with self._connection() as connection:
             row = connection.execute(
                 """
@@ -1145,8 +1223,9 @@ class MiniAppStore:
         return dict(row) if row is not None else None
 
     def token_spend(self, user_id: int) -> list[dict[str, Any]]:
-        """Monthly token totals per source/model — recommendation generations
-        (the append-only log) plus cached weekly reports."""
+        """Расход токенов по месяцам, источникам и моделям: генерации совета (журнал)
+        плюс кэшированные недельные отчёты. Зовёт Coach MCP (``coach_costs``).
+        """
         query = """
             SELECT strftime('%Y-%m', created_at, 'unixepoch') AS month,
                    'recommendation' AS source,
@@ -1179,6 +1258,7 @@ class MiniAppStore:
         user_id: int,
         workout_id: int,
     ) -> sqlite3.Row | None:
+        """Сырая строка тренировки по id и пользователю или ``None``."""
         return connection.execute(
             """
             SELECT id, user_id, client_id, workout_date, payload_json, created_at, updated_at
@@ -1189,6 +1269,7 @@ class MiniAppStore:
         ).fetchone()
 
     def _deserialize_workout(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Строка таблицы тренировок в словарь API: поля строки плюс ``data`` из payload."""
         payload = json.loads(row["payload_json"])
         return {
             "id": row["id"],
@@ -1201,6 +1282,7 @@ class MiniAppStore:
         }
 
     def _serialize_user(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Строка пользователя в словарь API с ``display_name`` и флагом debug-пользователя."""
         first_name = row["first_name"] or ""
         last_name = row["last_name"] or ""
         display_name = f"{first_name} {last_name}".strip() or "Trainer user"
@@ -1217,6 +1299,7 @@ class MiniAppStore:
         }
 
     def _deserialize_body_weight(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Строка взвешивания в словарь API."""
         return {
             "id": row["id"],
             "entry_date": row["entry_date"],
@@ -1227,6 +1310,7 @@ class MiniAppStore:
         }
 
     def _deserialize_waist(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Строка замера талии в словарь API."""
         return {
             "id": row["id"],
             "entry_date": row["entry_date"],
@@ -1237,6 +1321,7 @@ class MiniAppStore:
         }
 
     def _deserialize_event(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Строка события в словарь API."""
         return {
             "id": row["id"],
             "start_date": row["start_date"],

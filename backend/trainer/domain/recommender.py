@@ -35,16 +35,19 @@ from trainer.domain import coach_features, coach_state, plan_validator, prompt_b
 DEFAULT_HISTORY_LIMIT = int(os.getenv("RECOMMENDATION_HISTORY_LIMIT", "20"))
 
 
-# Re-exported from coach_features (single source of truth for the mapping).
+# Реэкспорт из coach_features: единственный источник правды о группах и границах.
 MUSCLE_GROUPS = coach_features.MUSCLE_GROUPS
 MIN_PLAUSIBLE_BODY_WEIGHT = coach_features.MIN_PLAUSIBLE_BODY_WEIGHT
 MAX_PLAUSIBLE_BODY_WEIGHT = coach_features.MAX_PLAUSIBLE_BODY_WEIGHT
 
 
 # --------------------------------------------------------------------------- #
-# Public entry point
+# План следующей тренировки
 # --------------------------------------------------------------------------- #
 def _sum_usage(*usages: dict[str, Any]) -> dict[str, Any]:
+    """Сложить токены нескольких вызовов (первый запрос и репромпт) в один usage.
+    Зовёт также Coach MCP, когда показывает трассу отладки.
+    """
     total: dict[str, Any] = {}
     for usage in usages:
         for key in ("input_tokens", "output_tokens"):
@@ -71,11 +74,18 @@ def generate_with_trace(
     timeout: float = DEFAULT_TIMEOUT,
     max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> tuple[dict[str, Any], dict[str, Any], str, list[dict[str, Any]]]:
-    """Like :func:`generate`, but also returns the attempt trace
-    ``[{raw, adjustments, violations, usage}, ...]`` for the MCP debugging
-    tools. Semantic violations never fail the generation: after one corrective
-    reprompt the server resolves what it can deterministically and annotates
-    the rationale — errors are reserved for API/structural failures."""
+    """То же, что :func:`generate`, плюс трасса попыток
+    ``[{raw, adjustments, violations, usage}, ...]`` для отладочных инструментов MCP.
+
+    Порядок: системный промпт → user-промпт → JSON-схема → вызов модели →
+    санитизация (``plan_validator._validate``) → три жёсткие границы
+    (``_semantic_violations``) → при нарушениях один исправляющий репромпт в том же
+    разговоре → если модель промахнулась снова, детерминированное разрешение
+    (``_resolve_violations``) с пометкой в rationale → дата следующей тренировки и
+    ``coach_context`` для клиента. Семантические нарушения никогда не роняют
+    генерацию: ``RecommendationError`` только для API и структурных сбоев.
+    Зовут :func:`generate` и ``coach_debug_recommendation`` в Coach MCP.
+    """
     if not workouts:
         raise RecommendationError("Нет истории тренировок для рекомендации")
 
@@ -126,10 +136,10 @@ def generate_with_trace(
     )
 
     if violations:
-        # One corrective round-trip in the same conversation: name the exact
-        # violations and ask for a rethought plan. If the model misses again,
-        # the server resolves deterministically (clamp comeback weights,
-        # annotate the rationale) instead of failing the generation.
+        # Один исправляющий круг в том же разговоре: называем нарушения
+        # поимённо и просим переосмыслить план. Если модель промахивается
+        # снова, сервер чинит детерминированно (ограничивает возвратные веса,
+        # дописывает rationale), а не роняет генерацию.
         reprompt = (
             "Твой план нарушает жёсткие границы:\n- "
             + "\n- ".join(violations)
@@ -161,9 +171,9 @@ def generate_with_trace(
         )
         usage = _sum_usage(usage, usage_retry)
 
-    # Resolve the model's relative rest_days into an absolute date at generation
-    # time (auto-freshness regenerates daily, so it stays current). The card
-    # shows a fixed target instead of doing date math on the client.
+    # Относительные rest_days от модели превращаем в дату уже при генерации:
+    # авто-свежесть пересобирает совет ежедневно, так что дата не протухает.
+    # Карточка показывает готовую дату, а не считает её на клиенте.
     recommendation["next_workout_date"] = (
         today + timedelta(days=recommendation["rest_days"])
     ).isoformat()
@@ -174,9 +184,12 @@ def generate_with_trace(
 def _coach_context(
     state: dict[str, Any], workouts: list[dict[str, Any]], today: date
 ) -> dict[str, Any]:
-    """Phase/cycle context attached to the recommendation payload so the iOS
-    client can render the phase badge and the CURRENT week's volume targets
-    instead of hardcoding the policy ranges."""
+    """Контекст фазы и цикла, который уезжает в payload совета.
+
+    По нему iOS рисует бейдж фазы и цели ТЕКУЩЕЙ недели по группам мышц, не зашивая
+    диапазоны политики у себя; плюс опорные линии для графиков «Замеров»: цель веса
+    фазы (цель сушки или потолок набора) и жёсткий лимит талии, если задан.
+    """
     params = coach_state.phase_params(state)
     position = coach_state.cycle_position(state, workouts, today)
     maintenance_sets = params.get("sets_per_group") if params["phase"] == "maintenance" else None
@@ -198,8 +211,8 @@ def _coach_context(
                 week_target, maintenance_sets, params.get("group_targets")
             ).items()
         },
-        # Reference lines for the Замеры charts: the phase's weight goal
-        # (cut target / bulk ceiling) and the hard waist limit, when set.
+        # Опорные линии для графиков «Замеров»: цель веса фазы (цель сушки
+        # или потолок набора) и жёсткий лимит талии, если задан.
         "target_weight_kg": float(target_weight) if target_weight else None,
         "waist_limit_cm": state.get("waist_limit_cm"),
     }
@@ -222,10 +235,14 @@ def generate(
     timeout: float = DEFAULT_TIMEOUT,
     max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> tuple[dict[str, Any], dict[str, Any], str]:
-    """Generate a validated next-workout recommendation.
+    """Проверенный совет на следующую тренировку.
 
-    Returns ``(recommendation, usage, model)``. Raises :class:`RecommendationError`
-    on any failure (no history, missing key, API error, unusable output)."""
+    Возвращает ``(recommendation, usage, model)``. Любая невозможность —
+    ``RecommendationError``: нет истории, нет ключа, ошибка API, непригодный ответ.
+    Зовут server.py (фоновая пересборка после правок и ``POST
+    /api/recommendations/refresh``), скрипт таймера ``refresh_recommendation.py`` и
+    Coach MCP.
+    """
     recommendation, usage, model_used, _trace = generate_with_trace(
         workouts,
         body_weights,
@@ -246,7 +263,7 @@ def generate(
 
 
 # --------------------------------------------------------------------------- #
-# Weekly coach report
+# Недельный отчёт тренера
 # --------------------------------------------------------------------------- #
 def generate_weekly_report(
     workouts: list[dict[str, Any]],
@@ -265,9 +282,12 @@ def generate_weekly_report(
     max_tokens: int = 12000,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> tuple[str, dict[str, Any], str]:
-    """A coach-style weekly retrospective in Markdown (plain text, no schema).
+    """Недельная ретроспектива в стиле тренера: Markdown без схемы.
 
-    Returns ``(report_text, usage, model)``."""
+    Возвращает ``(текст, usage, model)``. Период и окно данных задаёт ``today``
+    (воскресенье закрытой недели, см. :func:`weekly_report_period`) и ``days``.
+    Зовут скрипт таймера ``weekly_report.py`` и Coach MCP.
+    """
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         raise RecommendationError("ANTHROPIC_API_KEY не настроен на сервере")
@@ -293,8 +313,10 @@ def generate_weekly_report(
 # Жизненный цикл совета: когда он устарел, что его обесценивает, когда обновлять
 # --------------------------------------------------------------------------- #
 def is_stale(rec: dict[str, Any] | None, latest_workout_id: int | None) -> bool:
-    """Готовый совет собран по тренировке, которая уже не последняя. Карточка
-    показывает его с пометкой, пока не досчитается новый."""
+    """Готовый совет собран по тренировке, которая уже не последняя: карточка
+    показывает его с пометкой, пока не досчитается новый. Зовёт server.py при выдаче
+    совета и после ручного refresh.
+    """
     return bool(
         rec and rec.get("status") == "ready" and rec.get("based_on_workout_id") != latest_workout_id
     )
@@ -308,11 +330,14 @@ ADVICE_INPUTS = frozenset({"workout", "body_weight", "waist", "event"})
 
 
 def advice_invalidated_by(change: str, *, created: bool = True) -> bool:
+    """Обесценивает ли правка данных готовый совет (см. ``ADVICE_INPUTS`` выше).
+    Зовёт ``server._advice_changed`` после каждой мутации.
+    """
     return change in ADVICE_INPUTS and created
 
 
-# A 'pending' row older than this is a generation that died mid-flight
-# (e.g. the server was restarted) — safe to take over.
+# Строка pending старше этого — генерация, умершая на полпути (например,
+# сервер перезапустили): её можно спокойно перехватить.
 STUCK_PENDING_HOURS = 2.0
 
 
@@ -322,7 +347,11 @@ def should_refresh(
     max_age_hours: float = 24.0,
 ) -> tuple[bool, str]:
     """Нужно ли пересобирать совет по таймеру: нет совета, прошлая генерация
-    упала, зависший pending или готовый старше max_age_hours."""
+    упала, зависший pending или готовый старше ``max_age_hours``.
+
+    Возвращает ``(нужно, причина)``; причина уходит в лог скрипта. Зовёт
+    ``infra/jobs/refresh_recommendation.py`` каждое утро.
+    """
     if rec is None:
         return True, "рекомендации ещё нет"
 
@@ -345,13 +374,16 @@ def should_refresh(
 def weekly_report_period(today: date) -> date:
     """Отчёт всегда про ЗАКРЫТУЮ неделю, а не про последние 7 дней: таймер
     просыпается уже в понедельник, поэтому и период, и окно данных модели
-    якорятся на прошедшее воскресенье, а не на сегодня."""
+    якорятся на прошедшее воскресенье, а не на сегодня. Зовёт
+    ``infra/jobs/weekly_report.py``.
+    """
     return coach_state.last_closed_week_end(today)
 
 
 def weekly_report_needed(cached: dict[str, Any] | None, *, force: bool) -> tuple[bool, str]:
-    """Отчёт за закрытую неделю генерируется один раз и живёт в кэше; --force
-    перегенерирует его поверх."""
+    """Отчёт за закрытую неделю генерируется один раз и живёт в кэше; ``--force``
+    перегенерирует его поверх. Возвращает ``(нужно, причина)``.
+    """
     if force:
         return True, "форсировано (--force)"
     if cached:

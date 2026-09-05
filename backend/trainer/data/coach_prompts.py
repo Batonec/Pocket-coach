@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Prompt text, kept out of the code that assembles it.
+"""Текст промптов, вынесенный из кода, который их собирает.
 
-Everything the model reads as prose lives in ``backend/prompts/*.md`` — plain
-markdown a human can open and read end to end. This module only loads a
-template and fills its slots; it computes nothing and decides nothing.
+Вся проза, которую читает модель, лежит в ``backend/prompts/*.md`` — обычный
+markdown, который человек открывает и читает целиком. Этот модуль только грузит
+шаблон и подставляет слоты; он ничего не считает и ничего не решает.
 
-The split is deliberate and is the point of the module: methodology is text and
-belongs in text files, where a change reads as a prose diff. Numbers, thresholds
-and anything derived from the athlete's data stay in Python and arrive here as
-already-rendered strings.
+Разделение намеренное, и в нём смысл модуля: методика — это текст, и место ей в
+текстовых файлах, где правка читается как диф прозы. Числа, пороги и всё, что
+считается из данных атлета, остаются в Python и приходят сюда уже строками.
 
-Slots are written ``{{name}}`` and substituted literally — no ``str.format``,
-so braces inside the prose (JSON snippets, ranges) need no escaping. A template
-rendered with a missing or unknown slot raises: a prompt that silently ships
-``{{phase_policy}}`` to the model is worse than a failed import at boot.
+Слоты пишутся ``{{name}}`` и подставляются буквально, без ``str.format``, так что
+фигурные скобки в прозе (кусочки JSON, диапазоны) экранировать не нужно. Шаблон с
+незаполненным или лишним слотом падает: промпт, молча уехавший в модель с
+``{{phase_policy}}``, хуже, чем ошибка на старте.
 
-Stdlib-only, like the rest of the backend.
+Кто зовёт: ``prompt_builder`` (шаблоны и подписи блоков) и ``coach_signals``
+(тексты баннеров из ``resources/signals.md``). Только stdlib, как весь backend.
 """
 
 from __future__ import annotations
@@ -34,20 +34,24 @@ _SLOT_RE = re.compile(r"\{\{([a-z_]+)\}\}")
 
 
 class PromptError(RuntimeError):
-    """A template is missing, unreadable, or its slots do not line up."""
+    """Шаблон не найден, не читается или его слоты не сходятся с переданными."""
 
 
 def load(name: str, *, directory: Path | None = None) -> str:
-    """Raw template text by file stem (``"system"`` → ``prompts/system.md``)."""
+    """Сырой текст шаблона по имени файла (``"system"`` → ``prompts/system.md``).
+
+    ``directory`` переопределяет папку: так ``coach_signals`` читает баннеры из
+    ``resources/``. Нет файла — ``PromptError``.
+    """
     path = (directory or PROMPTS_DIR) / f"{name}.md"
     try:
         return path.read_text("utf-8")
-    except OSError as exc:  # missing file on a half-deployed backend
+    except OSError as exc:  # файла нет: backend задеплоен наполовину
         raise PromptError(f"промпт {name!r} не найден: {path}") from exc
 
 
 def slots(template: str) -> set[str]:
-    """Slot names a template expects."""
+    """Имена слотов ``{{name}}``, которые ожидает шаблон."""
     return set(_SLOT_RE.findall(template))
 
 
@@ -55,16 +59,17 @@ _FRAGMENT_RE = re.compile(r"^## ([a-z_]+)[ \t]*$", re.M)
 
 
 def fragments(name: str, *, directory: Path | None = None) -> dict[str, str]:
-    """Named fragments of a block file: ``## имя`` starts a fragment.
+    """Именованные фрагменты файла блоков: заголовок ``## имя`` начинает фрагмент.
 
-    Prose that arrives interleaved with computed data — block captions, single
-    lines picked by a condition — cannot live in one template with optional
-    slots without weakening the «unfilled slot is a crash» rule. It lives here
-    instead: the text is in the file, the condition stays in Python.
+    Проза, которая идёт вперемешку с вычисленными данными — подписи к блокам,
+    отдельные строки по условию, — не может жить в одном шаблоне с необязательными
+    слотами, не ослабив правило «незаполненный слот — это падение». Она живёт здесь:
+    текст в файле, условие в Python.
 
-    Only newlines are stripped from a fragment, never spaces: a caption may
-    legitimately start with one (« — плановая разгрузочная неделя.»). Everything
-    before the first heading is a comment.
+    У фрагмента срезаются только переводы строк, пробелы остаются: подпись может
+    законно начинаться с пробела (« — плановая разгрузочная неделя.»). Всё до первого
+    заголовка — комментарий. Зовут ``prompt_builder`` (``user_blocks.md``) и
+    ``coach_signals`` (``signals.md``).
     """
     text = load(name, directory=directory)
     marks = list(_FRAGMENT_RE.finditer(text))
@@ -84,15 +89,15 @@ _HEADING_RE = re.compile(r"^## +(?:\d+\.\s*)?(.+?)\s*$", re.M)
 
 
 def document_sections(text: str, wanted: list[str]) -> tuple[str, list[str]]:
-    """Pull named «## N. Заголовок» sections out of a long human document.
+    """Вырезает разделы ``## N. Заголовок`` из длинного человеческого документа.
 
-    Matching is by the heading TEXT with the leading number stripped: the
-    athlete renumbers sections while editing, and a slice keyed on «## 4.»
-    would silently start returning the wrong chapter. A heading that is not
-    found is reported back instead of quietly disappearing — a prompt missing
-    its training split must be visible, not merely shorter.
+    Сопоставление по ТЕКСТУ заголовка без номера: атлет перенумеровывает разделы,
+    правя документ, и срез по «## 4.» молча начал бы отдавать не ту главу.
+    Ненайденный заголовок возвращается списком, а не исчезает: промпт без раздела
+    про сплит обязан быть заметен, а не просто короче.
 
-    Returns ``(joined_sections, missing_headings)``; order follows ``wanted``.
+    Возвращает ``(склеенные_разделы, ненайденные_заголовки)``; порядок как в
+    ``wanted``. Зовёт ``prompt_builder._render_program`` для среза стратегии.
     """
     marks = list(_HEADING_RE.finditer(text))
     found: dict[str, str] = {}
@@ -110,7 +115,10 @@ def document_sections(text: str, wanted: list[str]) -> tuple[str, list[str]]:
 
 
 def render(template: str, **values: str) -> str:
-    """Fill every ``{{slot}}``; refuse to ship a half-filled prompt."""
+    """Заполняет каждый ``{{slot}}``; наполовину заполненный промпт не отдаёт.
+
+    Незаполненный или лишний слот — ``PromptError`` с именами слотов.
+    """
     expected = slots(template)
     missing = expected - set(values)
     if missing:
@@ -122,5 +130,5 @@ def render(template: str, **values: str) -> str:
 
 
 def build(name: str, **values: str) -> str:
-    """Load and render in one call — the usual entry point."""
+    """Загрузить и отрендерить одним вызовом — обычная точка входа для шаблона целиком."""
     return render(load(name), **values)

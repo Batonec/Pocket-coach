@@ -8,6 +8,10 @@
 через coach_prompts; этот модуль только считает слоты из данных атлета и
 складывает блоки в нужном порядке. Если сюда просится фраза, а не вычисление,
 ей место в markdown.
+
+В конце файла — рендеры вычисленных фич из ``coach_features`` в строки для
+модели: фичи считают, здесь их показывают. Зовут ``recommender`` (обе генерации)
+и Coach MCP (``coach_preview_prompt``, ``coach_phase_summary``).
 """
 
 from __future__ import annotations
@@ -19,8 +23,8 @@ from typing import Any
 from trainer.data import coach_prompts
 from trainer.domain import coach_features, coach_state, plan_validator
 
-# Raw history shown to the model; everything older is covered by the computed
-# per-exercise summaries (the prompt must not grow from the feature work).
+# Сколько сырых тренировок видит модель; всё старше покрывают вычисленные
+# сводки по упражнениям (промпт не должен расти от работы фич).
 RAW_HISTORY_COUNT = 10
 
 # Потолок хроники событий. Окна по датам у неё нет намеренно: событие любой
@@ -32,10 +36,10 @@ MAX_EVENT_LINES = 40
 
 _EFFORT_MARK = {"easy": "-", "ok": "", "hard": "+"}
 
-# What each catalog machine actually is (from the athlete's own descriptions) —
-# the terse RU names alone don't tell the model which muscle works. Id 1 is a
-# catalog duplicate of 18: history rows are re-mapped onto 18 during
-# serialization, so the model never sees it.
+# Что за тренажёр стоит за каждым id каталога (по описаниям самого атлета):
+# по коротким именам модель не поймёт, какая мышца работает. Id 1 — дубль 18
+# в каталоге: строки истории переводятся на 18 при сериализации, и модель его
+# не видит.
 CATALOG_SEMANTICS: dict[int, str] = {
     18: "рычажный жим сидя от груди, горизонтальный — грудь (вся), вторично трицепс и передняя дельта",
     17: "пек-дек «бабочка» — изоляция груди",
@@ -51,8 +55,8 @@ CATALOG_SEMANTICS: dict[int, str] = {
     15: "сгибания ног лёжа — бицепс бедра",
 }
 
-# Muscles the athlete CANNOT train with the current catalog — standing context
-# so the model knows they sit at zero structurally, not by athlete's laziness.
+# Мышцы, которые атлет НЕ МОЖЕТ тренировать текущим каталогом: постоянный
+# контекст, чтобы модель знала, что их ноль структурный, а не от лени.
 CATALOG_GAPS = "икры, пресс, разгибатели спины — упражнений в каталоге нет"
 
 # Разделы рабочего документа стратегии, которые уходят в системный промпт.
@@ -91,6 +95,9 @@ def _render_program(strategy: str | None) -> str:
 
 
 def _render_profile(profile: dict[str, Any] | None) -> str:
+    """Слот ``{{profile}}``: блоки профиля как «[Заголовок]» и текст, через пустую
+    строку; без профиля — нейтральный фолбэк про взрослого здорового любителя.
+    """
     if not profile:
         return (
             "Профиль атлета не настроен — веди как взрослого здорового любителя, "
@@ -105,11 +112,15 @@ def _render_profile(profile: dict[str, Any] | None) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Computed training context (plan adherence; the rest lives in coach_features)
+# Дисциплина «факт против плана» (остальные фичи считает coach_features)
 # --------------------------------------------------------------------------- #
 def _plan_adherence_report(workouts: list[dict[str, Any]]) -> str | None:
-    """Compare the most recent snapshot-carrying workout against its plan."""
-    for workout in workouts:  # newest-first
+    """Сравнить последнюю тренировку со снапшотом совета, по которому её делали:
+    сколько плановых подходов выполнено и какие отклонения (пропущено, меньше
+    подходов, сверх плана). Одна строка для блока дисциплины или ``None``, если
+    снапшота нет ни у одной недавней тренировки.
+    """
+    for workout in workouts:  # от новых к старым
         snapshot = (workout.get("data", {}) or {}).get("recommendation")
         if not isinstance(snapshot, dict):
             continue
@@ -159,7 +170,7 @@ def _plan_adherence_report(workouts: list[dict[str, Any]]) -> str | None:
 
 
 # --------------------------------------------------------------------------- #
-# Prompt building
+# Хроника: тренировки и события строками
 # --------------------------------------------------------------------------- #
 def _athlete_text(value: object) -> str:
     """Дословный текст атлета одной строкой.
@@ -179,16 +190,22 @@ def _quoted(value: object) -> str:
 
 
 def _serialize_workout(workout: dict[str, Any], names_by_id: dict[int, str] | None = None) -> str:
+    """Одна тренировка одной строкой хроники: дата, метка нагрузки в скобках, потом
+    упражнения через «;», у каждого подходы «вес×повторы» с меткой тяжести (-/+),
+    ``@RIR`` и заметкой в «ёлочках» вплотную к своему подходу. Заметка ко всей
+    сессии — после тире в хвосте. Старый дубль id 1 показывается под каноническим
+    именем из каталога.
+    """
     data = workout.get("data", {}) or {}
-    # A session logged without a coach card has no load label — say so, rather
-    # than print «?», which the model reads as missing data.
+    # У сессии, записанной без карточки совета, нет метки нагрузки: так и
+    # говорим, а не печатаем «?», который модель читает как пропуск данных.
     load_type = data.get("load_type") or "без плана"
     parts: list[str] = []
     for exercise in data.get("exercises", []) or []:
         name = str(exercise.get("name", "")).strip() or "?"
         canonical = coach_features.canonical_exercise_id(exercise.get("exercise_id"))
-        # Old rows may carry the duplicate id 1 — show them under the canonical
-        # catalog name so the model sees one movement, not two.
+        # Старые строки могут нести дубль id 1: показываем их под каноническим
+        # именем из каталога, чтобы модель видела одно движение, а не два.
         if names_by_id and canonical is not None and canonical in names_by_id:
             name = names_by_id[canonical]
         sets_repr: list[str] = []
@@ -303,8 +320,13 @@ def _serialize_history(
     catalog: list[dict[str, Any]] | None = None,
     events: list[dict[str, Any]] | None = None,
 ) -> str:
-    # list_workouts() returns newest-first; take the most recent `limit`
-    # and present oldest -> newest so progression reads naturally.
+    # list_workouts() отдаёт от новых к старым: берём последние `limit` и
+    # показываем от старых к новым, чтобы прогрессия читалась естественно.
+    """Последние ``limit`` тренировок от старых к новым (стор отдаёт от новых),
+    вперемешку с событиями по датам: разрыв в датах объясняется ровно там, где он
+    виден, на общей дате событие стоит первым. Зовут ``_build_user_prompt``,
+    ``_build_report_prompt`` и Coach MCP.
+    """
     names_by_id = {item["id"]: item["name"] for item in catalog} if catalog else None
     recent = list(workouts[:limit])
     recent.reverse()
@@ -320,9 +342,10 @@ def _serialize_history(
 
 
 def _render_attendance(workouts: list[dict[str, Any]], today: date) -> str:
-    """Training days per calendar week — the fact behind both the split switch
-    («каркас включается, когда атлет держит частоту») and the attendance gate
-    of the programme. Shared by the plan and the weekly report."""
+    """Блок явки: тренировочные дни по календарным неделям и серии из ≥3 и ≥4 —
+    факт, который стоит и за переключением сплита («каркас включается, когда атлет
+    держит частоту»), и за гейтом программы. Общий для плана и недельного отчёта.
+    """
     rows = coach_features.weekly_attendance(workouts, today)
     return _block(
         "attendance",
@@ -340,10 +363,10 @@ def _render_stall(
     state: dict[str, Any],
     today: date,
 ) -> str:
-    """Preconditions and stall over the ACTIVE window: it starts at the block
-    anchor (phase start / return after a ≥14-day break), so a vacation cannot
-    dilute the frequency, and volume thresholds come from the phase's own
-    per-group targets."""
+    """Предусловия прогресса и застой по АКТИВНОМУ окну: оно начинается с якоря
+    блока (старт фазы или возврат после перерыва ≥14 дней), так что отпуск не
+    разбавляет частоту, а пороги объёма берутся из целей по группам самой фазы.
+    """
     report = coach_features.stall_report(
         workouts,
         summaries,
@@ -358,7 +381,8 @@ def _render_stall(
 
 
 def _days_since_last(workouts: list[dict[str, Any]], today: date) -> int | None:
-    for workout in workouts:  # newest-first
+    """Дней с последней тренировки или ``None``, если истории нет."""
+    for workout in workouts:  # от новых к старым
         raw = workout.get("workout_date")
         if not raw:
             continue
@@ -383,18 +407,19 @@ def _block(name: str, **values: str) -> str:
 
 
 def _format_range(bounds: Any, unit: str = "") -> str:
+    """«6–8» (с единицей, если дана) из пары чисел; скаляр — как есть."""
     if isinstance(bounds, (tuple, list)) and len(bounds) == 2:
         return f"{bounds[0]:g}–{bounds[1]:g}{unit}"
     return f"{bounds}{unit}"
 
 
 def _format_number(value: Any) -> str:
-    """A phase parameter rendered as a single number.
+    """Параметр фазы одним числом.
 
-    Overrides are validated on write, but only loosely: a range key may arrive
-    as a scalar and a scalar key as a range. The prompt must never crash over
-    it — a broken parameter has to reach the athlete as odd text, not as a
-    failed generation.
+    Переопределения проверяются на записи, но нестрого: диапазонный ключ может
+    прийти скаляром, а скалярный — диапазоном. Промпт из-за этого падать не
+    должен: кривой параметр обязан доехать до атлета странным текстом, а не
+    упавшей генерацией.
     """
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return f"{value:g}"
@@ -402,22 +427,21 @@ def _format_number(value: Any) -> str:
 
 
 def _format_low(bounds: Any) -> str:
-    """Lower edge of a range parameter; a scalar override stands for itself."""
+    """Нижняя граница диапазонного параметра; скалярное переопределение — как есть."""
     if isinstance(bounds, (tuple, list)) and bounds:
         return _format_number(bounds[0])
     return _format_number(bounds)
 
 
 def _render_phase_policy(state: dict[str, Any] | None = None) -> str:
-    """Phase policy for the system prompt; the prose lives in
-    ``prompts/phase_policy.md`` and only the numbers are computed here.
+    """Политика фаз для системного промпта: проза в ``prompts/phase_policy.md``,
+    здесь считаются только числа в её слотах.
 
-    The ACTIVE phase is rendered from the athlete's merged parameters
-    (``phase_params`` overrides on top of the defaults) — otherwise the prompt
-    would carry the stock numbers while the КОНТЕКСТ block carries the real
-    ones, and the model gets two contradicting methodologies in one request.
-    The two inactive phases keep the stock numbers: they are background, and
-    they are re-set on the switch anyway.
+    АКТИВНАЯ фаза рендерится из слитых параметров атлета (переопределения
+    ``phase_params`` поверх дефолтов), иначе промпт нёс бы стоковые числа, а блок
+    КОНТЕКСТ — настоящие, и модель получала бы две противоречащие методики в одном
+    запросе. Две неактивные фазы остаются со стоковыми числами: они фон, и при
+    переключении их всё равно задают заново.
     """
     merged = coach_state.phase_params(state) if state is not None else None
     short = {"cut_recomp": "cut", "lean_bulk": "bulk", "maintenance": "maint"}
@@ -452,11 +476,12 @@ def _build_system_prompt(
     state: dict[str, Any] | None = None,
     strategy: str | None = None,
 ) -> str:
-    """Assemble the system prompt from the template in ``prompts/system.md``.
+    """Системный промпт из шаблона ``prompts/system.md``.
 
-    The prose lives in the template; this function only computes the four slots
-    it expects. Anything added here that is not a computed value belongs in the
-    markdown instead.
+    Проза живёт в шаблоне; здесь только пять слотов: профиль, каталог с семантикой
+    тренажёров (без дубля id 1), пробелы каталога, политика фаз, срез стратегии.
+    Всё, что не вычисленное значение, должно уйти в markdown. Зовут
+    ``recommender.generate_with_trace`` и Coach MCP (``coach_preview_prompt``).
     """
     catalog_lines = "\n".join(
         f"  {item['id']} — {item['name']}: {CATALOG_SEMANTICS.get(item['id'], 'тренажёр')}"
@@ -483,6 +508,17 @@ def _build_user_prompt(
     waists: list[dict[str, Any]] | None = None,
     events: list[dict[str, Any]] | None = None,
 ) -> str:
+    """User-промпт плана: блоки в порядке, в котором их читает модель.
+
+    КОНТЕКСТ (дата, фаза с параметрами, неделя блока, дней с последней
+    тренировки, идущее событие) → недельный объём по группам с целями → явка →
+    замеры и матрица питания → сводки по упражнениям → предусловия и застой →
+    на возврате доперерывные веса и ступени разгона → дисциплина (факт против
+    плана) → сырая история последних тренировок вперемешку с событиями → задача.
+    Без ``events=`` хроника и открытое событие молча выключаются, поэтому каждый
+    живой вызыватель проверяется отдельным тестом. Зовут
+    ``recommender.generate_with_trace`` и Coach MCP.
+    """
     state = state if state is not None else coach_state.default_state()
     waists = waists or []
     params = coach_state.phase_params(state)
@@ -493,12 +529,12 @@ def _build_user_prompt(
     position = coach_state.cycle_position(state, workouts, today)
     week = position["block_week"]
     if position["deload_week"]:
-        # The planned light week caps the target back at the ramp start.
+        # Плановая лёгкая неделя возвращает цель к старту ramp.
         week_target = params.get("ramp_start")
     else:
         week_target = coach_state.weekly_volume_target(state, position["cycle_week"])
 
-    # --- explicit context block, always the first thing the model reads ------
+    # --- явный блок контекста: первое, что читает модель ----------------------
     week_label = f"неделя блока {week}"
     if position["deload_week"]:
         week_label += _block("deload_week_label", weeks=str(params.get("deload_every_weeks")))
@@ -627,8 +663,14 @@ _RU_WEEKDAYS = (
 
 
 def _build_schema(catalog: list[dict[str, Any]]) -> dict[str, Any]:
-    # The duplicate id (1 → 18) never enters the enum: old history is re-mapped
-    # onto the canonical id, and the plan may only reference canonical ones.
+    # Дубль id (1 → 18) в enum не попадает: старая история переведена на
+    # канонический id, и план может ссылаться только на канонические.
+    """JSON-схема ответа модели (structured output): фокус, метка нагрузки, через
+    сколько дней тренироваться, обоснование и упражнения с подходами. ``exercise_id``
+    — enum из каталога без дубля id 1: план ссылается только на канонические id.
+    Имён упражнений в схеме нет, их подставляет сервер. Зовут
+    ``recommender.generate_with_trace`` и Coach MCP.
+    """
     exercise_ids = [
         item["id"] for item in catalog if item["id"] not in coach_features.EXERCISE_ALIASES
     ]
@@ -695,7 +737,7 @@ def _build_schema(catalog: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# Weekly coach report
+# Недельный отчёт тренера
 # --------------------------------------------------------------------------- #
 _REPORT_TEMPLATE = coach_prompts.load("report")
 
@@ -728,6 +770,14 @@ def _build_report_prompt(
     days: int,
     events: list[dict[str, Any]] | None = None,
 ) -> str:
+    """User-промпт недельного отчёта за ``days`` дней до ``today`` включительно.
+
+    Период и фаза → тренировки периода хроникой → события периода (пустой блок
+    тоже нужен: «событий нет» значит, что пропуски ничем не объяснены) → объём →
+    явка → ПР периода → предусловия и застой → замеры и матрица питания →
+    дисциплина → что дальше (разгрузка сейчас, скоро или цель следующей недели)
+    → задача. Зовёт ``recommender.generate_weekly_report``.
+    """
     params = coach_state.phase_params(state)
     position = coach_state.cycle_position(state, workouts, today)
 
@@ -863,6 +913,10 @@ def _build_report_prompt(
 # Рендер вычисленных фич в текст для модели
 # --------------------------------------------------------------------------- #
 def render_exercise_summaries(summaries: list[dict[str, Any]]) -> str:
+    """Сводки по упражнениям строками: пик с e1RM и датой (для противовеса — лучший
+    противовес), дней с ПР, «сейчас» с процентом от пика и последние сессии с
+    позицией в тренировке.
+    """
     lines: list[str] = []
     for summary in summaries:
         if summary["inverted"]:
@@ -897,6 +951,13 @@ def render_weekly_volume(
     maintenance_sets: tuple[int, int] | None = None,
     group_targets: dict[str, Any] | None = None,
 ) -> str:
+    """Недельный объём по группам: прямые сеты и эффективные, рядом цель.
+
+    Цель дана в ПРЯМЫХ сетах, как считает таблица программы, поэтому стоит рядом
+    с прямым числом, а эффективные подписаны как справочные. Без целей по группам
+    печатается коридор недели блока для крупных групп и ориентиры малых, в режиме
+    поддержания — фиксированные сеты на группу.
+    """
     targets = (
         coach_features.group_volume_targets(week_target, maintenance_sets, group_targets)
         if group_targets
@@ -907,10 +968,10 @@ def render_weekly_volume(
         effective = f"{counts['effective']:g}"
         goal = targets.get(group)
         if goal:
-            # The goal is stated in DIRECT sets — that is how the programme's
-            # table counts — so it stands next to the direct number, and the
-            # effective count is labelled as the reference it is. One number
-            # in the wrong column and the model picks the smaller of two goals.
+            # Цель задана в ПРЯМЫХ сетах — так считает таблица программы, —
+            # поэтому стоит рядом с прямым числом, а эффективные подписаны как
+            # справочные. Одно число не в той колонке, и модель выберет меньшую
+            # из двух целей.
             line = (
                 f"  {group}: {counts['direct']} прямых (цель {goal[0]:g}–{goal[1]:g}) / "
                 f"{effective} эффективных (справочно)"
@@ -943,9 +1004,10 @@ def render_weekly_volume(
 
 
 def render_stall_report(report: dict[str, Any]) -> str:
-    """Two lines: the facts of the active window (always — «фактическая
-    частота приходит в данных» is a promise the programme header makes), then
-    the verdict on preconditions and stall."""
+    """Две строки: факты активного окна (всегда — «фактическая частота приходит в
+    данных» это обещание из шапки программы), затем вердикт по предусловиям и
+    застою.
+    """
     volume = ", ".join(
         f"{group} {value:.1f} (порог {threshold:g})"
         for group, (value, threshold) in report["volume_per_week"].items()
@@ -985,6 +1047,7 @@ def render_stall_report(report: dict[str, Any]) -> str:
 
 
 def render_weekly_attendance(rows: list[dict[str, Any]], today: date) -> str:
+    """Явка по неделям одной строкой: «начало…конец: сессий», текущая помечена."""
     parts = []
     for row in rows:
         label = f"{row['start'].isoformat()}…{row['end'].isoformat()}"
@@ -995,6 +1058,10 @@ def render_weekly_attendance(rows: list[dict[str, Any]], today: date) -> str:
 
 
 def render_pre_break_weights(items: list[dict[str, Any]], break_days: int) -> str | None:
+    """Рабочие веса последней сессии ПЕРЕД перерывом с пояснением, что это форма до
+    паузы, а насколько снизить вход, модель решает сама. ``None``, если нечего
+    показывать.
+    """
     if not items:
         return None
     lines = [
@@ -1011,6 +1078,7 @@ def render_pre_break_weights(items: list[dict[str, Any]], break_days: int) -> st
 
 
 def render_comeback_ramp(items: list[dict[str, Any]]) -> list[str]:
+    """Ступени разгона к доперерывному рабочему весу, по строке на упражнение."""
     lines: list[str] = []
     for item in items:
         arrow = " → ".join(f"{step:g}" for step in item["steps"])
@@ -1027,7 +1095,10 @@ def render_measurements(
     waists: list[dict[str, Any]],
     today: date,
 ) -> list[str]:
-    """Compact recent weigh-ins and waist measurements for the prompt."""
+    """Последние взвешивания и замеры талии для промпта: хвост точек, дней с
+    последнего замера, число замеров за 7 дней и хватает ли их для недельной
+    средней; отброшенные неправдоподобные записи названы числом.
+    """
     lines: list[str] = []
     weights = coach_features.weight_points(body_weights)
     if weights:
@@ -1053,6 +1124,9 @@ def render_measurements(
 
 
 def render_phase_summary(summary: dict[str, Any]) -> str:
+    """Итоги фазы текстом: длительность, тренировки, вес и талия от начала к концу,
+    ПР за фазу, дисциплина. Зовёт Coach MCP (``coach_phase_summary``).
+    """
     lines = [
         f"Фаза {summary['phase']}: {summary['started']} → {summary['ended']} "
         f"({summary['weeks']} нед)."
@@ -1097,6 +1171,10 @@ def render_phase_summary(summary: dict[str, Any]) -> str:
 
 
 def render_adherence_stats(stats: dict[str, Any] | None) -> str | None:
+    """Строка дисциплины: сессий по плану, выполненных плановых подходов и процент;
+    полностью пропущенные упражнения перечислены. ``None``, если плановой работы
+    не было.
+    """
     if not stats:
         return None
     line = (
@@ -1115,5 +1193,5 @@ def comeback_ramp(
     catalog: list[dict[str, Any]],
     today: date,
 ) -> list[str]:
-    """Rendered ramp lines (kept for callers that only need the text)."""
+    """Ступени разгона сразу строками — для вызывающих, которым нужен только текст."""
     return render_comeback_ramp(coach_features.comeback_ramp_steps(workouts, catalog, today))

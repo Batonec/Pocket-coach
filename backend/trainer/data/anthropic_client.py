@@ -43,8 +43,8 @@ DEFAULT_EFFORT = os.getenv("ANTHROPIC_EFFORT", "high").strip()
 # iOS-клиента (APIClient.longRunningSession) держатся выше этого числа.
 DEFAULT_TIMEOUT = float(os.getenv("ANTHROPIC_TIMEOUT", "120"))
 
-# Transient failures worth retrying with backoff (rate limits, overload, gateway
-# hiccups). Permanent errors (400/401/403/404, refusal) are never retried.
+# Временные сбои, которые стоит повторить с backoff: лимиты, перегрузка, икота
+# шлюза. Постоянные ошибки (400/401/403/404, отказ модели) не повторяются.
 DEFAULT_MAX_RETRIES = int(os.getenv("ANTHROPIC_MAX_RETRIES", "2"))
 DEFAULT_RETRY_BACKOFF = float(os.getenv("ANTHROPIC_RETRY_BACKOFF", "1.5"))
 RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
@@ -54,12 +54,14 @@ RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
 # ответ не разобрать. Живёт здесь, потому что чаще всего рождается здесь;
 # recommender реэкспортирует его, и вызывающие ловят recommender.RecommendationError.
 class RecommendationError(Exception):
-    """Raised when a recommendation cannot be produced (no history, API error,
-    invalid model output, ...). The message is safe to surface to the client."""
+    """Единственная ошибка слоя модели: нет истории, нет ключа, API упал, ответ не
+    разобрать. Текст безопасен для показа клиенту. Снаружи её ловят как
+    ``recommender.RecommendationError``: recommender реэкспортирует класс.
+    """
 
 
 # --------------------------------------------------------------------------- #
-# Anthropic call (stdlib urllib)
+# Вызов Anthropic (stdlib urllib)
 # --------------------------------------------------------------------------- #
 def _fetch_anthropic(
     request: urllib.request.Request,
@@ -69,10 +71,10 @@ def _fetch_anthropic(
     backoff: float,
     sleep: Callable[[float], None],
 ) -> str:
-    """POST to the API, retrying transient failures with exponential backoff.
+    """POST в API с повторами на временные сбои и экспоненциальным backoff.
 
-    Returns the raw response body. Raises :class:`RecommendationError` on a
-    permanent failure or once retries are exhausted.
+    Возвращает сырое тело ответа. Постоянная ошибка (400/401/403/404) или
+    исчерпанные повторы — ``RecommendationError``. Зовёт только ``_request_model``.
     """
     attempt = 0
     while True:
@@ -99,9 +101,11 @@ def _fetch_anthropic(
 
 
 def _cacheable_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Mark the first user message as a prompt-cache boundary. Together with
-    the cached system block this makes the validator reprompt (same system +
-    same first message) and burst regenerations much cheaper."""
+    """Помечает первое сообщение пользователя границей кэша промпта.
+
+    Вместе с кэшированным системным блоком это делает репромпт валидатора (тот же
+    system и то же первое сообщение) и всплески регенераций заметно дешевле.
+    """
     out = [dict(message) for message in messages]
     first = out[0]
     if first.get("role") == "user" and isinstance(first.get("content"), str):
@@ -131,16 +135,20 @@ def _request_model(
     backoff: float = DEFAULT_RETRY_BACKOFF,
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[str, dict[str, Any]]:
-    """One model call; returns the raw text of the reply plus usage. With a
-    schema the output is constrained to it; without — plain text (the weekly
-    report). `user` is either the user prompt or a full message list (the
-    semantic-validator reprompt continues the same conversation)."""
+    """Один вызов модели: сырой текст ответа и usage.
+
+    Со схемой ответ ограничен ею (план тренировки), без схемы — обычный текст
+    (недельный отчёт). ``user`` — либо строка user-промпта, либо готовый список
+    сообщений: репромпт валидатора продолжает тот же разговор. Отказ модели,
+    обрезка по max_tokens, не-JSON от API и пустой ответ — ``RecommendationError``.
+    Зовут: ``recommender.generate_weekly_report`` напрямую и ``_call_anthropic``.
+    """
     messages = [{"role": "user", "content": user}] if isinstance(user, str) else user
     payload: dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
-        # The system prompt (catalog + profile + policy) is stable between
-        # calls — cache it so retries/reprompts/bursts pay ~10% for it.
+        # Системный промпт (каталог + профиль + политика) между вызовами не меняется:
+        # кэшируем, чтобы повторы, репромпты и всплески платили за него ~10%.
         "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         "messages": _cacheable_messages(messages),
     }
@@ -212,6 +220,11 @@ def _call_anthropic(
     backoff: float = DEFAULT_RETRY_BACKOFF,
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Вызов со схемой: ``_request_model`` плюс разбор JSON ответа в dict.
+
+    Невалидный JSON от модели — ``RecommendationError``. Зовёт
+    ``recommender.generate_with_trace`` для плана и его репромпта.
+    """
     text, usage = _request_model(
         system,
         user,

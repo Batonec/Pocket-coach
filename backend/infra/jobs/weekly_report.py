@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Generate and cache the coach weekly report.
+"""Сгенерировать и закэшировать недельный отчёт тренера.
 
-Run by infra/deploy/trainer-weekly-report.timer in the night from Sunday to Monday,
-once the week is actually over, so the athlete opens an instant, token-free
-report in the Coach MCP chat. Standalone like refresh_recommendation.py: no
-HTTP, reads the same env, talks to SQLite and the Claude API directly.
+Запускает infra/deploy/trainer-weekly-report.timer в ночь с воскресенья на
+понедельник, когда неделя реально закончилась, чтобы атлет открывал в чате
+Coach MCP мгновенный отчёт без трат токенов. Автономный, как
+refresh_recommendation.py: без HTTP, то же окружение, SQLite и Claude API напрямую.
 
-    python3 weekly_report.py            # generate unless that week is cached
-    python3 weekly_report.py --force    # regenerate unconditionally
+    python3 weekly_report.py            # сгенерировать, если та неделя не в кэше
+    python3 weekly_report.py --force    # пересобрать безусловно
 """
 
 from __future__ import annotations
@@ -43,7 +43,11 @@ def run(
     force: bool = False,
     today: date | None = None,
 ) -> bool:
-    """Returns True if a report was generated."""
+    """Отчёт за закрытую неделю до ``today`` (``recommender.weekly_report_period``):
+    пропустить, если он уже в кэше и не ``force``, иначе ``generate_weekly_report``
+    и запись в кэш. Возвращает ``True``, если отчёт сгенерирован; ошибка модели —
+    в stdout, без записи. Тесты зовут с фейковым стором и явным ``today``.
+    """
     period = recommender.weekly_report_period(today or date.today())
     period_end = period.isoformat()
     needed, reason = recommender.weekly_report_needed(
@@ -87,6 +91,7 @@ def run(
 
 
 def main() -> None:
+    """CLI: ``--force`` пересобирает безусловно; пользователь — единственный атлет ``USER_ID``."""
     parser = argparse.ArgumentParser(description="Generate and cache the weekly coach report")
     parser.add_argument("--force", action="store_true", help="regenerate unconditionally")
     args = parser.parse_args()

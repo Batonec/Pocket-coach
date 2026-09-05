@@ -25,23 +25,32 @@ from typing import Any
 from trainer.data.anthropic_client import RecommendationError
 from trainer.domain import coach_features, coach_state
 
-# Server-side sanity bounds (JSON Schema can't express numeric ranges, so the
-# model output is clamped/filtered after parsing). These are sanitation, not
-# methodology: rep ranges, session size and weight jumps are the model's
-# coaching judgement and are deliberately NOT validated.
+# Серверные границы здравого смысла: JSON-схема не умеет числовых диапазонов,
+# поэтому ответ модели клампится и фильтруется после разбора. Это гигиена, а
+# не методика: диапазоны повторов, размер сессии и шаги весов — суждение
+# модели, и они сознательно НЕ проверяются.
 MAX_REPS = 100
 MAX_WEIGHT = 1000.0
 MAX_EXERCISES = 10
 MAX_SETS_PER_EXERCISE = 12
-MAX_REST_DAYS = 4  # rest_days is clamped to 0–4 silently, never reprompted
+MAX_REST_DAYS = 4  # rest_days клампится в 0–4 молча, без репромпта
 
 ALLOWED_LOAD_TYPES = ("heavy", "medium", "light")
 
 
 # --------------------------------------------------------------------------- #
-# Validation
+# Санитизация
 # --------------------------------------------------------------------------- #
 def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, Any]:
+    """Санитизация ответа модели по границам, которых нет в JSON-схеме.
+
+    Метка нагрузки только из допустимых (иначе medium), ``rest_days`` в 0–4, только
+    канонические id каталога (дубль id 1 переводится в 18), повторы от 1 до 100,
+    вес 0–1000, не больше 12 подходов на упражнение и 10 упражнений; имя берётся из
+    каталога, а не то, что вернула модель. Ни одного валидного упражнения —
+    ``RecommendationError``. Зовёт ``recommender.generate_with_trace`` после
+    каждого вызова модели.
+    """
     valid_ids = {
         item["id"] for item in catalog if item["id"] not in coach_features.EXERCISE_ALIASES
     }
@@ -71,8 +80,8 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
             exercise_id = int(raw_exercise_id)
         except (TypeError, ValueError, OverflowError):
             continue
-        # The schema enum already excludes the duplicate ids; re-map defensively
-        # in case an aliased id sneaks in anyway.
+        # Enum схемы уже исключает дубли id; на всякий случай переводим
+        # алиас в канонический id, если он всё же проскочил.
         exercise_id = coach_features.EXERCISE_ALIASES.get(exercise_id, exercise_id)
         if exercise_id not in valid_ids:
             continue
@@ -108,7 +117,7 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
         exercises_out.append(
             {
                 "exercise_id": exercise_id,
-                # Trust the catalog name over whatever the model echoed back.
+                # Имя берём из каталога, а не то, что модель повторила.
                 "name": names_by_id.get(exercise_id, str(exercise.get("name", "")).strip()),
                 "note": str(exercise.get("note", "")).strip(),
                 "sets": sets_out,
@@ -130,18 +139,20 @@ def _validate(raw: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, A
 
 
 # --------------------------------------------------------------------------- #
-# Semantic validation (on top of the JSON schema)
+# Семантика: три жёсткие границы поверх JSON-схемы
 # --------------------------------------------------------------------------- #
 def _comeback_ceilings(
     workouts: list[dict[str, Any]],
     catalog: list[dict[str, Any]],
     today: date,
 ) -> dict[int, dict[str, Any]]:
-    """Per-exercise hard weight ceilings for a return-from-break session, or an
-    empty dict outside one. The ceiling is the pre-break working weight: a
-    comeback session is not the place for progression. Everything else about
-    the return (how far below to start, ramp speed, session size) is the
-    model's coaching judgement — the ladder in the prompt is data, not a bound."""
+    """Жёсткие потолки веса по упражнениям для возвратной сессии; вне возврата —
+    пустой словарь.
+
+    Потолок — доперерывный рабочий вес: возвратная сессия не место для прибавки.
+    Всё остальное про возврат (насколько ниже стартовать, скорость разгона, размер
+    сессии) — суждение модели: лестница в промпте это данные, а не граница.
+    """
     if not coach_state.is_return_from_break(workouts, today):
         return {}
     return {
@@ -151,8 +162,9 @@ def _comeback_ceilings(
 
 
 def _session_cap(params: dict[str, Any]) -> int | None:
-    """Upper bound of the phase's session corridor (`session_sets`), or None
-    when the parameter is not a usable range — then the size is not checked."""
+    """Верхняя граница коридора сессии фазы (``session_sets``) или ``None``, если
+    параметр не является пригодным диапазоном — тогда размер не проверяется.
+    """
     bounds = params.get("session_sets")
     if isinstance(bounds, (list, tuple)) and len(bounds) == 2:
         try:
@@ -164,6 +176,7 @@ def _session_cap(params: dict[str, Any]) -> int | None:
 
 
 def _planned_sets(recommendation: dict[str, Any]) -> int:
+    """Сколько рабочих подходов в плане всего."""
     return sum(len(exercise["sets"]) for exercise in recommendation.get("exercises", []) or [])
 
 
@@ -174,15 +187,17 @@ def _semantic_violations(
     today: date,
     session_cap: int | None = None,
 ) -> list[str]:
-    """The three hard bounds the JSON schema cannot express: the comeback
-    no-progression ceiling, muscle-group coverage and the session-size cap of
-    the phase. Rep ranges, weight jumps, load sequencing and the LOWER bound
-    of the session corridor are deliberately NOT checked — that is the
-    model's coaching judgement, guided by the prompt. Each violation is a
-    human-readable line — the list goes verbatim into the reprompt."""
+    """Три жёсткие границы, которые JSON-схема выразить не может: возвратный
+    потолок весов, покрытие мышечных групп и потолок размера сессии фазы.
+
+    Диапазоны повторов, шаги весов, чередование нагрузок и НИЖНЯЯ граница сессии
+    сознательно не проверяются — это суждение модели, направляемое промптом.
+    Каждое нарушение — человекочитаемая строка: список уходит в репромпт как есть.
+    Зовёт ``recommender.generate_with_trace`` после каждой попытки.
+    """
     violations: list[str] = []
 
-    # 1) return from a break: no weight above the pre-break working weight.
+    # 1) возврат после перерыва: ни один вес не выше доперерывного рабочего.
     ceilings = _comeback_ceilings(workouts, catalog, today)
     for exercise in recommendation.get("exercises", []) or []:
         ceiling = ceilings.get(exercise["exercise_id"])
@@ -200,8 +215,8 @@ def _semantic_violations(
                     "прибавки"
                 )
 
-    # 2) group coverage: a big group (or the chronically lagging hamstrings)
-    # that has been dry for 10+ days must get at least a set in the plan.
+    # 2) покрытие групп: крупная группа (или хронически отстающий бицепс бедра),
+    # сухая 10+ дней, обязана получить в плане хотя бы подход.
     recent_volume = coach_features.weekly_volume(workouts, today, days=10)
     plan_coverage: dict[str, float] = {}
     for exercise in recommendation["exercises"]:
@@ -216,11 +231,11 @@ def _semantic_violations(
                 "и отсутствует в плане — добавь хотя бы 1–2 подхода"
             )
 
-    # 3) session size: the phase corridor's upper bound is a hard cap. The
-    # athlete's ~60-minute sessions overran on 19–22-set cards built «по
-    # дефициту объёма»; the corridor is the phase's own parameter, so the
-    # server holds the line. The lower bound stays unchecked — a short
-    # session can be a decision.
+    # 3) размер сессии: верхняя граница коридора фазы — жёсткий потолок.
+    # Сессии атлета на ~60 минут срывались на карточках в 19–22 подхода,
+    # собранных «по дефициту объёма»; коридор — параметр самой фазы, и его
+    # держит сервер. Нижняя граница не проверяется: короткая сессия может
+    # быть решением.
     if session_cap is not None:
         total = _planned_sets(recommendation)
         if total > session_cap:
@@ -233,11 +248,12 @@ def _semantic_violations(
 
 
 def _trim_to_cap(recommendation: dict[str, Any], cap: int) -> list[str]:
-    """Drop sets from the tail of the plan until it fits the cap: the last
-    exercise first, one set per pass, never below one set per exercise — so
-    the coverage rule (≥1 set for a dry group) survives the cut. Removing sets
-    invents no numbers, which is why this bound gets a real resolution and
-    coverage only gets a note."""
+    """Снять подходы с хвоста плана, пока он не влезет в потолок: сначала последнее
+    упражнение, по одному подходу за проход, никогда не ниже одного подхода на
+    упражнение — так правило покрытия (≥1 подход сухой группе) переживает срез.
+    Удаление подходов не выдумывает чисел, поэтому у этой границы есть настоящее
+    разрешение, а у покрытия только пометка. Возвращает строки «имя −N».
+    """
     exercises = recommendation.get("exercises", []) or []
     removed: dict[str, int] = {}
     total = _planned_sets(recommendation)
@@ -263,11 +279,12 @@ def _resolve_violations(
     today: date,
     session_cap: int | None = None,
 ) -> list[str]:
-    """Deterministic last resort after the reprompt also failed: clamp comeback
-    weights to their pre-break ceilings, trim an oversized session to the cap,
-    and surface anything unfixable (group coverage) as an honest note in the
-    rationale. A slightly imperfect plan with a visible note beats an error
-    card — generation must not fail over methodology."""
+    """Детерминированный последний рубеж после неудачного репромпта: ограничить
+    возвратные веса доперерывными потолками, урезать раздутую сессию до потолка,
+    а то, что починить нельзя (покрытие групп), честно вписать пометкой в rationale.
+    Чуть неидеальный план с видимой пометкой лучше карточки с ошибкой — генерация
+    не имеет права падать из-за методики. Возвращает список правок.
+    """
     adjustments: list[str] = []
     ceilings = _comeback_ceilings(workouts, catalog, today)
     for exercise in recommendation.get("exercises", []) or []:

@@ -22,17 +22,20 @@ ALLOWED_SET_EFFORTS = {"easy", "ok", "hard"}
 
 
 def normalize_load_type(value: object) -> str | None:
-    """Keep an explicitly provided load label; otherwise store None ([?] in the
-    coach prompt). The old tonnage fallback (≥3000 kg → heavy) labeled nearly
-    every real session heavy — a fabricated signal is worse than an honest
-    unknown, and the coach model judges session heaviness from weights/reps
-    anyway."""
+    """Метка нагрузки сессии: оставить явно присланную, иначе ``None`` («без плана»
+    в промпте тренера).
+
+    Старый фолбэк по тоннажу (≥3000 кг → heavy) помечал тяжёлой почти каждую
+    реальную сессию. Выдуманный сигнал хуже честного «неизвестно», а тяжесть
+    сессии модель и так видит по весам и повторам.
+    """
     if isinstance(value, str) and value in ALLOWED_LOAD_TYPES:
         return value
     return None
 
 
 def normalize_notes(value: object) -> str | None:
+    """Свободный текст: обрезать пробелы, пустую строку превратить в ``None``."""
     if value is None:
         return None
     text = str(value).strip()
@@ -40,6 +43,9 @@ def normalize_notes(value: object) -> str | None:
 
 
 def normalize_set_effort(value: object) -> str | None:
+    """Тяжесть подхода: ``easy`` / ``ok`` / ``hard`` без учёта регистра; пусто —
+    ``None``, что-то другое — ``ValueError``.
+    """
     if value is None:
         return None
 
@@ -52,8 +58,11 @@ def normalize_set_effort(value: object) -> str | None:
 
 
 def normalize_set_rir(value: object) -> int | None:
-    """Optional reps-in-reserve (0–4), usually recorded on the last set of an
-    exercise. More precise than the effort marks; the coach prompt prefers it."""
+    """Повторы в запасе (RIR, 0–4), обычно на последнем подходе упражнения.
+
+    Точнее меток тяжести; промпт тренера предпочитает его. Пусто — ``None``,
+    не целое или вне 0–4 — ``ValueError``.
+    """
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
     if isinstance(value, bool):
@@ -73,12 +82,14 @@ MAX_RECOMMENDATION_SNAPSHOT_BYTES = 8192
 
 
 def _snapshot_int(value: object) -> int | None:
+    """Целое из снапшота или ``None``; ``bool`` не считается целым."""
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value
 
 
 def _snapshot_str(value: object, limit: int) -> str | None:
+    """Строка из снапшота, обрезанная до ``limit`` символов, или ``None``."""
     if not isinstance(value, str):
         return None
     text = value.strip()
@@ -86,11 +97,12 @@ def _snapshot_str(value: object, limit: int) -> str | None:
 
 
 def normalize_recommendation_snapshot(value: object) -> dict[str, Any] | None:
-    """Sanitize the optional coach-recommendation snapshot a client attaches to
-    a workout (``data.recommendation``) for actual-vs-recommended stats.
+    """Санитизация снапшота совета, который клиент прикладывает к тренировке
+    (``data.recommendation``) ради статистики «факт против плана».
 
-    Best-effort by design: anything malformed yields ``None`` and the workout
-    saves without a snapshot — linkage must never fail a save.
+    Намеренно best-effort: любая кривизна даёт ``None``, и тренировка сохраняется
+    без снапшота — связка не имеет права уронить запись. Белый список полей,
+    ≤10 упражнений, ≤12 подходов, ≤8 КБ.
     """
     if not isinstance(value, dict):
         return None
@@ -159,6 +171,14 @@ def normalize_recommendation_snapshot(value: object) -> dict[str, Any] | None:
 
 
 def normalize_workout_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Тренировка с клиента в форму для базы: ``(payload, client_id)``.
+
+    Проверяет каждое упражнение и подход (id, имя, повторы ≥1, вес ≥0, тяжесть,
+    RIR, заметки), дату по ``YYYY-MM-DD`` и обязательный ``client_id`` — по нему
+    стор дедуплицирует офлайн-ретраи. Снапшот совета прикладывается, если прошёл
+    санитизацию. Любая ошибка — ``ValueError`` с текстом для клиента. Зовёт
+    ``backend_store.save_workout`` и ``update_workout``.
+    """
     data = payload.get("data", {})
     if not isinstance(data, dict):
         raise ValueError("Workout data must be an object")
@@ -249,15 +269,20 @@ def normalize_workout_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], 
     return normalized_payload, client_id
 
 
-# Plausible human body-weight bounds. Outside this range an entry is almost
-# certainly a data-entry slip (e.g. an exercise weight typed into the weigh-in
-# field — that is how 22kg readings appeared for an 77kg athlete). Rejected at
-# write time so the garbage never reaches the DB or the coach's calorie logic.
+# Правдоподобные границы веса тела. За ними запись почти наверняка описка:
+# вес с тренажёра, вбитый в поле взвешивания, — так у атлета в 77 кг появлялись
+# замеры по 22 кг. Отсекается на записи, чтобы мусор не доехал ни до базы,
+# ни до расчёта калорий у коуча.
 MIN_BODY_WEIGHT_KG = 30.0
 MAX_BODY_WEIGHT_KG = 400.0
 
 
 def normalize_body_weight_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Замер веса тела в форму для базы: дата, вес в границах 30–400 кг, заметка.
+
+    Вне границ — ``ValueError``: такое значение почти наверняка описка. Зовёт
+    ``backend_store.save_body_weight``.
+    """
     entry_date = _parse_input_date(payload.get("entry_date"), "entry_date").isoformat()
 
     try:
@@ -279,15 +304,20 @@ def normalize_body_weight_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# The write contract must match coach_features.waist_points exactly. Accepting
-# a value here and silently dropping it from calorie advice later creates an
-# impossible state: the user sees a saved measurement while the coach sees
-# "waist=none" and keeps the stale-measurement warning alive.
+# Границы записи обязаны совпадать с coach_features.waist_points. Принять
+# значение здесь и молча выбросить его из совета по калориям потом — значит
+# создать невозможное состояние: пользователь видит сохранённый замер, а коуч
+# видит «талии нет» и держит предупреждение о старом замере.
 MIN_WAIST_CM = 50.0
 MAX_WAIST_CM = 160.0
 
 
 def normalize_waist_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Замер талии в форму для базы: дата, обхват в границах 50–160 см, заметка.
+
+    Границы те же, что у аналитики (``coach_features``): значение не может быть
+    «сохранено в UI, но проигнорировано коучем». Зовёт ``backend_store.save_waist``.
+    """
     entry_date = _parse_input_date(payload.get("entry_date"), "entry_date").isoformat()
 
     try:
@@ -338,6 +368,12 @@ def _normalize_event_date(value: object, field: str) -> str:
 
 
 def normalize_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Событие (период без тренировок с причиной) в форму для базы.
+
+    Даты в прошлом или сегодня, конец не раньше начала, пустой конец — событие
+    ещё идёт, текст обязателен. Зовут ``backend_store.save_event`` и
+    ``update_event``.
+    """
     start_date = _normalize_event_date(payload.get("start_date"), "start_date")
 
     raw_end_date = payload.get("end_date")
