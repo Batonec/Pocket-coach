@@ -61,7 +61,7 @@ SNOOZE_DEFAULT_HOURS: dict[str, int | None] = {
 
 _RU_WEEKDAYS_SHORT = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
 
-# Тексты баннеров живут в resources/copy/signals.md: пороги и жизненный цикл — здесь,
+# Тексты баннеров живут в resources/signals.md: пороги и жизненный цикл — здесь,
 # копирайт — там. Ключ эпизода строится из фактов, поэтому правка текста не
 # трогает ни схлопывание, ни дисмиссы.
 _COPY = coach_prompts.fragments("signals", directory=coach_prompts.COPY_DIR)

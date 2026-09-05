@@ -25,10 +25,10 @@ from pathlib import Path
 
 from trainer import BACKEND_DIR
 
-# Две поверхности, один механизм: prompts/ читает модель, resources/copy/ — клиент.
-# Держать их в одной папке значит смешать две разные аудитории.
+# Две поверхности, один механизм: prompts/ читает модель, resources/ (signals.md) —
+# клиент. Держать их в одной папке значит смешать две разные аудитории.
 PROMPTS_DIR = BACKEND_DIR / "prompts"
-COPY_DIR = BACKEND_DIR / "resources" / "copy"
+COPY_DIR = BACKEND_DIR / "resources"
 
 _SLOT_RE = re.compile(r"\{\{([a-z_]+)\}\}")
 

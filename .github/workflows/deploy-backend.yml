@@ -69,7 +69,7 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -eu
-          ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "mkdir -p '$DEPLOY_BASE/app/trainer' '$DEPLOY_BASE/app/infra/jobs' '$DEPLOY_BASE/app/prompts' '$DEPLOY_BASE/app/resources/copy'"
+          ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "mkdir -p '$DEPLOY_BASE/app/trainer' '$DEPLOY_BASE/app/infra/jobs' '$DEPLOY_BASE/app/prompts' '$DEPLOY_BASE/app/resources'"
           scp -P "${VPS_PORT:-22}" backend/server.py "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/"
           # Код едет каталогами, как и проза: пакет trainer/ и скрипты таймеров
           # infra/jobs/ целиком. Поимённого списка модулей нет специально — новому
@@ -84,8 +84,8 @@ jobs:
             backend/prompts/. \
             "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/prompts/"
           scp -P "${VPS_PORT:-22}" -r \
-            backend/resources/copy/. \
-            "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/resources/copy/"
+            backend/resources/. \
+            "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/resources/"
           # Юниты и таймеры — все: таймеры ссылаются на пути скриптов в infra/jobs/,
           # и переезд скрипта без юнита молча остановил бы таймер. Новый таймер
           # деплой не включает — enable делается руками один раз.
@@ -106,7 +106,7 @@ jobs:
           ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "\
             cd '$DEPLOY_BASE/app' && rm -f backend_store.py anthropic_client.py coach_features.py coach_prompts.py coach_signals.py coach_state.py plan_validator.py prompt_builder.py recommender.py backup_db.py refresh_recommendation.py weekly_report.py && rm -rf copy && \
             find '$DEPLOY_BASE/app' -name '*.py' -exec chmod 644 {} + && \
-            chmod 644 '$DEPLOY_BASE/app/prompts/'*.md '$DEPLOY_BASE/app/resources/copy/'*.md /etc/systemd/system/trainer-*.service /etc/systemd/system/trainer-*.timer && \
+            chmod 644 '$DEPLOY_BASE/app/prompts/'*.md '$DEPLOY_BASE/app/resources/'* /etc/systemd/system/trainer-*.service /etc/systemd/system/trainer-*.timer && \
             test -f /etc/trainer-miniapp/backend.env && \
             systemctl daemon-reload && \
             systemctl enable --now '$BACKEND_SERVICE' && \

@@ -31,7 +31,9 @@ from trainer.coach import coach_state, recommender
 
 BASE_DIR = Path(__file__).resolve().parents[2]  # backend/: там data/ и resources/
 DB_PATH = Path(os.getenv("MINIAPP_DB_PATH", str(BASE_DIR / "data" / "trainer.db")))
-STATIC_DIR = Path(os.getenv("MINIAPP_STATIC_DIR", str(BASE_DIR / "resources" / "static")))
+CATALOG_PATH = Path(
+    os.getenv("EXERCISE_CATALOG_PATH", str(BASE_DIR / "resources" / "exercises.json"))
+)
 PROFILE_PATH = Path(os.getenv("COACH_PROFILE_PATH", str(DB_PATH.parent / "coach_profile.json")))
 STRATEGY_PATH = Path(os.getenv("COACH_STRATEGY_PATH", str(DB_PATH.parent / "coach_strategy.md")))
 STATE_PATH = coach_state.default_state_path(DB_PATH)
@@ -86,7 +88,7 @@ def run(store: backend_store.MiniAppStore, user_id: int, force: bool = False) ->
     body_weights = store.list_body_weights(user_id)
     store.set_recommendation_pending(user_id)
     try:
-        catalog = recommender.load_catalog(STATIC_DIR)
+        catalog = recommender.load_catalog(CATALOG_PATH)
         recommendation, usage, model = recommender.generate(
             workouts,
             body_weights,

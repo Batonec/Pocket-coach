@@ -67,7 +67,7 @@ All tools accept an optional `user_id` (defaults to the configured user).
 | `ANTHROPIC_API_KEY` | — | Required for `coach_debug_recommendation` / `coach_generate_recommendation` |
 | `COACH_MCP_BACKEND_DIR` | `../backend` | Backend root holding the `trainer/` package. On the VPS: `/opt/trainer-miniapp/app` |
 | `MINIAPP_DB_PATH` | `<backend_dir>/data/trainer.db` | SQLite path. On the VPS: `/opt/trainer-miniapp/data/trainer.db` |
-| `COACH_MCP_STATIC_DIR` | `MINIAPP_STATIC_DIR` or `<backend_dir>/resources/static` | Holds `data/exercises.json`. On the VPS: `/opt/trainer-miniapp/www` |
+| `EXERCISE_CATALOG_PATH` | `<backend_dir>/resources/exercises.json` | Exercise catalog JSON; ships with the backend code. On the VPS: `/opt/trainer-miniapp/app/resources/exercises.json` |
 | `COACH_MCP_USER_ID` | `MINIAPP_TELEGRAM_RECOVERY_USER_ID` or `3` | Which user to operate on |
 | `ANTHROPIC_MODEL` | from `recommender` (`claude-opus-5`) | Model for generation |
 | `COACH_MCP_HOST` / `COACH_MCP_PORT` | `127.0.0.1` / `8001` | streamable-http bind (8001 to avoid investor-mcp's 8000) |
@@ -96,7 +96,6 @@ python3 -m venv /opt/coach-mcp/venv
 # env (own EnvironmentFile, or reuse the backend's):
 #   COACH_MCP_BACKEND_DIR=/opt/trainer-miniapp/app
 #   MINIAPP_DB_PATH=/opt/trainer-miniapp/data/trainer.db
-#   COACH_MCP_STATIC_DIR=/opt/trainer-miniapp/www
 #   ANTHROPIC_API_KEY=...           (already in /etc/trainer-miniapp/backend.env)
 #   COACH_MCP_PATH=/<random-secret-path>/mcp
 /opt/coach-mcp/venv/bin/python server.py --transport streamable-http --host 127.0.0.1 --port 8001

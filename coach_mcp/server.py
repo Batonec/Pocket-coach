@@ -17,8 +17,8 @@ Environment:
                              (default: ../backend; on the VPS set it to
                              /opt/trainer-miniapp/app)
     MINIAPP_DB_PATH          SQLite path (default: <backend_dir>/data/trainer.db)
-    COACH_MCP_STATIC_DIR     dir holding data/exercises.json (default:
-                             MINIAPP_STATIC_DIR, else <backend_dir>/resources/static)
+    EXERCISE_CATALOG_PATH    exercise catalog JSON (default:
+                             <backend_dir>/resources/exercises.json)
     COACH_MCP_USER_ID        user id to operate on (default:
                              MINIAPP_TELEGRAM_RECOVERY_USER_ID, else 3)
     ANTHROPIC_MODEL          override model (default from recommender)
@@ -65,10 +65,8 @@ from trainer.coach import (  # noqa: E402
 
 # --- configuration ------------------------------------------------------------
 _DB_PATH = Path(os.getenv("MINIAPP_DB_PATH") or str(Path(_BACKEND_DIR) / "data" / "trainer.db"))
-_STATIC_DIR = Path(
-    os.getenv("COACH_MCP_STATIC_DIR")
-    or os.getenv("MINIAPP_STATIC_DIR")
-    or str(Path(_BACKEND_DIR) / "resources" / "static")
+_CATALOG_PATH = Path(
+    os.getenv("EXERCISE_CATALOG_PATH") or str(Path(_BACKEND_DIR) / "resources" / "exercises.json")
 )
 _PROFILE_PATH = Path(
     os.getenv("COACH_MCP_PROFILE_PATH")
@@ -165,7 +163,7 @@ def _uid(user_id: int | None) -> int:
 
 
 def _catalog() -> list[dict[str, Any]]:
-    return recommender.load_catalog(_STATIC_DIR)
+    return recommender.load_catalog(_CATALOG_PATH)
 
 
 def _estimate_cost(model: str, usage: dict[str, Any]) -> dict[str, Any] | None:

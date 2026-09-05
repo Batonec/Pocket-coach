@@ -147,7 +147,7 @@ deploy_backend() {
   sync_dir "$MINIAPP_DIR/trainer" "$REMOTE_BASE/app/trainer"
   sync_dir "$MINIAPP_DIR/infra/jobs" "$REMOTE_BASE/app/infra/jobs"
   sync_dir "$MINIAPP_DIR/prompts" "$REMOTE_BASE/app/prompts"
-  sync_dir "$MINIAPP_DIR/resources/copy" "$REMOTE_BASE/app/resources/copy"
+  sync_dir "$MINIAPP_DIR/resources" "$REMOTE_BASE/app/resources"
   # Юниты и таймеры едут все: таймеры ссылаются на пути скриптов в infra/jobs/, и
   # переезд скрипта без юнита молча остановил бы таймер. Новый таймер это не
   # включает — enable делается руками один раз.
