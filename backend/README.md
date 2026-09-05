@@ -310,6 +310,30 @@ Backend workflow предполагает существование `/etc/train
 целиком и вместе с ними все юниты и таймеры из `infra/deploy/`. Таймеры деплой не включает: новый таймер один
 раз `systemctl enable --now` руками.
 
+### Как запросы доходят до backend
+
+Снаружи backend не виден: он слушает docker-bridge (`MINIAPP_HOST=172.17.0.1`,
+`MINIAPP_PORT=8081` в `/etc/trainer-miniapp/backend.env`). Цепочка: Cloudflare Tunnel
+(`cloudflared`, маршруты живут в дашборде Cloudflare) → docker-контейнер `trainer-miniapp-caddy`
+на `127.0.0.1:80` → `host.docker.internal:8081`. Caddy — чистый обратный прокси без статики
+(веб-мини-апп удалён, `/data/exercises.json` отдаёт сам backend); его конфиг —
+[infra/deploy/Caddyfile](infra/deploy/Caddyfile), CI его не трогает, применяется вручную:
+
+```bash
+./backend/infra/deploy/deploy.sh proxy
+```
+
+Скрипт валидирует конфиг внутри контейнера, переписывает файл на VPS на месте (bind-mount
+файла держится за inode) и делает `caddy reload`. Сам контейнер поднят один раз руками:
+
+```bash
+docker run -d --name trainer-miniapp-caddy --restart unless-stopped \
+  -p 127.0.0.1:80:80 --add-host host.docker.internal:host-gateway \
+  -v /opt/trainer-miniapp/Caddyfile:/etc/caddy/Caddyfile:ro \
+  -v /opt/trainer-miniapp/caddy_data:/data -v /opt/trainer-miniapp/caddy_config:/config \
+  caddy:2
+```
+
 ## GitHub Actions
 
 - [ci.yml](../.github/workflows/ci.yml) — прогоняет тесты на каждый push; на `main` после

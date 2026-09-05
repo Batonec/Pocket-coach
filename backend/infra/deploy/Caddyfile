@@ -1,0 +1,20 @@
+# Обратный прокси перед backend на VPS: docker-контейнер trainer-miniapp-caddy,
+# наружу — только 127.0.0.1:80, куда ходит Cloudflare Tunnel (TLS терминирует
+# Cloudflare). Хост не проверяем намеренно: порт локальный, а в публичном
+# репозитории домен не хранится, как и адрес VPS.
+#
+# Статики здесь нет с июня 2026: веб-мини-апп удалён, /data/exercises.json отдаёт
+# сам backend (маршрут в server.py). Caddy остался мостом между туннелем и
+# backend, который слушает docker-bridge (host.docker.internal = 172.17.0.1).
+#
+# Применяется `deploy.sh proxy`. Файл прибит в контейнер bind-mount'ом, а такой
+# mount держится за inode, поэтому на VPS его переписывают на месте, не mv.
+
+:80 {
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+	encode zstd gzip
+	reverse_proxy host.docker.internal:8081
+}

@@ -18,12 +18,10 @@ class ServerUtilsTest(unittest.TestCase):
     def load_module(
         self,
         *,
-        bot_token: str = "server-utils-bot-token",
         session_secret: str = "server-utils-session-secret",
     ):
         return load_server_module(
             db_path=self.db_path,
-            bot_token=bot_token,
             session_secret=session_secret,
         )
 
