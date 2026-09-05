@@ -475,6 +475,25 @@ def weekly_volume(
     return volume
 
 
+def sets_in_window(workouts: list[dict[str, Any]], today: date, days: int = 7) -> int:
+    """Рабочих подходов за последние ``days`` дней до ``today`` включительно —
+    итог недели одним числом: разгон в программе задан суммами (44 → 55 → 64 →
+    79), а не группами, и «объём против цели» без суммы не сходится. Считает те
+    же подходы, что ``weekly_volume`` раскладывает по группам. Зовёт
+    ``prompt_builder`` (отчёт: период и неделя перед ним).
+    """
+    total = 0
+    for workout in workouts:
+        when = _workout_date(workout)
+        if when is None or when > today or (today - when).days > days - 1:
+            continue
+        for exercise in (workout.get("data", {}) or {}).get("exercises", []) or []:
+            if canonical_exercise_id(exercise.get("exercise_id")) is None:
+                continue
+            total += len(exercise.get("sets", []) or [])
+    return total
+
+
 # --------------------------------------------------------------------------- #
 # Детектор застоя (4.2)
 # --------------------------------------------------------------------------- #
@@ -921,16 +940,18 @@ def weight_trend_per_week(
     points: list[tuple[date, float]],
     today: date,
     since: date | None = None,
+    *,
+    window_days: int = TREND_WINDOW_DAYS,
+    min_span_days: int = TREND_MIN_SPAN_DAYS,
 ) -> float | None:
     """Недельный темп по недавнему окну или ``None``, когда данные честно его не
     поддерживают: мало точек, дыра между замерами или точки по разные стороны
-    границы фазы (передай ``since`` = старт фазы). Зовут ``nutrition_matrix`` и
-    ``coach_signals``.
+    границы фазы (передай ``since`` = старт фазы). Окно и минимальный разброс по
+    умолчанию — матрицы питания; калибровка TDEE передаёт свои. Зовут
+    ``nutrition_matrix``, ``tdee_estimate`` и ``coach_signals``.
     """
     window = [
-        p
-        for p in points
-        if (today - p[0]).days <= TREND_WINDOW_DAYS and (since is None or p[0] >= since)
+        p for p in points if (today - p[0]).days <= window_days and (since is None or p[0] >= since)
     ]
     if len(window) < 2:
         return None
@@ -938,7 +959,7 @@ def weight_trend_per_week(
         if (current[0] - previous[0]).days > TREND_MAX_GAP_DAYS:
             return None
     span_days = (window[-1][0] - window[0][0]).days
-    if span_days < TREND_MIN_SPAN_DAYS:
+    if span_days < min_span_days:
         return None
     # МНК-наклон по ВСЕМ точкам окна, а не по двум крайним: при редких
     # взвешиваниях одно тяжёлое утро с любого края иначе задавало бы всю
@@ -1156,6 +1177,71 @@ def _rate_line(
         f"тренд веса {trend:+.2f} кг/нед {side} коридора фазы ({corridor}) и по средним "
         f"двух недель тоже — посоветуй {advice}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Калибровка TDEE (стратегия §7: темп веса за 4 недели при известной еде)
+# --------------------------------------------------------------------------- #
+# Первые две недели фазы — вода и гликоген, в окно не входят; оценке нужен
+# разброс точек не меньше трёх недель, иначе одно тяжёлое утро задаёт
+# результат. Только фазы с ненулевым коридором темпа: на удержании и на
+# возврате (Ф0) вес растёт на гликогене, и формула объявила бы расход выше на
+# пустом месте — стратегия прямо говорит «не в Ф0».
+TDEE_WINDOW_DAYS = 28
+TDEE_SKIP_DAYS = 14
+TDEE_MIN_SPAN_DAYS = 21
+KCAL_PER_KG = 7700.0
+
+
+def _calorie_anchor(value: Any) -> float | None:
+    """Ориентир калорий фазы одним числом: середина коридора или само число."""
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            return (float(value[0]) + float(value[1])) / 2
+        except (TypeError, ValueError):
+            return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def tdee_estimate(
+    params: dict[str, Any],
+    points: list[tuple[date, float]],
+    today: date,
+    *,
+    phase_start: date | None,
+) -> dict[str, Any] | None:
+    """Оценка расхода: ориентир калорий фазы минус дневной баланс по темпу веса
+    за ``TDEE_WINDOW_DAYS``. ``None``, когда оценке нельзя верить: фаза держит
+    вес, старта фазы нет, окно моложе трёх недель или тренд невалиден. Верна,
+    только если атлет ел по ориентиру — факт калорий приложение не хранит, и
+    промпт говорит это вслух. Зовёт ``prompt_builder`` (отчёт).
+    """
+    rate_low, rate_high = _rate_bounds(
+        params.get("rate_kg_per_week"), params.get("phase", "cut_recomp")
+    )
+    if rate_low <= 0.0 <= rate_high or phase_start is None:
+        return None
+    intake = _calorie_anchor(params.get("calories"))
+    if intake is None:
+        return None
+    trend = weight_trend_per_week(
+        points,
+        today,
+        since=phase_start + timedelta(days=TDEE_SKIP_DAYS),
+        window_days=TDEE_WINDOW_DAYS,
+        min_span_days=TDEE_MIN_SPAN_DAYS,
+    )
+    if trend is None:
+        return None
+    tdee = intake - trend * KCAL_PER_KG / 7
+    return {
+        "intake": intake,
+        "trend_per_week": round(trend, 2),
+        "tdee": int(round(tdee / 10) * 10),
+        "window_days": TDEE_WINDOW_DAYS,
+    }
 
 
 # --------------------------------------------------------------------------- #

@@ -379,6 +379,20 @@ def is_return_from_break(workouts: list[dict[str, Any]], today: date) -> bool:
     return (today - dates[-1]).days >= BREAK_DAYS
 
 
+def phase_start(state: dict[str, Any]) -> date | None:
+    """Дата старта текущей фазы или ``None``: поле не задано или битое. Зовут
+    ``prompt_builder`` (траектория фазы в отчёте) и ``coach_features`` (оценка
+    TDEE — окно калибровки отсчитывается от старта фазы).
+    """
+    started = state.get("phase_started")
+    if not isinstance(started, str):
+        return None
+    try:
+        return date.fromisoformat(started)
+    except ValueError:
+        return None
+
+
 def _block_anchor(
     state: dict[str, Any], workouts: list[dict[str, Any]], today: date
 ) -> date | None:

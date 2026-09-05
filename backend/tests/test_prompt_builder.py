@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date
+from datetime import date, timedelta
 
 import support  # noqa: F401 — кладёт backend в sys.path
 from support import CATALOG_PATH
@@ -130,14 +130,20 @@ class ReportPromptTests(unittest.TestCase):
             },
         }
 
-    def _report(self, workouts: list[dict]) -> str:
-        """Промпт отчёта на настоящем каталоге и состоянии по умолчанию."""
+    def _report(
+        self,
+        workouts: list[dict],
+        *,
+        state: dict | None = None,
+        body_weights: list[dict] | None = None,
+    ) -> str:
+        """Промпт отчёта на настоящем каталоге; состояние по умолчанию, если не дано."""
         return prompt_builder._build_report_prompt(
             workouts,
-            [],
+            body_weights or [],
             [],
             files.load_catalog(CATALOG_PATH),
-            coach_state.default_state(),
+            state or coach_state.default_state(),
             self.TODAY,
             7,
         )
@@ -155,3 +161,50 @@ class ReportPromptTests(unittest.TestCase):
     def test_single_session_history_has_no_summary_block(self) -> None:
         prompt = self._report([self._workout("2026-06-12", 105)])
         self.assertNotIn("Сводка по тренажёрам", prompt)
+
+    def test_volume_header_carries_totals_for_two_weeks(self) -> None:
+        """Разгон в программе задан суммами по неделям: без итога за период и за
+        неделю до него «объём против цели» не сходится."""
+        prompt = self._report([self._workout("2026-06-12", 105), self._workout("2026-06-03", 100)])
+        self.assertIn("всего рабочих подходов за период 3, неделей раньше 3", prompt)
+
+    def test_phase_trajectory_appears_with_a_phase_start(self) -> None:
+        """Отчёт живёт в семи днях, гейт — в месяцах: с датой старта фазы модель
+        получает вес, талию и темп с её начала, а также цель фазы по весу."""
+        state = coach_state.default_state()
+        state["phase_started"] = "2026-05-17"
+        weights = [
+            {"entry_date": "2026-05-16", "weight": 80.0},
+            {"entry_date": "2026-06-13", "weight": 78.6},
+        ]
+        prompt = self._report(
+            [self._workout("2026-06-12", 105), self._workout("2026-06-03", 100)],
+            state=state,
+            body_weights=weights,
+        )
+        self.assertIn("С начала фазы", prompt)
+        self.assertIn("Фаза cut_recomp: 2026-05-17 → 2026-06-14 (4.1 нед).", prompt)
+        self.assertIn("Вес: 80.0 → 78.6 кг (-1.4", prompt)
+        self.assertIn("Цель фазы по весу: 75.5 кг", prompt)
+        self.assertNotIn("Оценка TDEE", prompt)  # две точки за фазу — тренда нет
+
+    def test_no_phase_start_means_no_trajectory(self) -> None:
+        prompt = self._report([self._workout("2026-06-12", 105)])
+        self.assertNotIn("С начала фазы", prompt)
+        self.assertNotIn("Цель фазы по весу", prompt)
+
+    def test_tdee_estimate_reaches_the_report_with_enough_history(self) -> None:
+        state = coach_state.default_state()
+        started = date(2026, 5, 3)  # 6 недель до воскресенья отчёта
+        state["phase_started"] = started.isoformat()
+        weights = [
+            {
+                "entry_date": (started + timedelta(days=offset)).isoformat(),
+                "weight": round(80.0 - 0.5 * offset / 7, 2),
+            }
+            for offset in range(43)
+        ]
+        prompt = self._report([self._workout("2026-06-12", 105)], state=state, body_weights=weights)
+        self.assertIn("Оценка TDEE (посчитано сервером): при ориентире 2150 ккал", prompt)
+        self.assertIn("расход ≈ 2700 ккал/день", prompt)
+        self.assertIn("Средняя за 7 дней:", prompt)

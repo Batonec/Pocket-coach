@@ -821,12 +821,14 @@ def _build_report_prompt(
 ) -> str:
     """User-промпт недельного отчёта за ``days`` дней до ``today`` включительно.
 
-    Период и фаза → тренировки периода хроникой (с той же легендой, что у
-    плана) → события периода (пустой блок тоже нужен: «событий нет» значит, что
-    пропуски ничем не объяснены) → объём → явка → ПР периода → сводки по
-    тренажёрам → предусловия и застой → замеры и матрица питания → дисциплина →
-    что дальше (разгрузка сейчас, скоро или цель следующей недели) → задача.
-    Зовёт ``recommender.generate_weekly_report``.
+    Период и фаза → траектория фазы с её старта (вес, талия, темп, ПР, цель
+    по весу) → тренировки периода хроникой (с той же легендой, что у плана) →
+    события периода (пустой блок тоже нужен: «событий нет» значит, что пропуски
+    ничем не объяснены) → объём с итогом за период и за неделю до него → явка →
+    ПР периода → сводки по тренажёрам → предусловия и застой → замеры (с
+    7-дневной средней), матрица питания и оценка TDEE → дисциплина → что дальше
+    (разгрузка сейчас, скоро или цель следующей недели) → задача. Зовёт
+    ``recommender.generate_weekly_report``.
     """
     params = coach_state.phase_params(state)
     position = coach_state.cycle_position(state, workouts, today)
@@ -856,6 +858,31 @@ def _build_report_prompt(
             protein=_format_range(params["protein_g"]),
         ),
     ]
+
+    # Траектория фазы: отчёт живёт в семи днях, а гейт и цели — в месяцах.
+    # Без старта фазы, веса и талии на старте и темпа за фазу модели нечем
+    # сказать, где атлет на пути к критерию.
+    started = coach_state.phase_start(state)
+    if started is not None and started <= today:
+        summary = coach_features.phase_summary(
+            workouts,
+            body_weights,
+            waists,
+            catalog,
+            phase=params["phase"],
+            started=started,
+            ended=today,
+        )
+        progress = [_block("report_phase_progress_header"), render_phase_summary(summary)]
+        if params.get("target_weight_kg"):
+            progress.append(
+                _block("report_phase_target", target=_format_number(params["target_weight_kg"]))
+            )
+        if params.get("ceiling_weight_kg"):
+            progress.append(
+                _block("report_phase_ceiling", ceiling=_format_number(params["ceiling_weight_kg"]))
+            )
+        chunks.append("\n".join(progress))
 
     if week_workouts:
         chunks.append(
@@ -898,7 +925,11 @@ def _build_report_prompt(
     )
     maintenance_sets = params.get("sets_per_group") if params["phase"] == "maintenance" else None
     chunks.append(
-        _block("report_volume_header")
+        _block(
+            "report_volume_header",
+            total=str(coach_features.sets_in_window(workouts, today)),
+            previous=str(coach_features.sets_in_window(workouts, today - timedelta(days=7))),
+        )
         + "\n"
         + render_weekly_volume(
             coach_features.weekly_volume(workouts, today),
@@ -933,6 +964,19 @@ def _build_report_prompt(
         nutrition.append(_block("nutrition_matrix", lines="; ".join(matrix["lines"])))
     if matrix["goal"]:
         nutrition.append(_block("nutrition_goal", goal=matrix["goal"]))
+    estimate = coach_features.tdee_estimate(
+        params, coach_features.weight_points(body_weights), today, phase_start=started
+    )
+    if estimate:
+        nutrition.append(
+            _block(
+                "report_tdee",
+                intake=f"{estimate['intake']:g}",
+                trend=f"{estimate['trend_per_week']:+.2f}",
+                weeks=str(estimate["window_days"] // 7),
+                tdee=str(estimate["tdee"]),
+            )
+        )
     if nutrition:
         chunks.append("\n".join(nutrition))
 
@@ -1173,6 +1217,21 @@ def render_measurements(
         )
         if dropped:
             line += f" (отброшено неправдоподобных записей: {dropped})"
+        # Стратегия управляет 7-дневной средней, а не точками: она названа числом,
+        # когда точек хватает, и рядом средняя недели раньше — это и есть «вес
+        # стоит / движется» без пересчёта моделью.
+        mean_now = coach_features.moving_average(weights, today)
+        if count >= coach_features.WEEKLY_MEAN_MIN_POINTS and mean_now is not None:
+            line += f" Средняя за 7 дней: {mean_now:.1f} кг"
+            week_ago = today - timedelta(days=7)
+            mean_before = coach_features.moving_average(weights, week_ago)
+            enough_before = (
+                coach_features.weigh_ins_in_window(weights, week_ago)
+                >= coach_features.WEEKLY_MEAN_MIN_POINTS
+            )
+            if enough_before and mean_before is not None:
+                line += f" (неделей раньше {mean_before:.1f}, {mean_now - mean_before:+.1f})"
+            line += "."
         lines.append(line)
     waist = coach_features.waist_points(waists)
     if waist:

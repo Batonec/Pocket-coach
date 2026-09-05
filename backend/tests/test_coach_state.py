@@ -102,6 +102,18 @@ class StateFileTests(unittest.TestCase):
                 files.set_phase(path, "lean_bulk", {"calories": True})
 
 
+class PhaseStartTests(unittest.TestCase):
+    """Дата старта фазы из состояния: строка ISO или ничего."""
+
+    def test_reads_iso_date_and_ignores_garbage(self) -> None:
+        self.assertEqual(
+            coach_state.phase_start({"phase_started": "2026-08-14"}), date(2026, 8, 14)
+        )
+        self.assertIsNone(coach_state.phase_start({"phase_started": None}))
+        self.assertIsNone(coach_state.phase_start({"phase_started": "14.08.2026"}))
+        self.assertIsNone(coach_state.phase_start({}))
+
+
 class BlockWeekTests(unittest.TestCase):
     """Неделя блока от старта фазы или возврата."""
 
