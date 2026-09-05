@@ -129,7 +129,8 @@ backend/
 ├── server.py      HTTP API — процесс, который крутит systemd; импортирует всё остальное
 ├── trainer/       пакет из двух частей: domain/ — правила и методика (см. ниже),
 │                  data/ — backend_store (SQLite), files (состояние, профиль, стратегия,
-│                  каталог), coach_prompts (шаблоны), anthropic_client (HTTP к Claude)
+│                  каталог), coach_prompts (шаблоны), anthropic_client (HTTP к Claude),
+│                  parsing (разбор значений с провода: тип, границы, текст ошибки)
 ├── prompts/       проза для модели
 ├── tests/
 ├── infra/         deploy/ (deploy.sh и systemd-юниты) и jobs/ (скрипты таймеров)
@@ -147,13 +148,14 @@ backend/
 Один эндпоинт — один метод `_get_*` / `_post_*` / `_put_*` / `_delete_*`; новый эндпоинт — это
 метод плюс строка в таблице. Сессию обработчик берёт через `_require_user`, который сам отвечает
 401. Вся нормализация и валидация входа живёт в `domain/rules.py` (`normalize_*`), не в хендлерах и
-не в SQL; механика разбора отдельных значений — в `domain/parsing.py`.
+не в SQL; механика разбора отдельных значений — в `data/parsing.py`.
 
 ### Слой коуча — где проходит граница «алгоритм / LLM»
 
 Это главный инвариант проекта. **LLM вызывается ровно в двух местах**, оба в `recommender.py`:
 план следующей тренировки и недельный отчёт. Всё остальное детерминировано. Модули ниже лежат в
-`backend/trainer/domain/`, кроме `coach_prompts.py` и `anthropic_client.py` — они в `data/`.
+`backend/trainer/domain/`, кроме `coach_prompts.py`, `anthropic_client.py` и `parsing.py` — они в
+`data/`.
 
 ```
 SQLite: workouts, body_weights, waists, events + coach_state.json + coach_profile.json
@@ -163,10 +165,10 @@ SQLite: workouts, body_weights, waists, events + coach_state.json + coach_profil
    │                    одно открытое событие, сегодняшняя тренировка закрывает его вчерашним
    │                    днём. Стор и хендлер пишут то, что вернули отсюда, сами не решают.
    │
-   ├─ parsing.py        механика разбора под rules: `as_int` / `as_float` / `as_date` /
-   │                    `as_text` / `as_choice` и их сообщения об ошибке. Про тренировки и
-   │                    замеры не знает ничего; нужен, чтобы в rules остались только
-   │                    границы и решения, а не try/except у каждого поля.
+   ├─ parsing.py        (в data/) механика разбора под rules: `as_int` / `as_float` /
+   │                    `as_date` / `as_text` / `as_choice` и их сообщения об ошибке. Про
+   │                    тренировки и замеры не знает ничего, поэтому это трубопровод, а не
+   │                    домен; нужен, чтобы в rules остались только границы и решения.
    │
    ├─ coach_state.py    фаза (cut_recomp / lean_bulk / maintenance), неделя блока,
    │                    ramp недельного объёма, плановый deload, «возврат после перерыва» (≥14 дней)
