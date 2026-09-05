@@ -165,9 +165,9 @@ class SessionCapTests(unittest.TestCase):
 
     def test_trim_cuts_from_the_tail_and_keeps_every_exercise(self) -> None:
         plan = self._plan([4, 4, 4, 3, 3, 2, 2])
-        headline, removed = plan_validator._trim_to_cap(plan, plan_validator.Bounds(session_cap=20))
-        self.assertEqual(plan_validator._planned_sets(plan), 20)
-        self.assertIn("сокращена до 20 рабочих подходов", headline)
+        removed = plan_validator.resolve(plan, plan_validator.Bounds(session_cap=20))
+        self.assertEqual(plan_validator.planned_sets(plan), 20)
+        self.assertIn("сокращена до 20 рабочих подходов", plan["rationale"])
         # С хвоста, по сету на упражнение за проход: два последних (изоляция)
         # теряют по сету; базовые в начале не тронуты.
         self.assertEqual([len(e["sets"]) for e in plan["exercises"]], [4, 4, 4, 3, 3, 1, 1])

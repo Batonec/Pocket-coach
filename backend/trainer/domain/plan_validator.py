@@ -1,56 +1,38 @@
 #!/usr/bin/env python3
-"""Жёсткие границы плана от модели: что сервер держит сам, а не доверяет промпту.
+"""Жёсткие границы плана от модели. Сами правила — текст в
+``prompts/plan_rules.md``; здесь факты истории, с которыми план сравнивают, и
+словарь слов, которыми правила написаны.
 
-Правил ровно три, и все они перечислены в ``RULES`` в конце файла. Формулировка
-каждого лежит в ``prompts/plan_rules.md`` под тем же именем и оттуда уходит
-модели дважды: предложением в системный промпт (блок «ЖЁСТКИЕ ГРАНИЦЫ») и
-строкой нарушения в репромпт, — так модель читает ровно то, что сервер
-проверяет. Диапазоны повторов, шаги весов, чередование нагрузок и нижняя граница
-сессии сознательно не проверяются: это суждение модели, направляемое промптом.
-Новая проверка — это запись в ``RULES``, пара фрагментов в markdown и абзац в
-``BUSINESS_LOGIC.md``, а не ``if`` внутри существующей.
+Правило в markdown — формулировка (она же уходит модели в системный промпт),
+область («для каждой: сухая группа»), условие («требует: подходов_в_плане > 0»),
+строка нарушения для репромпта и, если чинить можно без выдумывания чисел,
+«починить: вес := допустимо» или имя процедуры. Читает и исполняет их
+``data/rule_engine``; смысл слов задаёт словарь ниже: область говорит, по чему
+идти и что при этом известно, процедура — как чинить. Новое правило — блок в
+markdown; новое слово нужно, только если правило говорит о факте, которого
+сервер ещё не считает. Слово без правила и правило без слова падают на старте.
 
-Правило — это ``check`` (план и рамки → строки нарушений для репромпта) и, если
-починка не требует выдумывать чисел, ``fix`` (правит план на месте, возвращает
-заголовок пометки и строки правок). ``Bounds`` — факты истории, от плана не
-зависящие: считаются один раз, до вызова модели. Движок из двух функций:
-``violations`` собирает список для репромпта, ``resolve`` после второго промаха
-модели чинит, что можно, и честно вписывает остаток в rationale. Генерация не
-падает из-за методики.
-
-Санитизация ответа — типы, клампы, каталожные имена — не методика; она живёт в
-``rules.normalize_model_plan``.
+Диапазоны повторов, шаги весов, чередование нагрузок и нижняя граница сессии
+сознательно не проверяются: это суждение модели, направляемое промптом.
+Санитизация ответа — ``rules.normalize_model_plan``; формулировки в системный
+промпт рендерит ``prompt_builder`` из ``RULES``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-from trainer.data import coach_prompts
+from trainer.data import coach_prompts, rule_engine
+from trainer.data.rule_engine import Binding
 from trainer.domain import coach_features, coach_state
 
 # Сколько дней без эффективного подхода делают группу «сухой» для правила
-# покрытия. Порог методики, поэтому он здесь, а не в limits. В строку нарушения
-# число уходит слотом; в предложении правила в plan_rules.md оно стоит руками.
+# покрытия. Порог методики, поэтому он здесь, а не в limits; в строку нарушения
+# число уходит именем «дней», в формулировке правила оно написано руками.
 COVERAGE_DRY_DAYS = 10
-
-# Тексты двух аудиторий: формулировки и строки нарушений читает модель
-# (prompts/), пометки в rationale — атлет (resources/). Грузятся один раз.
-_TEXTS = coach_prompts.fragments("plan_rules")
-_NOTES = coach_prompts.fragments("plan_notes", directory=coach_prompts.COPY_DIR)
-
-
-def _text(name: str, **values: str) -> str:
-    """Строка нарушения для репромпта из ``plan_rules.md``."""
-    return coach_prompts.render(_TEXTS[name], **values)
-
-
-def _note(name: str, **values: str) -> str:
-    """Пометка или строка правки для rationale из ``plan_notes.md``."""
-    return coach_prompts.render(_NOTES[name], **values)
 
 
 # --------------------------------------------------------------------------- #
@@ -73,23 +55,6 @@ class Bounds:
     dry_groups: tuple[str, ...] = ()
     # Верхняя граница коридора сессии фазы; None — размер не проверяется.
     session_cap: int | None = None
-
-
-Check = Callable[[dict[str, Any], Bounds], list[str]]
-Fix = Callable[[dict[str, Any], Bounds], tuple[str, list[str]]]
-
-
-@dataclass(frozen=True)
-class Rule:
-    """Одна жёсткая граница. ``name`` — имя фрагментов в ``plan_rules.md`` и
-    ``plan_notes.md``; ``check`` возвращает строки нарушений; ``fix`` правит план
-    на месте и возвращает ``(заголовок пометки, строки правок)`` — или ``None``,
-    если чинить без выдумывания чисел нельзя и остаток идёт пометкой.
-    """
-
-    name: str
-    check: Check
-    fix: Fix | None = None
 
 
 def phase_session_cap(params: dict[str, Any]) -> int | None:
@@ -133,48 +98,12 @@ def bounds_from_history(
     return Bounds(return_ceilings=ceilings, dry_groups=dry, session_cap=session_cap)
 
 
-# --------------------------------------------------------------------------- #
-# Движок: нарушения для репромпта и разрешение после второго промаха
-# --------------------------------------------------------------------------- #
-def violations(plan: dict[str, Any], bounds: Bounds) -> list[str]:
-    """Нарушения жёстких границ в порядке ``RULES``: человекочитаемые строки, которые
-    уходят модели в репромпт как есть. Пусто — план принят.
-    """
-    return [line for rule in RULES for line in rule.check(plan, bounds)]
+def planned_sets(plan: dict[str, Any]) -> int:
+    """Сколько рабочих подходов в плане всего."""
+    return sum(len(exercise["sets"]) for exercise in plan["exercises"])
 
 
-def resolve(plan: dict[str, Any], bounds: Bounds) -> list[str]:
-    """Детерминированный последний рубеж после неудачного репромпта.
-
-    Каждое правило, у которого есть ``fix`` и которое всё ещё нарушено, чинит план
-    на месте и получает пометку в rationale; то, что починить нельзя, честно
-    вписывается туда же отдельной пометкой. Чуть неидеальный план с видимой
-    пометкой лучше карточки с ошибкой — генерация не имеет права падать из-за
-    методики. Возвращает строки правок для трассы отладки.
-    """
-    adjustments: list[str] = []
-    notes: list[str] = []
-    for rule in RULES:
-        if rule.fix is None or not rule.check(plan, bounds):
-            continue
-        headline, changes = rule.fix(plan, bounds)
-        if changes:
-            adjustments.extend(changes)
-            notes.append(_note("fixed", what=headline, changes="; ".join(changes)))
-    remaining = violations(plan, bounds)
-    if remaining:
-        notes.append(_note("unresolved", violations="; ".join(remaining)))
-    if notes:
-        rationale = str(plan.get("rationale", "")).rstrip()
-        appendix = "\n\n".join(notes)
-        plan["rationale"] = f"{rationale}\n\n{appendix}" if rationale else appendix
-    return adjustments
-
-
-# --------------------------------------------------------------------------- #
-# Покрытие групп: сухая крупная группа обязана попасть в план
-# --------------------------------------------------------------------------- #
-def _plan_coverage(plan: dict[str, Any]) -> dict[str, float]:
+def plan_coverage(plan: dict[str, Any]) -> dict[str, float]:
     """Эффективные подходы плана по группам, с долями косвенной нагрузки."""
     coverage: dict[str, float] = {}
     for exercise in plan["exercises"]:
@@ -184,104 +113,62 @@ def _plan_coverage(plan: dict[str, Any]) -> dict[str, float]:
     return coverage
 
 
-def _coverage_violations(plan: dict[str, Any], bounds: Bounds) -> list[str]:
-    """Сухая группа без единого подхода в плане — нарушение. Починки нет:
-    упражнение сервер не выдумывает."""
-    covered = _plan_coverage(plan)
-    return [
-        _text("coverage_violation", group=group, days=str(COVERAGE_DRY_DAYS))
-        for group in bounds.dry_groups
-        if not covered.get(group)
-    ]
+# --------------------------------------------------------------------------- #
+# Словарь правил: области — по чему идти и что при этом известно
+# --------------------------------------------------------------------------- #
+def _dry_groups(plan: dict[str, Any], bounds: Bounds) -> Iterator[Binding]:
+    """Каждая сухая группа и сколько эффективных подходов ей даёт план."""
+    covered = plan_coverage(plan)
+    for group in bounds.dry_groups:
+        yield Binding(
+            {
+                "группа": group,
+                "дней": COVERAGE_DRY_DAYS,
+                "подходов_в_плане": covered.get(group, 0.0),
+            }
+        )
 
 
-# --------------------------------------------------------------------------- #
-# Возвратный потолок: после перерыва ни один вес не выше доперерывного рабочего
-# --------------------------------------------------------------------------- #
-def _capped_sets(
-    plan: dict[str, Any], bounds: Bounds
-) -> Iterator[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]]:
-    """``(упражнение, подход, потолок)`` для каждого подхода движения, у которого
-    есть возвратный потолок."""
+def _capped_sets(plan: dict[str, Any], bounds: Bounds) -> Iterator[Binding]:
+    """Каждый подход движения с возвратным потолком. «Тяжесть» и «потолок» —
+    сравнимые числа: у противовеса (гравитрон) меньше значит тяжелее, поэтому там
+    оба со знаком минус, и правило пишется одинаково для любого тренажёра.
+    """
     for exercise in plan["exercises"]:
         ceiling = bounds.return_ceilings.get(exercise["exercise_id"])
         if not ceiling:
             continue
+        sign = -1 if ceiling["inverted"] else 1
         for workout_set in exercise["sets"]:
-            yield exercise, workout_set, ceiling
-
-
-def _too_hard(weight: float, ceiling: dict[str, Any]) -> bool:
-    """Тяжелее потолка с учётом инвертированного веса (противовес: меньше — тяжелее)."""
-    allowed = ceiling["last_working"]
-    return weight < allowed - 1e-9 if ceiling["inverted"] else weight > allowed + 1e-9
-
-
-def _return_ceiling_violations(plan: dict[str, Any], bounds: Bounds) -> list[str]:
-    """Подход тяжелее доперерывного рабочего — нарушение, по одной строке на подход."""
-    return [
-        _text(
-            "return_ceiling_violation",
-            exercise=exercise["name"],
-            what="противовес" if ceiling["inverted"] else "вес",
-            weight=f"{workout_set['weight']:g}",
-            allowed=f"{ceiling['last_working']:g}",
-        )
-        for exercise, workout_set, ceiling in _capped_sets(plan, bounds)
-        if _too_hard(workout_set["weight"], ceiling)
-    ]
-
-
-def _clamp_return_weights(plan: dict[str, Any], bounds: Bounds) -> tuple[str, list[str]]:
-    """Зажать провинившиеся подходы к доперерывному рабочему: число не выдумано,
-    атлет его реально поднимал."""
-    changes: list[str] = []
-    for exercise, workout_set, ceiling in _capped_sets(plan, bounds):
-        if not _too_hard(workout_set["weight"], ceiling):
-            continue
-        changes.append(
-            _note(
-                "return_ceiling_change",
-                exercise=exercise["name"],
-                weight=f"{workout_set['weight']:g}",
-                allowed=f"{ceiling['last_working']:g}",
+            yield Binding(
+                {
+                    "упражнение": exercise["name"],
+                    "что": "противовес" if ceiling["inverted"] else "вес",
+                    "вес": workout_set["weight"],
+                    "допустимо": ceiling["last_working"],
+                    "тяжесть": sign * workout_set["weight"],
+                    "потолок": sign * ceiling["last_working"],
+                },
+                targets={"вес": (workout_set, "weight")},
             )
-        )
-        workout_set["weight"] = ceiling["last_working"]
-    return _note("return_ceiling_fixed"), changes
 
 
-# --------------------------------------------------------------------------- #
-# Потолок сессии: рабочих подходов не больше верхней границы коридора фазы
-# --------------------------------------------------------------------------- #
-def _planned_sets(plan: dict[str, Any]) -> int:
-    """Сколько рабочих подходов в плане всего."""
-    return sum(len(exercise["sets"]) for exercise in plan["exercises"])
+def _capped_plan(plan: dict[str, Any], bounds: Bounds) -> Iterator[Binding]:
+    """План целиком, один случай — и только когда у фазы есть потолок сессии."""
+    if bounds.session_cap is not None:
+        yield Binding({"всего_подходов": planned_sets(plan), "потолок": bounds.session_cap})
 
 
-def _session_cap_violations(plan: dict[str, Any], bounds: Bounds) -> list[str]:
-    """План длиннее потолка фазы — нарушение. Нижняя граница не проверяется:
-    короткая сессия может быть решением. Сессии атлета на ~60 минут срывались на
-    карточках в 19–22 подхода, собранных «по дефициту объёма»; коридор — параметр
-    самой фазы, и его держит сервер."""
-    total = _planned_sets(plan)
-    if bounds.session_cap is None or total <= bounds.session_cap:
-        return []
-    return [_text("session_cap_violation", total=str(total), cap=str(bounds.session_cap))]
-
-
-def _trim_to_cap(plan: dict[str, Any], bounds: Bounds) -> tuple[str, list[str]]:
+def _trim_to_cap(plan: dict[str, Any], _bounds: Bounds, binding: Binding) -> list[dict[str, Any]]:
     """Снять подходы с хвоста плана, пока он не влезет в потолок: сначала последнее
     упражнение, по одному подходу за проход, никогда не ниже одного подхода на
     упражнение — так правило покрытия (≥1 подход сухой группе) переживает срез.
-    Удаление подходов не выдумывает чисел, поэтому у этой границы есть настоящее
-    разрешение, а у покрытия только пометка.
+    Чисел не выдумывает, поэтому у потолка сессии есть настоящая починка, а у
+    покрытия только пометка. Возвращает по словарю на упражнение: сколько снято.
     """
-    cap = bounds.session_cap
-    if cap is None:
-        return "", []
+    cap = binding.values["потолок"]
     removed: dict[str, int] = {}
-    total = _planned_sets(plan)
+    total = planned_sets(plan)
     while total > cap:
         progressed = False
         for exercise in reversed(plan["exercises"]):
@@ -294,23 +181,57 @@ def _trim_to_cap(plan: dict[str, Any], bounds: Bounds) -> tuple[str, list[str]]:
                 progressed = True
         if not progressed:
             break
-    changes = [
-        _note("session_cap_change", exercise=name, count=str(count))
-        for name, count in removed.items()
-    ]
-    return _note("session_cap_fixed", cap=str(cap)), changes
+    return [{"упражнение": name, "снято": count} for name, count in removed.items()]
 
 
-# --------------------------------------------------------------------------- #
-# Три правила. Формулировки — prompts/plan_rules.md под теми же именами; порядок
-# здесь — это порядок пунктов в системном промпте и строк в репромпте.
-# --------------------------------------------------------------------------- #
-RULES: tuple[Rule, ...] = (
-    # сухая крупная группа или бицепс бедра обязаны попасть в план; починить
-    # нельзя — упражнение не выдумать, остаток идёт пометкой в rationale
-    Rule("coverage", check=_coverage_violations),
-    # на возврате после перерыва ни один вес не выше доперерывного рабочего
-    Rule("return_ceiling", check=_return_ceiling_violations, fix=_clamp_return_weights),
-    # рабочих подходов не больше верхней границы коридора сессии фазы
-    Rule("session_cap", check=_session_cap_violations, fix=_trim_to_cap),
+SCOPES: dict[str, rule_engine.Scope] = {
+    "сухая группа": rule_engine.Scope(_dry_groups, provides=("группа", "дней", "подходов_в_плане")),
+    "подход с возвратным потолком": rule_engine.Scope(
+        _capped_sets,
+        provides=("упражнение", "что", "вес", "допустимо", "тяжесть", "потолок"),
+        writable=("вес",),
+    ),
+    "план с потолком сессии": rule_engine.Scope(
+        _capped_plan, provides=("всего_подходов", "потолок")
+    ),
+}
+
+PROCEDURES: dict[str, rule_engine.Procedure] = {
+    "срезать подходы с хвоста до потолка": rule_engine.Procedure(
+        _trim_to_cap, provides=("упражнение", "снято")
+    ),
+}
+
+# Книга правил собирается на импорте: правило без слова в словаре, слот без
+# значения или пометка без починки останавливают сервер на старте, как и
+# незаполненный слот промпта.
+BOOK = rule_engine.RuleBook.load(
+    coach_prompts.fragments("plan_rules"),
+    scopes=SCOPES,
+    procedures=PROCEDURES,
+    notes=coach_prompts.fragments("plan_notes", directory=coach_prompts.COPY_DIR),
 )
+RULES = BOOK.rules
+
+
+# --------------------------------------------------------------------------- #
+# Что зовёт recommender
+# --------------------------------------------------------------------------- #
+def violations(plan: dict[str, Any], bounds: Bounds) -> list[str]:
+    """Нарушения жёстких границ в порядке правил: строки для репромпта как есть.
+    Пусто — план принят."""
+    return BOOK.violations(plan, bounds)
+
+
+def resolve(plan: dict[str, Any], bounds: Bounds) -> list[str]:
+    """Детерминированный последний рубеж после неудачного репромпта: починить,
+    что правила умеют, и честно вписать остаток пометкой в rationale. Чуть
+    неидеальный план с видимой пометкой лучше карточки с ошибкой — генерация не
+    имеет права падать из-за методики. Возвращает строки правок для трассы.
+    """
+    adjustments, notes = BOOK.repair(plan, bounds)
+    if notes:
+        rationale = str(plan.get("rationale", "")).rstrip()
+        appendix = "\n\n".join(notes)
+        plan["rationale"] = f"{rationale}\n\n{appendix}" if rationale else appendix
+    return adjustments
