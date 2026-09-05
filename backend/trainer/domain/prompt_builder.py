@@ -21,7 +21,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from trainer.data import coach_prompts
-from trainer.domain import coach_features, coach_state, plan_validator
+from trainer.domain import coach_features, coach_state, limits
 
 # Сколько сырых тренировок видит модель; всё старше покрывают вычисленные
 # сводки по упражнениям (промпт не должен расти от работы фич).
@@ -681,7 +681,7 @@ def _build_schema(catalog: list[dict[str, Any]]) -> dict[str, Any]:
                 "type": "string",
                 "description": "На что нацелена тренировка (кратко, по-русски)",
             },
-            "load_type": {"type": "string", "enum": list(plan_validator.ALLOWED_LOAD_TYPES)},
+            "load_type": {"type": "string", "enum": list(limits.PLANNED_LOAD_TYPES)},
             "rest_days": {
                 "type": "integer",
                 "description": (

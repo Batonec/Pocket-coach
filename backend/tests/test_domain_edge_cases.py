@@ -19,6 +19,7 @@ from trainer.domain import (
     coach_features,
     coach_signals,
     coach_state,
+    limits,
     plan_validator,
     prompt_builder,
     rules,
@@ -149,13 +150,13 @@ class SnapshotRuleEdgeCaseTests(unittest.TestCase):
                 for exercise_id in range(1, 11)
             ],
         }
-        with mock.patch.object(rules, "MAX_RECOMMENDATION_SNAPSHOT_BYTES", 100_000):
+        with mock.patch.object(limits, "MAX_RECOMMENDATION_SNAPSHOT_BYTES", 100_000):
             normalized = rules.normalize_recommendation_snapshot(snapshot)
         serialized = json.dumps(normalized, ensure_ascii=False)
-        self.assertLess(len(serialized), rules.MAX_RECOMMENDATION_SNAPSHOT_BYTES)
+        self.assertLess(len(serialized), limits.MAX_RECOMMENDATION_SNAPSHOT_BYTES)
         self.assertGreater(
             len(serialized.encode("utf-8")),
-            rules.MAX_RECOMMENDATION_SNAPSHOT_BYTES,
+            limits.MAX_RECOMMENDATION_SNAPSHOT_BYTES,
         )
 
         self.assertIsNone(rules.normalize_recommendation_snapshot(snapshot))

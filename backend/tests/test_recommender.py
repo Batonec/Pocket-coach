@@ -11,7 +11,7 @@ import support  # noqa: F401 — кладёт backend в sys.path
 from support import CATALOG_PATH
 
 from trainer.data import anthropic_client, files
-from trainer.domain import plan_validator, prompt_builder, recommender
+from trainer.domain import limits, plan_validator, prompt_builder, recommender
 
 CATALOG = [
     {"id": 8, "name": "Жим ногами"},
@@ -69,7 +69,7 @@ class RecommenderTests(unittest.TestCase):
         self.assertEqual(exercise["name"], "Жим ногами")  # имя из каталога, а не эхо модели
         self.assertEqual(exercise["note"], "+вес")
         self.assertEqual([s["reps"] for s in exercise["sets"]], [11, 10])
-        self.assertEqual(exercise["sets"][1]["weight"], plan_validator.MAX_WEIGHT)
+        self.assertEqual(exercise["sets"][1]["weight"], limits.MAX_WEIGHT)
 
     def test_validate_normalizes_unknown_load_type(self) -> None:
         raw = {
@@ -334,7 +334,7 @@ class RestDaysTests(unittest.TestCase):
     def test_validate_clamps_and_coerces_rest_days(self) -> None:
         self.assertEqual(
             plan_validator._validate(self._raw(rest_days=99), CATALOG)["rest_days"],
-            plan_validator.MAX_REST_DAYS,
+            limits.MAX_REST_DAYS,
         )
         self.assertEqual(plan_validator._validate(self._raw(rest_days=-3), CATALOG)["rest_days"], 0)
         self.assertEqual(

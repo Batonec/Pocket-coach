@@ -8,7 +8,7 @@ import unittest
 
 import support  # noqa: F401 — кладёт backend в sys.path
 
-from trainer.domain import plan_validator, prompt_builder
+from trainer.domain import limits, plan_validator, prompt_builder
 
 CATALOG = [
     {"id": 8, "name": "Жим ногами"},
@@ -150,7 +150,7 @@ class SemanticValidatorTests(unittest.TestCase):
 
     def test_rest_days_are_clamped_not_flagged(self) -> None:
         rec = plan_validator._validate(self._rec(sets=14, rest_days=6), self.CATALOG)
-        self.assertEqual(rec["rest_days"], plan_validator.MAX_REST_DAYS)
+        self.assertEqual(rec["rest_days"], limits.MAX_REST_DAYS)
         self.assertEqual(self._violations(rec), [])
 
 
