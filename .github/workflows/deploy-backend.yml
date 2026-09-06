@@ -73,19 +73,22 @@ jobs:
           scp -P "${VPS_PORT:-22}" backend/server.py "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/"
           # Код едет каталогами, как и проза: пакет trainer/ и скрипты таймеров
           # infra/jobs/ целиком. Поимённого списка модулей нет специально — новому
-          # файлу негде потеряться по дороге на прод.
-          scp -P "${VPS_PORT:-22}" -r \
-            backend/trainer/. \
-            "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/trainer/"
-          scp -P "${VPS_PORT:-22}" -r \
-            backend/infra/jobs/. \
-            "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/infra/jobs/"
-          scp -P "${VPS_PORT:-22}" -r \
-            backend/prompts/. \
-            "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/prompts/"
-          scp -P "${VPS_PORT:-22}" -r \
-            backend/resources/. \
-            "$VPS_USER@$VPS_HOST:$DEPLOY_BASE/app/resources/"
+          # файлу негде потеряться по дороге на прод. Возит их тот же rsync, что
+          # sync_dir в deploy.sh: --delete сносит с VPS то, чего в репозитории
+          # больше нет (scp -r не удалял ничего, и каждый переезд файла оставлял
+          # на проде вторую копию), и смотрит только внутрь этих четырёх
+          # каталогов — data/ живёт вне app/, server.py и юниты едут поимённо.
+          # __pycache__ не трогаем ни в одну сторону, сирот байткода выметает шаг
+          # рестарта. Владельца не переносим: uid раннера на VPS никому не
+          # принадлежит, файлы остаются за пользователем ssh, как было со scp.
+          sync_dir() {
+            rsync -az --no-owner --no-group --delete --exclude __pycache__ \
+              -e "ssh -p ${VPS_PORT:-22}" "$1/" "$VPS_USER@$VPS_HOST:$2/"
+          }
+          sync_dir backend/trainer "$DEPLOY_BASE/app/trainer"
+          sync_dir backend/infra/jobs "$DEPLOY_BASE/app/infra/jobs"
+          sync_dir backend/prompts "$DEPLOY_BASE/app/prompts"
+          sync_dir backend/resources "$DEPLOY_BASE/app/resources"
           # Юниты и таймеры — все: таймеры ссылаются на пути скриптов в infra/jobs/,
           # и переезд скрипта без юнита молча остановил бы таймер. Новый таймер
           # деплой не включает — enable делается руками один раз.
@@ -103,6 +106,26 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -eu
+          # Сироты байткода: rsync обходит __pycache__ стороной, поэтому .pyc
+          # модуля, которого в репозитории больше нет, пережил бы его удаление.
+          # Импорту он не мешает (без .py Python его не читает), но каталог
+          # снесённого пакета держал бы на проде вечно: непустой каталог rsync
+          # не удаляет. Пустых каталогов git не возит, а backend под app/ ничего
+          # не создаёт (data/ живёт снаружи), так что пустой каталог после синка
+          # всегда мёртвый — выметаем и их, снизу вверх.
+          ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" python3 - "'$DEPLOY_BASE/app'" <<'EOF'
+          import os
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          for pyc in root.rglob("__pycache__/*.pyc"):
+              if not (pyc.parent.parent / (pyc.name.split(".")[0] + ".py")).exists():
+                  pyc.unlink()
+          for path, _dirs, _files in os.walk(root, topdown=False):
+              if path != str(root) and not os.listdir(path):
+                  os.rmdir(path)
+          EOF
           ssh -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "\
             find '$DEPLOY_BASE/app' -name '*.py' -exec chmod 644 {} + && \
             chmod 644 '$DEPLOY_BASE/app/prompts/'*.md '$DEPLOY_BASE/app/resources/'* /etc/systemd/system/trainer-*.service /etc/systemd/system/trainer-*.timer && \

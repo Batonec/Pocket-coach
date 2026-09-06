@@ -87,7 +87,9 @@ sync_dir() {
 
   if command -v rsync >/dev/null 2>&1 && remote_has_rsync; then
     log "Syncing $(basename "$src") with rsync"
-    rsync -az --delete --exclude __pycache__ "${src}/" "${TARGET_HOST}:${dest}/"
+    # Тот же вызов, что sync_dir в deploy-backend.yml. Владельца не переносим:
+    # uid ноутбука на VPS никому не принадлежит, файлы остаются за пользователем ssh.
+    rsync -az --no-owner --no-group --delete --exclude __pycache__ "${src}/" "${TARGET_HOST}:${dest}/"
     return
   fi
 
