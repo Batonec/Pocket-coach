@@ -196,8 +196,7 @@ enum TrainerLogic {
                 secondary: [],
                 primaryPoolExhausted: false,
                 primaryPoolTotal: 0,
-                completedPrimaryCount: 0,
-                primaryPoolIDs: []
+                completedPrimaryCount: 0
             )
         }
 
@@ -263,8 +262,7 @@ enum TrainerLogic {
             secondary: secondary,
             primaryPoolExhausted: !primaryPool.isEmpty && primary.isEmpty && !secondary.isEmpty,
             primaryPoolTotal: primaryIDs.count,
-            completedPrimaryCount: completedPrimaryCount,
-            primaryPoolIDs: Array(primaryIDs)
+            completedPrimaryCount: completedPrimaryCount
         )
     }
 
@@ -412,42 +410,6 @@ enum TrainerLogic {
             }
             .sorted(by: compareSecondaryDisplay)
             .map(\.exercise)
-    }
-
-    static func draftProgressRatio(
-        exercises: [ExerciseDefinition],
-        workouts: [Workout],
-        draftExercises: [DraftExercise],
-        editingWorkoutID: Int?
-    ) -> Double {
-        guard draftExercises.contains(where: { !$0.sets.isEmpty }) else {
-            return 0
-        }
-
-        let groups = exercisePickerGroups(
-            available: exercises,
-            catalog: exercises,
-            workouts: workouts,
-            draftExercises: draftExercises
-        )
-        guard groups.primaryPoolTotal > 0 else {
-            return 0
-        }
-
-        let actualByID = Dictionary(
-            uniqueKeysWithValues: draftExercises.map { ($0.exerciseID, $0) })
-        let total = groups.primaryPoolIDs.reduce(0.0) { partial, exerciseID in
-            let context = planningContext(
-                workouts: workouts,
-                exerciseID: exerciseID,
-                excludeWorkoutID: editingWorkoutID
-            )
-            let targetCount = max(1, context?.plannedSets.count ?? 0)
-            let actualCount = actualByID[exerciseID]?.sets.count ?? 0
-            return partial + min(Double(actualCount), Double(targetCount)) / Double(targetCount)
-        }
-
-        return max(0, min(1, total / Double(groups.primaryPoolTotal)))
     }
 
     static func progressExercises(catalog: [ExerciseDefinition], workouts: [Workout])
@@ -679,27 +641,6 @@ enum TrainerLogic {
             progressionParts: progressionParts,
             maxWeight: previousSets.map(\.weight).max() ?? 0
         )
-    }
-
-    /// Ring progress against an applied coach plan: fraction of target sets
-    /// done per plan exercise, averaged over the plan.
-    static func planProgressRatio(
-        plan: AppliedCoachPlan,
-        draftExercises: [DraftExercise]
-    ) -> Double {
-        guard draftExercises.contains(where: { !$0.sets.isEmpty }), !plan.exercises.isEmpty else {
-            return 0
-        }
-
-        let actualByID = Dictionary(
-            uniqueKeysWithValues: draftExercises.map { ($0.exerciseID, $0) })
-        let total = plan.exercises.reduce(0.0) { partial, exercise in
-            let targetCount = max(1, exercise.sets.count)
-            let actualCount = actualByID[exercise.exerciseID]?.sets.count ?? 0
-            return partial + min(Double(actualCount), Double(targetCount)) / Double(targetCount)
-        }
-
-        return max(0, min(1, total / Double(plan.exercises.count)))
     }
 
     static func plannedSet(

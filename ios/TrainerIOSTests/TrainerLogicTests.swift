@@ -222,75 +222,6 @@ final class TrainerLogicTests: XCTestCase {
         XCTAssertTrue(addable.isEmpty)
     }
 
-    func testDraftProgressIsInvisibleUntilRealSetsAndCountsFractionalPlanProgress() {
-        let workouts =
-            popularHistory() + [
-                TestFixtures.workout(
-                    id: 99,
-                    date: "2026-05-07",
-                    exercises: [
-                        TestFixtures.exercise(
-                            id: 8, name: "Жим ногами",
-                            sets: [
-                                TestFixtures.set(index: 1, reps: 15, weight: 80),
-                                TestFixtures.set(index: 2, reps: 13, weight: 90),
-                                TestFixtures.set(index: 3, reps: 12, weight: 90),
-                            ])
-                    ]
-                )
-            ]
-
-        XCTAssertEqual(
-            TrainerLogic.draftProgressRatio(
-                exercises: TestFixtures.catalog,
-                workouts: workouts,
-                draftExercises: [],
-                editingWorkoutID: nil
-            ),
-            0
-        )
-
-        let oneSet = [
-            TestFixtures.draftExercise(
-                id: 8,
-                name: "Жим ногами",
-                sets: [TestFixtures.draftSet(reps: 16, weight: 80)]
-            )
-        ]
-        let threeSets = [
-            TestFixtures.draftExercise(
-                id: 8,
-                name: "Жим ногами",
-                sets: [
-                    TestFixtures.draftSet(reps: 16, weight: 80),
-                    TestFixtures.draftSet(reps: 14, weight: 90),
-                    TestFixtures.draftSet(reps: 13, weight: 90),
-                ]
-            )
-        ]
-
-        XCTAssertEqual(
-            TrainerLogic.draftProgressRatio(
-                exercises: TestFixtures.catalog,
-                workouts: workouts,
-                draftExercises: oneSet,
-                editingWorkoutID: nil
-            ),
-            1.0 / 18.0,
-            accuracy: 0.0001
-        )
-        XCTAssertEqual(
-            TrainerLogic.draftProgressRatio(
-                exercises: TestFixtures.catalog,
-                workouts: workouts,
-                draftExercises: threeSets,
-                editingWorkoutID: nil
-            ),
-            1.0 / 6.0,
-            accuracy: 0.0001
-        )
-    }
-
     func testProgressSeriesUsesHeaviestSetAndHighestRepSetPerWorkoutInChronologicalOrder() {
         let workouts = [
             TestFixtures.workout(
@@ -482,28 +413,6 @@ final class TrainerLogicTests: XCTestCase {
         XCTAssertTrue(cards[0].isPreview)  // plan exercise without sets yet
         XCTAssertFalse(cards[1].isPreview)  // plan exercise with logged sets
         XCTAssertFalse(cards[2].isPreview)  // off-plan extra appended last
-    }
-
-    func testPlanProgressRatioAveragesAgainstPlanTargets() {
-        let plan = samplePlan()  // ex9: 1 target, ex8: 2 targets
-
-        XCTAssertEqual(TrainerLogic.planProgressRatio(plan: plan, draftExercises: []), 0)
-
-        let halfLegPress = [
-            TestFixtures.draftExercise(id: 8, name: "Жим ногами", sets: [TestFixtures.draftSet()])
-        ]
-        XCTAssertEqual(
-            TrainerLogic.planProgressRatio(plan: plan, draftExercises: halfLegPress),
-            0.25,
-            accuracy: 0.0001
-        )
-
-        let done = [
-            TestFixtures.draftExercise(
-                id: 8, name: "Жим ногами", sets: [TestFixtures.draftSet(), TestFixtures.draftSet()]),
-            TestFixtures.draftExercise(id: 9, name: "Тяга верт.", sets: [TestFixtures.draftSet()]),
-        ]
-        XCTAssertEqual(TrainerLogic.planProgressRatio(plan: plan, draftExercises: done), 1)
     }
 
     func testPlanPlanningContextShowsPlanTargetWithWeight() {

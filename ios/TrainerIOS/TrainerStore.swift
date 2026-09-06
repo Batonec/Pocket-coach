@@ -1144,28 +1144,6 @@ final class TrainerStore: ObservableObject {
         )
     }
 
-    func exerciseGroups() -> ExercisePickerGroups {
-        TrainerLogic.exercisePickerGroups(
-            available: exercises,
-            catalog: exercises,
-            workouts: workouts,
-            draftExercises: draft.exercises
-        )
-    }
-
-    func draftProgressRatio() -> Double {
-        if let appliedPlan, draft.editingWorkoutID == nil {
-            return TrainerLogic.planProgressRatio(
-                plan: appliedPlan, draftExercises: draft.exercises)
-        }
-        return TrainerLogic.draftProgressRatio(
-            exercises: exercises,
-            workouts: workouts,
-            draftExercises: draft.exercises,
-            editingWorkoutID: draft.editingWorkoutID
-        )
-    }
-
     func planningContext(for exerciseID: Int) -> ExercisePlanningContext? {
         if draft.editingWorkoutID == nil,
             let planExercise = appliedPlan?.exercises.first(where: { $0.exerciseID == exerciseID })

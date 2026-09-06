@@ -787,7 +787,6 @@ struct ExercisePickerGroups {
     var primaryPoolExhausted: Bool
     var primaryPoolTotal: Int
     var completedPrimaryCount: Int
-    var primaryPoolIDs: [Int]
 }
 
 struct ProgressPoint: Identifiable, Hashable {
