@@ -400,14 +400,6 @@ struct TodayScreen: View {
         .padding(.top, 4)
     }
 
-    private var completedCount: Int {
-        store.displayCards().filter { !$0.sets.isEmpty }.count
-    }
-
-    private var plannedTotal: Int {
-        max(store.exerciseGroups().primaryPoolTotal, max(store.displayCards().count, 1))
-    }
-
     private var actionDialogBinding: Binding<Bool> {
         Binding(
             get: { pendingActionExercise != nil },

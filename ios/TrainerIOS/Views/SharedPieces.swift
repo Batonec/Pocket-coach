@@ -111,37 +111,3 @@ struct TopTitle: View {
         }
     }
 }
-
-// MARK: - Finish workout button
-
-struct ProgressRingArc: View {
-    var progress: Double
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(Color.black.opacity(0.08), lineWidth: 3.5)
-                .padding(5)
-
-            Circle()
-                .trim(from: 0, to: max(0.001, min(1, progress)))
-                .stroke(
-                    AngularGradient(
-                        gradient: Gradient(stops: [
-                            .init(color: Color(red: 1.0, green: 0.0, blue: 0.251), location: 0),
-                            .init(color: Color(red: 1.0, green: 0.831, blue: 0.0), location: 0.5),
-                            .init(color: Color(red: 0.0, green: 0.902, blue: 0.463), location: 1),
-                        ]),
-                        center: .center,
-                        startAngle: .degrees(-90),
-                        endAngle: .degrees(270)
-                    ),
-                    style: StrokeStyle(lineWidth: 3.5, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
-                .padding(5)
-                .shadow(color: Color(red: 0.0, green: 0.902, blue: 0.463).opacity(0.6), radius: 6)
-                .animation(.spring(response: 0.4, dampingFraction: 0.85), value: progress)
-        }
-    }
-}
